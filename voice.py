@@ -258,7 +258,7 @@ def _fallback_parse_number(text: str) -> Optional[int]:
 _SAMPLE_RATE = 16000
 _BLOCK = 320               # 20 ms blocks
 _PRE_TIMEOUT = 5.0         # give up if no speech starts within this
-_SILENCE_HANG = 0.45       # stop this long after speech ends (snappier response)
+_SILENCE_HANG = 0.35       # stop this long after speech ends (snappy response)
 _MAX_DURATION = 6.0        # hard cap on a single utterance
 _VOICE_BAND = (300.0, 3400.0)   # Hz — speech band; cuts low rumble & high hiss
 
@@ -337,7 +337,10 @@ class SpeechInput:
             self._reason = "parakeet introuvable (pip: parakeet-mlx, ou ALMATHUS_PARAKEET_CMD)"
 
     def available(self) -> bool:
-        return bool(self._sd and self._np and getattr(self, "_backend", None))
+        if not (self._sd and self._np):
+            return False
+        # usable with either a parakeet backend OR a Vosk model (Vosk is primary now)
+        return bool(getattr(self, "_backend", None)) or self._vosk_model_dir() is not None
 
     def reason(self) -> str:
         return self._reason
@@ -382,9 +385,7 @@ class SpeechInput:
                     pass
 
     def warmup(self):
-        """Preload the model on the STT thread so the first answer is instant."""
-        if self._backend != "mlx":
-            return
+        """Preload the recognizer on the STT thread so the first answer is instant."""
         self._ensure_stt_thread()
         self._jobs.put((_WARMUP, None, None))
 
@@ -441,9 +442,14 @@ class SpeechInput:
             audio, on_result, on_state = self._jobs.get()
             if audio is _WARMUP:
                 try:
-                    self._ensure_model()
+                    self._load_vosk()                 # primary recognizer, fast (~1s)
                 except Exception as e:
-                    _dbg("warmup load failed:", repr(e))
+                    _dbg("vosk warmup failed:", repr(e))
+                if os.environ.get("ALMATHUS_PARAKEET") and self._backend == "mlx":
+                    try:
+                        self._ensure_model()          # optional backup, slow (~60s)
+                    except Exception as e:
+                        _dbg("parakeet warmup failed:", repr(e))
                 continue
             try:
                 if audio is None or self._cancel.is_set():
@@ -452,18 +458,18 @@ class SpeechInput:
                     continue
                 if on_state:
                     on_state("thinking")
+                # Vosk FIRST: fast (~100ms), number-grammar, and the accurate one for
+                # isolated digits. Runs on the RAW audio (band-pass breaks Vosk).
                 _t0 = time.monotonic()
-                text = self._transcribe(audio)
-                _dt = (time.monotonic() - _t0) * 1000
-                parsed = parse_number(text, self.lang)
-                _dbg(f"transcript={text!r} -> parsed={parsed} ({_dt:.0f}ms)")
-                if parsed is None:
-                    # parakeet found no number (e.g. "un" heard as "Mm") -> try the
-                    # number-only Vosk grammar on the RAW audio (band-pass breaks Vosk).
-                    vp = self._vosk_number(self._last_raw if self._last_raw is not None else audio)
-                    if vp is not None:
-                        _dbg(f"vosk fallback -> {vp}")
-                        parsed = vp
+                raw = self._last_raw if self._last_raw is not None else audio
+                parsed = self._vosk_number(raw)
+                _dbg(f"vosk -> {parsed} ({(time.monotonic() - _t0) * 1000:.0f}ms)")
+                # parakeet only as a backup, and only if it's already loaded (never
+                # block on its ~60s load — Vosk handles the common case).
+                if parsed is None and self._model is not None:
+                    text = self._transcribe(audio)
+                    parsed = parse_number(text, self.lang)
+                    _dbg(f"parakeet fallback transcript={text!r} -> {parsed}")
                 on_result(parsed)
             except Exception as e:
                 _dbg("transcribe EXCEPTION:", repr(e))
@@ -691,23 +697,35 @@ class SpeechInput:
                     return str(d)
         return None
 
-    def _vosk_number(self, audio):
-        """Run the audio through Vosk with a number-only grammar. Runs on the STT
-        thread. Returns an int or None. Silently disabled if Vosk/model absent."""
+    def _load_vosk(self) -> bool:
+        """Load the Vosk model (fast). Returns True if usable. STT thread only."""
+        if self._vosk_model is not None:
+            return True
         if self._vosk_ok is False:
+            return False
+        try:
+            from vosk import Model, SetLogLevel
+            SetLogLevel(-1)
+            d = self._vosk_model_dir()
+            if not d:
+                self._vosk_ok = False
+                _dbg("vosk model not found -> disabled")
+                return False
+            self._vosk_model = Model(d)
+            self._vosk_ok = True
+            _dbg(f"vosk model loaded from {d}")
+            return True
+        except Exception as e:
+            self._vosk_ok = False
+            _dbg("vosk load failed:", repr(e))
+            return False
+
+    def _vosk_number(self, audio):
+        """Recognize a number from audio via Vosk's number-only grammar (+N-best).
+        Runs on the STT thread. Returns an int or None."""
+        if not self._load_vosk():
             return None
         try:
-            if self._vosk_model is None:
-                from vosk import Model, SetLogLevel
-                SetLogLevel(-1)
-                d = self._vosk_model_dir()
-                if not d:
-                    self._vosk_ok = False
-                    _dbg("vosk model not found -> fallback disabled")
-                    return None
-                self._vosk_model = Model(d)
-                self._vosk_ok = True
-                _dbg(f"vosk model loaded from {d}")
             import json as _json
             from vosk import KaldiRecognizer
             grammar = _VOSK_GRAMMAR.get(self.lang, _VOSK_GRAMMAR["fr"])

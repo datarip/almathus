@@ -529,23 +529,21 @@ class SpeechInput:
         sos, sosfilt, sosfilt_zi = self._make_bandpass(sr)
         zi = {"z": sosfilt_zi(sos) * 0.0 if sos is not None else None}
 
-        # Robust utterance segmentation: WebRTC VAD + a "hangover" window. TRIGGER
-        # only once ~90% of a short window is speech; STOP only once ~90% is silence.
-        # No cross-listen state -> can't drift or "lose track" over time.
-        from collections import deque
+        # Responsive segmentation: WebRTC VAD (most sensitive) triggers the ONSET fast
+        # (~40 ms, catches soft speech — no need to talk loud); voice-band ENERGY
+        # decides the OFFSET (energy drops when the speaker stops), so it can't run
+        # away on ambient the way a WebRTC-only stop can.
         wvad = None
         if sr in (8000, 16000, 32000, 48000):
             try:
                 import webrtcvad
-                wvad = webrtcvad.Vad(2)     # 2 = balanced speech/silence discrimination
+                wvad = webrtcvad.Vad(0)     # 0 = most sensitive
             except Exception:
                 wvad = None
         _dbg(f"record: detector={'webrtcvad' if wvad else 'energy'} sr={sr}")
 
-        pad = max(5, int(0.20 / block_secs))
-        ring = deque(maxlen=pad)
         st = {"start": None, "last": None, "peak": 0.0, "triggered": False,
-              "done": False, "efloor": None}
+              "run": 0, "efloor": None}
         lock = threading.Lock()
 
         def band_rms(block):
@@ -572,19 +570,16 @@ class SpeechInput:
                 frames.append(block.copy())
                 if r > st["peak"]:
                     st["peak"] = r
-                if st["done"]:
-                    return
-                ring.append((i, is_speech(block, r)))
-                if not st["triggered"]:
-                    if sum(1 for _, s in ring if s) >= 0.9 * ring.maxlen:
-                        st["triggered"] = True
-                        st["start"] = ring[0][0]        # include the onset window
-                        st["last"] = i
-                else:
-                    if ring[-1][1]:
-                        st["last"] = i
-                    if sum(1 for _, s in ring if not s) >= 0.9 * ring.maxlen:
-                        st["done"] = True               # sustained silence -> end
+                if st["start"] is None:
+                    if is_speech(block, r):
+                        st["run"] += 1
+                        if st["run"] >= 2:              # ~40 ms of speech -> go
+                            st["start"] = max(0, i - st["run"] + 1)
+                            st["last"] = i
+                    else:
+                        st["run"] = 0
+                elif r > max(st["peak"] * 0.12, 40.0):  # still speaking (energy)
+                    st["last"] = i
 
         if on_state:
             on_state("listening")
@@ -615,15 +610,16 @@ class SpeechInput:
                     time.sleep(block_secs)
                     now = time.monotonic()
                     with lock:
-                        triggered, done = st["triggered"], st["done"]
-                    if done:
-                        break
+                        triggered, last, n = st["triggered"], st["last"], len(frames)
                     if now - t0 > _MAX_DURATION:
                         break
                     if not triggered and now - t0 > _PRE_TIMEOUT:
                         self._silent = st["peak"] < 3.0
                         _dbg(f"record: no speech in {_PRE_TIMEOUT}s (peak={st['peak']:.0f})")
                         return None
+                    if triggered and last is not None and \
+                            (n - last) * block_secs > _SILENCE_HANG:
+                        break                       # speaker went quiet -> done
         finally:
             self._active_stream = None
 

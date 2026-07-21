@@ -369,27 +369,30 @@ class SpeechInput:
         self._ensure_stt_thread()
         self._jobs.put((_WARMUP, None, None))
 
-    def boost_input_volume(self, level: int = 100):
-        """Raise the macOS mic input gain so soft/distant speech is captured well."""
-        if sys.platform != "darwin":
+    def boost_input_volume(self, level: int = 90):
+        """Raise the macOS mic input gain so soft/distant speech is captured well.
+        Registers an atexit restore so the gain is put back however the app exits."""
+        if sys.platform != "darwin" or self._boosted:
             return
         try:
             subprocess.run(["osascript", "-e", f"set volume input volume {int(level)}"],
                            timeout=3, capture_output=True)
             self._boosted = True
+            import atexit
+            atexit.register(self.restore_input_volume)   # covers X, Quit, Ctrl-C, crash-exit
             _dbg(f"boosted macOS input volume to {level}")
         except Exception:
             pass
 
     def restore_input_volume(self, level: int = 50):
-        """Set the mic input gain back to a neutral level on exit — only if we
-        raised it. Safe to call once when the program closes."""
+        """Put the mic input gain back to a neutral 50% on exit — only if we raised
+        it. Idempotent; safe to call from atexit and from main()'s finally."""
         if not self._boosted or sys.platform != "darwin":
             return
+        self._boosted = False
         try:
             subprocess.run(["osascript", "-e", f"set volume input volume {int(level)}"],
                            timeout=3, capture_output=True)
-            self._boosted = False
             _dbg(f"restored macOS input volume to {level}")
         except Exception:
             pass
@@ -492,69 +495,69 @@ class SpeechInput:
         _dbg(f"record: samplerate={sr} blocksize={blk}")
         block_secs = blk / sr
         frames = []                       # every captured block (RAW), in order
-        # Seed the noise floor from earlier listens: NO dead calibration window, so
-        # the very first word triggers immediately (no "say it twice").
-        st = {"floor": self._noise_floor if self._noise_floor is not None else 500.0,
-              "start": None, "last": None, "peak": 0.0, "zi": None, "run": 0}
-        lock = threading.Lock()
-        pre = int(0.25 / block_secs)            # keep before the onset (fast trigger)
-        post = int(0.20 / block_secs)           # ...and a little after the tail
-        min_voiced = max(3, int(0.08 / block_secs))   # ignore sub-0.08s noise blips
+        pre = int(0.25 / block_secs)      # keep a little before the onset
+        post = int(0.25 / block_secs)     # ...and a little after the tail
+        min_voiced = max(4, int(0.10 / block_secs))   # need ≥0.10s of real speech
 
         sos, sosfilt, sosfilt_zi = self._make_bandpass(sr)
-        if sos is not None:
-            st["zi"] = sosfilt_zi(sos) * 0.0    # cold-start streaming filter state
+        zi = {"z": sosfilt_zi(sos) * 0.0 if sos is not None else None}
 
-        # ONSET is detected by WebRTC VAD (very sensitive — catches soft/distant
-        # speech). OFFSET (when to STOP) is detected by voice-band ENERGY falling back
-        # to the noise floor: WebRTC alone keeps flagging ambient as speech and would
-        # never stop, capturing 6 s blobs instead of the single spoken number.
+        # Robust utterance segmentation: WebRTC VAD + a "hangover" window. TRIGGER
+        # only once ~90% of a short window is speech; STOP only once ~90% is silence.
+        # No cross-listen state -> can't drift or "lose track" over time.
+        from collections import deque
         wvad = None
         if sr in (8000, 16000, 32000, 48000):
             try:
                 import webrtcvad
-                wvad = webrtcvad.Vad(0)         # 0 = most sensitive onset
+                wvad = webrtcvad.Vad(2)     # 2 = balanced speech/silence discrimination
             except Exception:
                 wvad = None
-        _dbg(f"record: detector={'webrtcvad+energy' if wvad else 'energy'} sr={sr}")
+        _dbg(f"record: detector={'webrtcvad' if wvad else 'energy'} sr={sr}")
 
-        def voice_rms(block):
+        pad = max(5, int(0.20 / block_secs))
+        ring = deque(maxlen=pad)
+        st = {"start": None, "last": None, "peak": 0.0, "triggered": False,
+              "done": False, "efloor": None}
+        lock = threading.Lock()
+
+        def band_rms(block):
             b = block.astype(np.float32)
             if sos is not None:
-                b, st["zi"] = sosfilt(sos, b, zi=st["zi"])   # only cb touches zi
+                b, zi["z"] = sosfilt(sos, b, zi=zi["z"])
             return float(np.sqrt(np.mean(b * b)) + 1e-9)
+
+        def is_speech(block, r):
+            if wvad is not None and len(block) == blk:
+                try:
+                    return wvad.is_speech(block.tobytes(), sr)
+                except Exception:
+                    pass
+            f = st["efloor"]
+            st["efloor"] = r if f is None else (r if r < f else f * 0.995 + r * 0.005)
+            return r > max(st["efloor"] * 3.0, 40.0)
 
         def cb(indata, _frames, _tinfo, _status):
             block = indata[:, 0]
-            r = voice_rms(block)
+            r = band_rms(block)
             with lock:
                 i = len(frames)
                 frames.append(block.copy())
                 if r > st["peak"]:
                     st["peak"] = r
-                # Noise-floor tracker: fall fast, rise slowly -> settles at ambient.
-                if r < st["floor"]:
-                    st["floor"] = r
+                if st["done"]:
+                    return
+                ring.append((i, is_speech(block, r)))
+                if not st["triggered"]:
+                    if sum(1 for _, s in ring if s) >= 0.9 * ring.maxlen:
+                        st["triggered"] = True
+                        st["start"] = ring[0][0]        # include the onset window
+                        st["last"] = i
                 else:
-                    st["floor"] = st["floor"] * 0.995 + r * 0.005
-                thr = max(st["floor"] * 3.0, 40.0)   # speech sits clearly above this
-                if st["start"] is None:
-                    if wvad is not None and len(block) == blk:
-                        try:
-                            onset = wvad.is_speech(block.tobytes(), sr)
-                        except Exception:
-                            onset = r > thr
-                    else:
-                        onset = r > thr
-                    if onset:
-                        st["run"] += 1
-                        if st["run"] >= 2:               # 2-frame debounce
-                            st["start"] = max(0, i - st["run"] + 1)
-                            st["last"] = i
-                    else:
-                        st["run"] = 0
-                elif r > thr:                            # still speaking (energy-based)
-                    st["last"] = i   # adapt from quiet blocks
+                    if ring[-1][1]:
+                        st["last"] = i
+                    if sum(1 for _, s in ring if not s) >= 0.9 * ring.maxlen:
+                        st["done"] = True               # sustained silence -> end
 
         if on_state:
             on_state("listening")
@@ -564,8 +567,6 @@ class SpeechInput:
         except Exception:
             self._silent = True   # can't open the mic -> surface the hint
             return None
-        # Use the rate the device ACTUALLY opened at — writing the wrong rate into
-        # the WAV would pitch/speed-shift the audio and wreck transcription.
         actual = int(getattr(stream, "samplerate", sr) or sr)
         if actual != sr:
             _dbg(f"record: requested {sr} Hz but device opened at {actual} Hz")
@@ -577,39 +578,30 @@ class SpeechInput:
                 time.sleep(block_secs)
                 now = time.monotonic()
                 with lock:
-                    start, last, n = st["start"], st["last"], len(frames)
+                    triggered, done = st["triggered"], st["done"]
+                if done:
+                    break
                 if now - t0 > _MAX_DURATION:
                     break
-                if start is None and now - t0 > _PRE_TIMEOUT:
+                if not triggered and now - t0 > _PRE_TIMEOUT:
                     self._silent = st["peak"] < 3.0
-                    _dbg(f"record: NO speech in {_PRE_TIMEOUT}s "
-                         f"(peak={st['peak']:.0f}, floor={st['floor']:.1f}, "
-                         f"enter≈{max(st['floor'] * 1.8, 6.0):.0f})")
-                    self._noise_floor = st["floor"]
+                    _dbg(f"record: no speech in {_PRE_TIMEOUT}s (peak={st['peak']:.0f})")
                     return None
-                # stop once the level has stayed low for _SILENCE_HANG after speech
-                if start is not None and last is not None and \
-                        (n - last) * block_secs > _SILENCE_HANG:
-                    break
 
         with lock:
             start, last, peak = st["start"], st["last"], st["peak"]
-        self._noise_floor = st["floor"]         # carry the floor to the next listen
         voiced = (last - start + 1) if (start is not None and last is not None) else 0
         if start is None or voiced < min_voiced:
             self._silent = peak < 3.0
             _dbg(f"record: no sustained speech (start={start}, voiced={voiced}, peak={peak:.0f})")
             return None
-        seg = frames[max(0, start - pre): min(len(frames), (last or start) + post + 1)]
-        _dbg(f"record: captured {len(seg)} blocks (~{len(seg)*block_secs:.1f}s), "
-             f"peak={peak:.0f}, floor={st['floor']:.0f}")
+        seg = frames[max(0, start - pre): min(len(frames), last + post + 1)]
+        _dbg(f"record: captured {len(seg)} blocks (~{len(seg)*block_secs:.1f}s), peak={peak:.0f}")
         if not seg:
             return None
         audio = np.concatenate(seg).astype(np.float32)
         if sos is not None:
-            # Clean the recognizer audio too: band-pass removes rumble/hiss and, in
-            # testing, fixed mis-hears (e.g. "sept" heard as "Set").
-            audio = sosfilt(sos, audio)
+            audio = sosfilt(sos, audio)   # clean recognizer audio (helped e.g. "sept")
         return self._normalize(audio)
 
     def _normalize(self, audio):

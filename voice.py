@@ -389,9 +389,9 @@ class SpeechInput:
         self._ensure_stt_thread()
         self._jobs.put((_WARMUP, None, None))
 
-    def boost_input_volume(self, level: int = 100):
-        """Raise the macOS mic input gain to max so soft/distant speech is captured.
-        Registers an atexit restore so the gain is put back however the app exits."""
+    def boost_input_volume(self, level: int = 80):
+        """Raise the macOS mic input gain (moderate — max gain over-amplifies noise
+        and breaks speech detection). Registers an atexit restore for any exit."""
         if sys.platform != "darwin" or self._boosted:
             return
         try:
@@ -542,8 +542,7 @@ class SpeechInput:
                 wvad = None
         _dbg(f"record: detector={'webrtcvad' if wvad else 'energy'} sr={sr}")
 
-        st = {"start": None, "last": None, "peak": 0.0, "triggered": False,
-              "run": 0, "efloor": None}
+        st = {"start": None, "last": None, "peak": 0.0, "run": 0, "efloor": None}
         lock = threading.Lock()
 
         def band_rms(block):
@@ -553,14 +552,19 @@ class SpeechInput:
             return float(np.sqrt(np.mean(b * b)) + 1e-9)
 
         def is_speech(block, r):
+            # Track the noise floor (drop fast, rise slow). Trigger on a clear energy
+            # jump OR on WebRTC VAD — the energy path is the robust backup for when
+            # WebRTC misfires (e.g. it did nothing at very high input gain).
+            f = st["efloor"]
+            st["efloor"] = r if f is None else (r if r < f else f * 0.98 + r * 0.02)
+            if r > max(st["efloor"] * 4.0, 60.0):
+                return True
             if wvad is not None and len(block) == blk:
                 try:
-                    return wvad.is_speech(block.tobytes(), sr)
+                    return bool(wvad.is_speech(block.tobytes(), sr))
                 except Exception:
                     pass
-            f = st["efloor"]
-            st["efloor"] = r if f is None else (r if r < f else f * 0.995 + r * 0.005)
-            return r > max(st["efloor"] * 3.0, 40.0)
+            return False
 
         def cb(indata, _frames, _tinfo, _status):
             block = indata[:, 0]
@@ -610,14 +614,15 @@ class SpeechInput:
                     time.sleep(block_secs)
                     now = time.monotonic()
                     with lock:
-                        triggered, last, n = st["triggered"], st["last"], len(frames)
+                        started = st["start"] is not None
+                        last, n = st["last"], len(frames)
                     if now - t0 > _MAX_DURATION:
                         break
-                    if not triggered and now - t0 > _PRE_TIMEOUT:
+                    if not started and now - t0 > _PRE_TIMEOUT:
                         self._silent = st["peak"] < 3.0
                         _dbg(f"record: no speech in {_PRE_TIMEOUT}s (peak={st['peak']:.0f})")
                         return None
-                    if triggered and last is not None and \
+                    if started and last is not None and \
                             (n - last) * block_secs > _SILENCE_HANG:
                         break                       # speaker went quiet -> done
         finally:

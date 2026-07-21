@@ -434,10 +434,11 @@ class SpeechInput:
             dev_sr = int(sd.query_devices(kind="input").get("default_samplerate") or 16000)
         except Exception:
             dev_sr = 16000
-        for sr in (16000, dev_sr, 48000, 44100, 22050, 8000):
+        # Prefer rates WebRTC VAD supports (8/16/32/48 kHz) so the VAD can run.
+        for sr in (16000, 48000, 32000, 8000, dev_sr, 44100, 22050):
             try:
                 sd.check_input_settings(samplerate=sr, channels=1, dtype="int16")
-                return sr, max(160, int(sr * 0.02))   # ~20 ms blocks
+                return sr, int(sr * 0.02)   # exactly 20 ms frames (WebRTC VAD needs 10/20/30)
             except Exception:
                 continue
         return None, 0
@@ -466,39 +467,62 @@ class SpeechInput:
         # Seed the noise floor from earlier listens: NO dead calibration window, so
         # the very first word triggers immediately (no "say it twice").
         st = {"floor": self._noise_floor if self._noise_floor is not None else 5.0,
-              "start": None, "last": None, "peak": 0.0, "zi": None}
+              "start": None, "last": None, "peak": 0.0, "zi": None, "run": 0}
         lock = threading.Lock()
         pre = int(0.25 / block_secs)            # keep before the onset (fast trigger)
         post = int(0.20 / block_secs)           # ...and a little after the tail
+        min_voiced = max(4, int(0.12 / block_secs))   # ignore sub-0.12s noise blips
 
         sos, sosfilt, sosfilt_zi = self._make_bandpass(sr)
         if sos is not None:
             st["zi"] = sosfilt_zi(sos) * 0.0    # cold-start streaming filter state
 
+        # Primary speech detector: WebRTC VAD — trained to spot speech in noise and at
+        # low volume (soft speech). Falls back to voice-band energy if unavailable.
+        wvad = None
+        if sr in (8000, 16000, 32000, 48000):
+            try:
+                import webrtcvad
+                wvad = webrtcvad.Vad(1)         # 0=most sensitive .. 3=most aggressive
+            except Exception:
+                wvad = None
+        _dbg(f"record: detector={'webrtcvad' if wvad else 'energy'} sr={sr}")
+
         def voice_rms(block):
-            # Energy in the SPEECH BAND only -> the detector reacts to voice, not to
-            # low-frequency rumble or broadband hiss, so it can be far more sensitive.
+            # Voice-band energy — used for peak (no-mic check) and the energy fallback.
             b = block.astype(np.float32)
             if sos is not None:
                 b, st["zi"] = sosfilt(sos, b, zi=st["zi"])   # only cb touches zi
             return float(np.sqrt(np.mean(b * b)) + 1e-9)
 
-        # Level-based VAD on voice-band energy: trigger as soon as a block clears the
-        # (persistent) noise floor; quiet blocks keep the floor up to date.
         def cb(indata, _frames, _tinfo, _status):
-            r = voice_rms(indata[:, 0])
+            block = indata[:, 0]
+            r = voice_rms(block)
             with lock:
                 i = len(frames)
-                frames.append(indata[:, 0].copy())
+                frames.append(block.copy())
                 if r > st["peak"]:
                     st["peak"] = r
-                enter = max(st["floor"] * 1.8, 6.0)    # sensitive, immediate
-                if r > enter:
-                    if st["start"] is None:
-                        st["start"] = i
-                    st["last"] = i
+                if wvad is not None and len(block) == blk:
+                    try:
+                        sp = wvad.is_speech(block.tobytes(), sr)
+                    except Exception:
+                        sp = r > max(st["floor"] * 1.8, 6.0)
+                    if sp:
+                        st["run"] += 1
+                        st["last"] = i
+                        if st["start"] is None and st["run"] >= 2:   # 2-frame debounce
+                            st["start"] = max(0, i - st["run"] + 1)
+                    else:
+                        st["run"] = 0
                 else:
-                    st["floor"] = st["floor"] * 0.9 + r * 0.1   # adapt from quiet blocks
+                    enter = max(st["floor"] * 1.8, 6.0)
+                    if r > enter:
+                        if st["start"] is None:
+                            st["start"] = i
+                        st["last"] = i
+                    else:
+                        st["floor"] = st["floor"] * 0.9 + r * 0.1   # adapt from quiet blocks
 
         if on_state:
             on_state("listening")
@@ -539,9 +563,10 @@ class SpeechInput:
         with lock:
             start, last, peak = st["start"], st["last"], st["peak"]
         self._noise_floor = st["floor"]         # carry the floor to the next listen
-        if start is None:
+        voiced = (last - start + 1) if (start is not None and last is not None) else 0
+        if start is None or voiced < min_voiced:
             self._silent = peak < 3.0
-            _dbg(f"record: stopped, no speech (peak={peak:.0f}, floor={st['floor']})")
+            _dbg(f"record: no sustained speech (start={start}, voiced={voiced}, peak={peak:.0f})")
             return None
         seg = frames[max(0, start - pre): min(len(frames), (last or start) + post + 1)]
         _dbg(f"record: captured {len(seg)} blocks (~{len(seg)*block_secs:.1f}s), "

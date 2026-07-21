@@ -12,7 +12,7 @@ dependencies = []
 # parakeet-mlx targets Apple Silicon; on other platforms set ALMATHUS_PARAKEET_CMD.
 # vosk: number-only grammar fallback that rescues words parakeet mis-hears (e.g. "un").
 #   Needs a model in ./models — see README (download vosk-model-small-fr-0.22).
-voice = ["sounddevice", "numpy", "text2num", "parakeet-mlx", "vosk"]
+voice = ["sounddevice", "numpy", "text2num", "parakeet-mlx", "vosk", "webrtcvad-wheels"]
 
 [project.scripts]
 almathus = "main:main"

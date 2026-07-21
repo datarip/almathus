@@ -310,6 +310,7 @@ class SpeechInput:
         self._stt_thread = None                   # owns & runs the model (MLX is thread-affine)
         self._vosk_model = None
         self._vosk_ok = None                      # None=unknown, False=unavailable
+        self._noise_floor = None                  # persists across listens (no re-calibration)
         self._probe()
 
     # -- capability probing ------------------------------------------------ #
@@ -462,10 +463,12 @@ class SpeechInput:
         _dbg(f"record: samplerate={sr} blocksize={blk}")
         block_secs = blk / sr
         frames = []                       # every captured block (RAW), in order
-        st = {"floor": None, "start": None, "last": None, "peak": 0.0, "zi": None}
+        # Seed the noise floor from earlier listens: NO dead calibration window, so
+        # the very first word triggers immediately (no "say it twice").
+        st = {"floor": self._noise_floor if self._noise_floor is not None else 5.0,
+              "start": None, "last": None, "peak": 0.0, "zi": None}
         lock = threading.Lock()
-        calib = max(6, int(0.3 / block_secs))   # ~0.3 s to learn the noise floor
-        pre = int(0.20 / block_secs)            # keep a little before the onset
+        pre = int(0.25 / block_secs)            # keep before the onset (fast trigger)
         post = int(0.20 / block_secs)           # ...and a little after the tail
 
         sos, sosfilt, sosfilt_zi = self._make_bandpass(sr)
@@ -480,8 +483,8 @@ class SpeechInput:
                 b, st["zi"] = sosfilt(sos, b, zi=st["zi"])   # only cb touches zi
             return float(np.sqrt(np.mean(b * b)) + 1e-9)
 
-        # Level-based VAD on voice-band energy: speech = clearly above the measured
-        # noise floor, with a low absolute minimum so soft speech still triggers.
+        # Level-based VAD on voice-band energy: trigger as soon as a block clears the
+        # (persistent) noise floor; quiet blocks keep the floor up to date.
         def cb(indata, _frames, _tinfo, _status):
             r = voice_rms(indata[:, 0])
             with lock:
@@ -489,14 +492,13 @@ class SpeechInput:
                 frames.append(indata[:, 0].copy())
                 if r > st["peak"]:
                     st["peak"] = r
-                if i < calib or st["floor"] is None:
-                    st["floor"] = r if st["floor"] is None else st["floor"] * 0.85 + r * 0.15
-                    return
-                enter = max(st["floor"] * 2.0, 8.0)    # sensitive: no need to shout
+                enter = max(st["floor"] * 1.8, 6.0)    # sensitive, immediate
                 if r > enter:
                     if st["start"] is None:
                         st["start"] = i
                     st["last"] = i
+                else:
+                    st["floor"] = st["floor"] * 0.9 + r * 0.1   # adapt from quiet blocks
 
         if on_state:
             on_state("listening")
@@ -525,8 +527,9 @@ class SpeechInput:
                 if start is None and now - t0 > _PRE_TIMEOUT:
                     self._silent = st["peak"] < 3.0
                     _dbg(f"record: NO speech in {_PRE_TIMEOUT}s "
-                         f"(peak={st['peak']:.0f}, floor={st['floor']}, "
-                         f"enter_threshold≈{max((st['floor'] or 0) * 2.2, 12.0):.0f})")
+                         f"(peak={st['peak']:.0f}, floor={st['floor']:.1f}, "
+                         f"enter≈{max(st['floor'] * 1.8, 6.0):.0f})")
+                    self._noise_floor = st["floor"]
                     return None
                 # stop once the level has stayed low for _SILENCE_HANG after speech
                 if start is not None and last is not None and \
@@ -535,6 +538,7 @@ class SpeechInput:
 
         with lock:
             start, last, peak = st["start"], st["last"], st["peak"]
+        self._noise_floor = st["floor"]         # carry the floor to the next listen
         if start is None:
             self._silent = peak < 3.0
             _dbg(f"record: stopped, no speech (peak={peak:.0f}, floor={st['floor']})")

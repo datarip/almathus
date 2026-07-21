@@ -314,6 +314,9 @@ class Almathus(tk.Tk):
             self.destroy()
         except Exception:
             pass
+        # Force the process to die so the OS reclaims the mic no matter what
+        # (an open PortAudio stream can otherwise stall interpreter shutdown).
+        os._exit(0)
 
     def _on_signal(self, _signum, _frame):
         self._shutdown()

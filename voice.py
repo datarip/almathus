@@ -370,8 +370,8 @@ class SpeechInput:
         self._ensure_stt_thread()
         self._jobs.put((_WARMUP, None, None))
 
-    def boost_input_volume(self, level: int = 90):
-        """Raise the macOS mic input gain so soft/distant speech is captured well.
+    def boost_input_volume(self, level: int = 100):
+        """Raise the macOS mic input gain to max so soft/distant speech is captured.
         Registers an atexit restore so the gain is put back however the app exits."""
         if sys.platform != "darwin" or self._boosted:
             return

@@ -305,6 +305,7 @@ class Almathus(tk.Tk):
 
     def _shutdown(self):
         if self.stt:
+            self.stt.stop()                                  # close mic stream (mic light off)
             self.stt.restore_input_volume(50)                # idempotent
 
     def _on_quit(self):
@@ -734,8 +735,9 @@ def main():
     try:
         app.mainloop()
     finally:
-        # restore the mic input gain to a neutral 50% on exit (any close path)
+        # close the mic stream + restore input gain to 50% on exit (any close path)
         if app.stt:
+            app.stt.stop()
             app.stt.restore_input_volume(50)
 
 

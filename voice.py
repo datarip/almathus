@@ -313,6 +313,8 @@ class SpeechInput:
         self._noise_floor = None                  # persists across listens (no re-calibration)
         self._boosted = False                     # did we raise the OS mic input gain?
         self._last_raw = None                     # last capture, un-band-passed (for Vosk)
+        self._active_stream = None                # the open mic stream, so we can close it on quit
+        self._stopped = False                     # latched on quit: no more captures
         self._probe()
 
     # -- capability probing ------------------------------------------------ #
@@ -348,6 +350,8 @@ class SpeechInput:
         on_state("listening"|"thinking") lets the UI show progress. Both callbacks
         fire from a worker thread — marshal to Tk with widget.after(0, ...).
         """
+        if self._stopped:
+            return                       # app is quitting — never reopen the mic
         if self._busy:
             _dbg("listen() ignored — already busy")
             return                       # one capture at a time
@@ -362,6 +366,20 @@ class SpeechInput:
 
     def cancel(self):
         self._cancel.set()
+
+    def stop(self):
+        """Stop any in-progress capture and release the microphone right away
+        (so the OS mic-in-use indicator turns off when the app quits)."""
+        self._stopped = True             # prevent the continuous loop from reopening it
+        self._cancel.set()
+        s = self._active_stream
+        self._active_stream = None
+        if s is not None:
+            for fn in ("abort", "close"):
+                try:
+                    getattr(s, fn)()
+                except Exception:
+                    pass
 
     def warmup(self):
         """Preload the model on the STT thread so the first answer is instant."""
@@ -487,6 +505,8 @@ class SpeechInput:
             return None, None, None
 
     def _record(self, on_state):
+        if self._stopped:
+            return None
         sd, np = self._sd, self._np
         sr, blk = self._pick_stream_params()
         if sr is None:
@@ -572,22 +592,34 @@ class SpeechInput:
         if actual != sr:
             _dbg(f"record: requested {sr} Hz but device opened at {actual} Hz")
         self._rec_sr = actual
+        self._active_stream = stream
+        if self._stopped or self._cancel.is_set():   # stop() raced with the open -> release now
+            for fn in ("abort", "close"):
+                try:
+                    getattr(stream, fn)()
+                except Exception:
+                    pass
+            self._active_stream = None
+            return None
 
         t0 = time.monotonic()
-        with stream:
-            while not self._cancel.is_set():
-                time.sleep(block_secs)
-                now = time.monotonic()
-                with lock:
-                    triggered, done = st["triggered"], st["done"]
-                if done:
-                    break
-                if now - t0 > _MAX_DURATION:
-                    break
-                if not triggered and now - t0 > _PRE_TIMEOUT:
-                    self._silent = st["peak"] < 3.0
-                    _dbg(f"record: no speech in {_PRE_TIMEOUT}s (peak={st['peak']:.0f})")
-                    return None
+        try:
+            with stream:
+                while not self._cancel.is_set():
+                    time.sleep(block_secs)
+                    now = time.monotonic()
+                    with lock:
+                        triggered, done = st["triggered"], st["done"]
+                    if done:
+                        break
+                    if now - t0 > _MAX_DURATION:
+                        break
+                    if not triggered and now - t0 > _PRE_TIMEOUT:
+                        self._silent = st["peak"] < 3.0
+                        _dbg(f"record: no speech in {_PRE_TIMEOUT}s (peak={st['peak']:.0f})")
+                        return None
+        finally:
+            self._active_stream = None
 
         with lock:
             start, last, peak = st["start"], st["last"], st["peak"]

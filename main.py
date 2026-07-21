@@ -695,7 +695,13 @@ class Almathus(tk.Tk):
 
 
 def main():
-    Almathus().mainloop()
+    app = Almathus()
+    try:
+        app.mainloop()
+    finally:
+        # restore the mic input gain to a neutral 50% on exit (any close path)
+        if app.stt:
+            app.stt.restore_input_volume(50)
 
 
 if __name__ == "__main__":

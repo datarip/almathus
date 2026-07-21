@@ -311,6 +311,7 @@ class SpeechInput:
         self._vosk_model = None
         self._vosk_ok = None                      # None=unknown, False=unavailable
         self._noise_floor = None                  # persists across listens (no re-calibration)
+        self._boosted = False                     # did we raise the OS mic input gain?
         self._probe()
 
     # -- capability probing ------------------------------------------------ #
@@ -375,7 +376,21 @@ class SpeechInput:
         try:
             subprocess.run(["osascript", "-e", f"set volume input volume {int(level)}"],
                            timeout=3, capture_output=True)
+            self._boosted = True
             _dbg(f"boosted macOS input volume to {level}")
+        except Exception:
+            pass
+
+    def restore_input_volume(self, level: int = 50):
+        """Set the mic input gain back to a neutral level on exit — only if we
+        raised it. Safe to call once when the program closes."""
+        if not self._boosted or sys.platform != "darwin":
+            return
+        try:
+            subprocess.run(["osascript", "-e", f"set volume input volume {int(level)}"],
+                           timeout=3, capture_output=True)
+            self._boosted = False
+            _dbg(f"restored macOS input volume to {level}")
         except Exception:
             pass
 

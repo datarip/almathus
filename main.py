@@ -12,8 +12,10 @@ Sessions are logged to ./stats/*.json for progress tracking.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import random
+import signal
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -281,7 +283,40 @@ class Almathus(tk.Tk):
         self.container = tk.Frame(self, bg=BG)
         self.container.pack(fill="both", expand=True)
 
+        self._install_exit_handlers()
         self.show_settings()
+
+    # ------------------------------------------------------------------ #
+    # Clean shutdown — restore the mic gain on EVERY exit path
+    # ------------------------------------------------------------------ #
+    def _install_exit_handlers(self):
+        self.protocol("WM_DELETE_WINDOW", self._on_quit)     # window close box
+        try:
+            self.createcommand("tk::mac::Quit", self._on_quit)   # macOS Cmd+Q / Quit menu
+        except tk.TclError:
+            pass
+        self.bind_all("<Command-q>", lambda e: self._on_quit())
+        self.bind_all("<Control-c>", lambda e: self._on_quit())
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            try:
+                signal.signal(sig, self._on_signal)          # terminal kill / close
+            except (OSError, ValueError):
+                pass
+
+    def _shutdown(self):
+        if self.stt:
+            self.stt.restore_input_volume(50)                # idempotent
+
+    def _on_quit(self):
+        self._shutdown()
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+    def _on_signal(self, _signum, _frame):
+        self._shutdown()
+        os._exit(0)
 
     def _pump(self):
         try:
@@ -647,7 +682,7 @@ class Almathus(tk.Tk):
         btns.pack(side="bottom", pady=28)
         Btn(btns, T("again"), command=self.show_settings, font=self.f_mode,
             bg=GOOD, fg="#10121f").pack(side="left", padx=12)
-        Btn(btns, T("quit"), command=self.destroy, font=self.f_mode,
+        Btn(btns, T("quit"), command=self._on_quit, font=self.f_mode,
             bg=CARD_BG, fg=TEXT, active_bg=BAD).pack(side="left", padx=12)
 
         # speak the same encouragement shown on screen, in a warm voice

@@ -312,6 +312,7 @@ class SpeechInput:
         self._vosk_ok = None                      # None=unknown, False=unavailable
         self._noise_floor = None                  # persists across listens (no re-calibration)
         self._boosted = False                     # did we raise the OS mic input gain?
+        self._last_raw = None                     # last capture, un-band-passed (for Vosk)
         self._probe()
 
     # -- capability probing ------------------------------------------------ #
@@ -440,8 +441,8 @@ class SpeechInput:
                 _dbg(f"transcript={text!r} -> parsed={parsed} ({_dt:.0f}ms)")
                 if parsed is None:
                     # parakeet found no number (e.g. "un" heard as "Mm") -> try the
-                    # number-only Vosk grammar on the same audio.
-                    vp = self._vosk_number(audio)
+                    # number-only Vosk grammar on the RAW audio (band-pass breaks Vosk).
+                    vp = self._vosk_number(self._last_raw if self._last_raw is not None else audio)
                     if vp is not None:
                         _dbg(f"vosk fallback -> {vp}")
                         parsed = vp
@@ -599,9 +600,9 @@ class SpeechInput:
         _dbg(f"record: captured {len(seg)} blocks (~{len(seg)*block_secs:.1f}s), peak={peak:.0f}")
         if not seg:
             return None
-        audio = np.concatenate(seg).astype(np.float32)
-        if sos is not None:
-            audio = sosfilt(sos, audio)   # clean recognizer audio (helped e.g. "sept")
+        raw = np.concatenate(seg).astype(np.float32)
+        self._last_raw = raw              # keep un-filtered audio for the Vosk fallback
+        audio = sosfilt(sos, raw) if sos is not None else raw   # band-pass for parakeet
         return self._normalize(audio)
 
     def _normalize(self, audio):
@@ -679,7 +680,7 @@ class SpeechInput:
             from vosk import KaldiRecognizer
             grammar = _VOSK_GRAMMAR.get(self.lang, _VOSK_GRAMMAR["fr"])
             rec = KaldiRecognizer(self._vosk_model, float(self._rec_sr), grammar)
-            rec.AcceptWaveform(audio.astype(self._np.int16).tobytes())
+            rec.AcceptWaveform(self._normalize(audio).tobytes())   # gain-only (raw audio)
             text = _json.loads(rec.FinalResult()).get("text", "")
             _dbg(f"vosk transcript={text!r}")
             return parse_number(text, self.lang)

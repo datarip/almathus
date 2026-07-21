@@ -258,7 +258,7 @@ def _fallback_parse_number(text: str) -> Optional[int]:
 _SAMPLE_RATE = 16000
 _BLOCK = 320               # 20 ms blocks
 _PRE_TIMEOUT = 5.0         # give up if no speech starts within this
-_SILENCE_HANG = 0.7        # stop this long after speech ends
+_SILENCE_HANG = 0.45       # stop this long after speech ends (snappier response)
 _MAX_DURATION = 6.0        # hard cap on a single utterance
 _VOICE_BAND = (300.0, 3400.0)   # Hz — speech band; cuts low rumble & high hiss
 
@@ -404,9 +404,11 @@ class SpeechInput:
                     continue
                 if on_state:
                     on_state("thinking")
+                _t0 = time.monotonic()
                 text = self._transcribe(audio)
+                _dt = (time.monotonic() - _t0) * 1000
                 parsed = parse_number(text, self.lang)
-                _dbg(f"transcript={text!r} -> parsed={parsed}")
+                _dbg(f"transcript={text!r} -> parsed={parsed} ({_dt:.0f}ms)")
                 if parsed is None:
                     # parakeet found no number (e.g. "un" heard as "Mm") -> try the
                     # number-only Vosk grammar on the same audio.
@@ -471,7 +473,7 @@ class SpeechInput:
         lock = threading.Lock()
         pre = int(0.25 / block_secs)            # keep before the onset (fast trigger)
         post = int(0.20 / block_secs)           # ...and a little after the tail
-        min_voiced = max(4, int(0.12 / block_secs))   # ignore sub-0.12s noise blips
+        min_voiced = max(3, int(0.08 / block_secs))   # ignore sub-0.08s noise blips
 
         sos, sosfilt, sosfilt_zi = self._make_bandpass(sr)
         if sos is not None:
@@ -483,7 +485,7 @@ class SpeechInput:
         if sr in (8000, 16000, 32000, 48000):
             try:
                 import webrtcvad
-                wvad = webrtcvad.Vad(1)         # 0=most sensitive .. 3=most aggressive
+                wvad = webrtcvad.Vad(0)         # 0=most sensitive .. 3=most aggressive
             except Exception:
                 wvad = None
         _dbg(f"record: detector={'webrtcvad' if wvad else 'energy'} sr={sr}")

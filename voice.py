@@ -680,10 +680,17 @@ class SpeechInput:
             from vosk import KaldiRecognizer
             grammar = _VOSK_GRAMMAR.get(self.lang, _VOSK_GRAMMAR["fr"])
             rec = KaldiRecognizer(self._vosk_model, float(self._rec_sr), grammar)
+            rec.SetMaxAlternatives(6)          # N-best: the number is often just behind [unk]
             rec.AcceptWaveform(self._normalize(audio).tobytes())   # gain-only (raw audio)
-            text = _json.loads(rec.FinalResult()).get("text", "")
-            _dbg(f"vosk transcript={text!r}")
-            return parse_number(text, self.lang)
+            res = _json.loads(rec.FinalResult())
+            texts = ([a.get("text", "") for a in res["alternatives"]]
+                     if res.get("alternatives") else [res.get("text", "")])
+            _dbg(f"vosk alts={texts[:4]}")
+            for t in texts:                    # take the highest-confidence number
+                n = parse_number(t, self.lang)
+                if n is not None:
+                    return n
+            return None
         except Exception as e:
             _dbg("vosk error:", repr(e))
             return None

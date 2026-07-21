@@ -393,9 +393,10 @@ class Almathus(tk.Tk):
         self.results = []
         self.retry_queue = []
         self.idx = 0
-        # preload the STT model in the background so the first spoken answer is instant
+        # preload the STT model + raise mic gain so the first spoken answer is instant
         if self.voice_enabled.get() and self.stt and self.stt.available():
             self.stt.warmup()
+            self.stt.boost_input_volume()
         self.countdown(5)
 
     def countdown(self, n: int):

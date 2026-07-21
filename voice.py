@@ -368,6 +368,17 @@ class SpeechInput:
         self._ensure_stt_thread()
         self._jobs.put((_WARMUP, None, None))
 
+    def boost_input_volume(self, level: int = 100):
+        """Raise the macOS mic input gain so soft/distant speech is captured well."""
+        if sys.platform != "darwin":
+            return
+        try:
+            subprocess.run(["osascript", "-e", f"set volume input volume {int(level)}"],
+                           timeout=3, capture_output=True)
+            _dbg(f"boosted macOS input volume to {level}")
+        except Exception:
+            pass
+
     # -- internals --------------------------------------------------------- #
     def _ensure_stt_thread(self):
         if self._stt_thread is None:
@@ -468,7 +479,7 @@ class SpeechInput:
         frames = []                       # every captured block (RAW), in order
         # Seed the noise floor from earlier listens: NO dead calibration window, so
         # the very first word triggers immediately (no "say it twice").
-        st = {"floor": self._noise_floor if self._noise_floor is not None else 5.0,
+        st = {"floor": self._noise_floor if self._noise_floor is not None else 500.0,
               "start": None, "last": None, "peak": 0.0, "zi": None, "run": 0}
         lock = threading.Lock()
         pre = int(0.25 / block_secs)            # keep before the onset (fast trigger)
@@ -479,19 +490,20 @@ class SpeechInput:
         if sos is not None:
             st["zi"] = sosfilt_zi(sos) * 0.0    # cold-start streaming filter state
 
-        # Primary speech detector: WebRTC VAD — trained to spot speech in noise and at
-        # low volume (soft speech). Falls back to voice-band energy if unavailable.
+        # ONSET is detected by WebRTC VAD (very sensitive — catches soft/distant
+        # speech). OFFSET (when to STOP) is detected by voice-band ENERGY falling back
+        # to the noise floor: WebRTC alone keeps flagging ambient as speech and would
+        # never stop, capturing 6 s blobs instead of the single spoken number.
         wvad = None
         if sr in (8000, 16000, 32000, 48000):
             try:
                 import webrtcvad
-                wvad = webrtcvad.Vad(0)         # 0=most sensitive .. 3=most aggressive
+                wvad = webrtcvad.Vad(0)         # 0 = most sensitive onset
             except Exception:
                 wvad = None
-        _dbg(f"record: detector={'webrtcvad' if wvad else 'energy'} sr={sr}")
+        _dbg(f"record: detector={'webrtcvad+energy' if wvad else 'energy'} sr={sr}")
 
         def voice_rms(block):
-            # Voice-band energy — used for peak (no-mic check) and the energy fallback.
             b = block.astype(np.float32)
             if sos is not None:
                 b, st["zi"] = sosfilt(sos, b, zi=st["zi"])   # only cb touches zi
@@ -505,26 +517,29 @@ class SpeechInput:
                 frames.append(block.copy())
                 if r > st["peak"]:
                     st["peak"] = r
-                if wvad is not None and len(block) == blk:
-                    try:
-                        sp = wvad.is_speech(block.tobytes(), sr)
-                    except Exception:
-                        sp = r > max(st["floor"] * 1.8, 6.0)
-                    if sp:
+                # Noise-floor tracker: fall fast, rise slowly -> settles at ambient.
+                if r < st["floor"]:
+                    st["floor"] = r
+                else:
+                    st["floor"] = st["floor"] * 0.995 + r * 0.005
+                thr = max(st["floor"] * 3.0, 40.0)   # speech sits clearly above this
+                if st["start"] is None:
+                    if wvad is not None and len(block) == blk:
+                        try:
+                            onset = wvad.is_speech(block.tobytes(), sr)
+                        except Exception:
+                            onset = r > thr
+                    else:
+                        onset = r > thr
+                    if onset:
                         st["run"] += 1
-                        st["last"] = i
-                        if st["start"] is None and st["run"] >= 2:   # 2-frame debounce
+                        if st["run"] >= 2:               # 2-frame debounce
                             st["start"] = max(0, i - st["run"] + 1)
+                            st["last"] = i
                     else:
                         st["run"] = 0
-                else:
-                    enter = max(st["floor"] * 1.8, 6.0)
-                    if r > enter:
-                        if st["start"] is None:
-                            st["start"] = i
-                        st["last"] = i
-                    else:
-                        st["floor"] = st["floor"] * 0.9 + r * 0.1   # adapt from quiet blocks
+                elif r > thr:                            # still speaking (energy-based)
+                    st["last"] = i   # adapt from quiet blocks
 
         if on_state:
             on_state("listening")

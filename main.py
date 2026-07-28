@@ -92,7 +92,8 @@ STRINGS = {
         "progress": "📈 Mes progrès",
         "back": "← Retour",
         "progress_title": "📈 Mes progrès",
-        "chart_title": "Temps par session",
+        "chart_title": "Temps moyen par jour",
+        "avg_label": "moyenne",
         "no_results": "Pas encore de résultats — joue une partie !",
         "col_date": "Date",
         "col_family": "Famille",
@@ -134,7 +135,8 @@ STRINGS = {
         "progress": "📈 My progress",
         "back": "← Back",
         "progress_title": "📈 My progress",
-        "chart_title": "Time per session",
+        "chart_title": "Average time per day",
+        "avg_label": "average",
         "no_results": "No results yet — play a game!",
         "col_date": "Date",
         "col_family": "Family",
@@ -327,12 +329,16 @@ class Btn(tk.Label):
 # --------------------------------------------------------------------------- #
 # Progress chart
 #
-# One measure (session time) over one axis (the date), so it is one series: a
-# thin line with dots, a recessive horizontal grid, and a hover tooltip. No
-# legend — a single series is named by the title above it — and deliberately no
+# One measure (time) over one axis (the date), so it is one series: a soft curve
+# with dots, a recessive horizontal grid, and a hover tooltip. No legend — a
+# single series is named by the title above it — and deliberately no
 # color-by-famille: families are categorical and open-ended (any text the parent
 # types), and a cycled palette would be unreadable. The famille lives in the
 # tooltip and in the table instead.
+#
+# One point per *day*, averaging that day's sessions: three tries in an
+# afternoon used to stack into a vertical spike that said nothing about
+# progress. The tooltip still names how many sessions the point stands for.
 # --------------------------------------------------------------------------- #
 
 
@@ -346,15 +352,58 @@ class TimeChart(tk.Canvas):
         super().__init__(parent, bg=BG, height=height, highlightthickness=0, bd=0)
         # Plotting needs both a date (x) and a time (y). Rows missing either
         # still show up in the table — they just can't be placed on the chart.
-        self.rows = [s for s in sessions if s.day and s.seconds is not None]
+        plottable = [s for s in sessions if s.day and s.seconds is not None]
+        by_day: dict[object, list] = {}
+        for s in plottable:
+            by_day.setdefault(s.day, []).append(s)
+        # (day, mean seconds, the sessions behind it) — one entry per day, in order
+        self.days = [(d, sum(g_.seconds for g_ in g) / len(g), g)
+                     for d, g in sorted(by_day.items())]
         self.font = font
         # Reserve the bottom band from the real font metrics — the fonts scale
         # with the screen, so a fixed 30 px clipped the date labels on a tall one.
         self.PAD_B = font.metrics("linespace") + 16
-        self.pts: list[tuple[float, float, object]] = []
+        self.pts: list[tuple[float, float, tuple]] = []
         self.bind("<Configure>", lambda e: self.redraw())
         self.bind("<Motion>", self._hover)
         self.bind("<Leave>", lambda e: self.delete("tip"))
+
+    @staticmethod
+    def _curve(pts: list[tuple[float, float, object]]) -> list[float]:
+        """Sample a monotone cubic (Fritsch–Carlson) through every point.
+
+        Tk's own `smooth=True` treats the coordinates as spline *control* points,
+        so the curve misses the dots it is supposed to join. Monotone cubic goes
+        exactly through each one and, unlike Catmull-Rom, cannot overshoot — so a
+        dip between two slow days never draws a time faster than either of them.
+        """
+        n = len(pts)
+        if n < 3:
+            return [c for x, y, _ in pts for c in (x, y)]
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        d = [(ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]) for i in range(n - 1)]
+        m = [d[0]] + [(d[i - 1] + d[i]) / 2 for i in range(1, n - 1)] + [d[-1]]
+        for i in range(n - 1):
+            if d[i] == 0:                       # a flat run stays flat
+                m[i] = m[i + 1] = 0.0
+                continue
+            a, b = m[i] / d[i], m[i + 1] / d[i]
+            if a * a + b * b > 9:               # clamp the tangents: no overshoot
+                t = 3.0 / (a * a + b * b) ** 0.5
+                m[i], m[i + 1] = t * a * d[i], t * b * d[i]
+
+        out: list[float] = []
+        for i in range(n - 1):
+            h = xs[i + 1] - xs[i]
+            steps = max(2, min(48, int(h / 4)))     # ~4 px per sampled segment
+            for k in range(steps + (1 if i == n - 2 else 0)):
+                t = k / steps
+                t2, t3 = t * t, t * t * t
+                out += [xs[i] + h * t,
+                        (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h * m[i]
+                        + (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h * m[i + 1]]
+        return out
 
     def _y_scale(self, peak: float) -> tuple[int, float]:
         """A step size and a top of scale that give at most 5 gridlines."""
@@ -369,11 +418,11 @@ class TimeChart(tk.Canvas):
         self.delete("all")
         self.pts = []
         w, h = self.winfo_width(), self.winfo_height()
-        if w < 160 or h < 90 or not self.rows:
+        if w < 160 or h < 90 or not self.days:
             return
         x0, x1 = self.PAD_L, w - self.PAD_R
         y0, y1 = self.PAD_T, h - self.PAD_B
-        step, top = self._y_scale(max(s.seconds for s in self.rows))
+        step, top = self._y_scale(max(mean for _, mean, _ in self.days))
 
         def Y(v):
             return y1 - (v / top) * (y1 - y0)
@@ -388,19 +437,22 @@ class TimeChart(tk.Canvas):
                              anchor="e", font=self.font, fill=MUTED)
             v += step
 
-        # x is real calendar time, so plateaus and gaps are visible; several
-        # sessions on one day simply stack on the same date.
-        ords = [s.day.toordinal() for s in self.rows]
+        # x is real calendar time, so plateaus and gaps are visible.
+        ords = [d.toordinal() for d, _, _ in self.days]
         lo, span = min(ords), max(ords) - min(ords)
 
         def X(o):
             return (x0 + x1) / 2 if not span else x0 + (o - lo) / span * (x1 - x0)
 
-        pts = [(X(o), Y(s.seconds), s) for o, s in zip(ords, self.rows)]
+        pts = []
+        for entry in self.days:
+            day, mean, _ = entry
+            pts.append((X(day.toordinal()), Y(mean), entry))
         if len(pts) > 1:
-            self.create_line([c for p in pts for c in p[:2]], fill=ACCENT, width=2)
+            self.create_line(self._curve(pts), fill=ACCENT, width=2,
+                             capstyle="round", joinstyle="round")
         for x, y, _ in pts:
-            # a 2px background ring keeps overlapping dots legible
+            # a 2px background ring keeps a dot legible where the curve runs steep
             self.create_oval(x - 4, y - 4, x + 4, y + 4,
                              fill=ACCENT, outline=BG, width=2)
         self.pts = pts
@@ -410,11 +462,11 @@ class TimeChart(tk.Canvas):
         # (two sessions a day apart would print on top of each other).
         gap = self.font.measure("00/00") + 22
         kept: list[tuple[object, float]] = []
-        for d in sorted({s.day for s in self.rows}):
+        for d, _, _ in self.days:
             xd = X(d.toordinal())
             if not kept or xd - kept[-1][1] >= gap:
                 kept.append((d, xd))
-        last = max(s.day for s in self.rows)
+        last = self.days[-1][0]
         if kept and kept[-1][0] != last:      # the newest date always gets a label
             xd = X(last.toordinal())
             while kept and xd - kept[-1][1] < gap:
@@ -433,11 +485,18 @@ class TimeChart(tk.Canvas):
                 best, closest = (x, y, s), d
         if not best:
             return
-        x, y, s = best
-        lines = [s.day.strftime("%d/%m/%Y"),
-                 f"{s.famille or '—'} · {resultslog.fmt_duration(s.seconds)}"]
-        if s.avg is not None:
-            lines.append(f"{T('col_avg')} : {s.avg:.1f} s")
+        x, y, (day, mean, group) = best
+        # Distinct families, in the order they were played that day.
+        fams = list(dict.fromkeys(s.famille for s in group if s.famille))
+        lines = [day.strftime("%d/%m/%Y"), ", ".join(fams) or "—"]
+        if len(group) > 1:
+            lines.append(f"{T('n_sessions', n=len(group))} · "
+                         f"{T('avg_label')} {resultslog.fmt_duration(mean)}")
+        else:
+            lines.append(resultslog.fmt_duration(mean))
+        per_card = [s.avg for s in group if s.avg is not None]
+        if per_card:
+            lines.append(f"{T('col_avg')} : {sum(per_card) / len(per_card):.1f} s")
 
         lh = self.font.metrics("linespace") + 2
         bw = max(self.font.measure(t) for t in lines) + 20

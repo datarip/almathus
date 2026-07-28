@@ -44,9 +44,12 @@ python3 main.py
 Reachable from the **settings screen** (*Mes progrès*) and from the **recap** after
 a game. It reads `results/results.csv` and shows:
 
-- a **chart** of session time over the dates — x is real calendar time, so gaps
-  and plateaus are visible and several sessions on one day stack on the same
-  date. Hover a dot for its date, family and time;
+- a **chart** of time over the dates — **one point per day**, averaging that
+  day's sessions (three tries in an afternoon used to stack into a vertical
+  spike that said nothing about progress). x is real calendar time, so gaps and
+  plateaus are visible. Hover a dot for its date, families, session count and
+  average. The curve is a monotone cubic through the points: soft, but it never
+  dips below a value the kid actually scored;
 - the **table** of every session, newest first, with a *temps moyen / carte*
   column.
 

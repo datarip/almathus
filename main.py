@@ -138,21 +138,24 @@ GOOD = "#3ddc97"
 BAD = "#ff6b6b"
 TEXT = "#f5f6ff"
 MUTED = "#9aa0c8"
+# Soft, cheerful and deliberately gender-neutral: mint, sky, apricot, lilac.
+# All four are light enough to carry the same near-black text.
 MODE_COLORS = {
-    "addition": "#3ddc97",
-    "subtraction": "#4d9de0",
-    "multiplication": "#e15554",
-    "division": "#e1bc29",
+    "addition": "#4fd1a5",
+    "subtraction": "#6cb8f5",
+    "multiplication": "#ff9e7d",
+    "division": "#b39ddb",
 }
+INK = "#10121f"       # text laid on top of a bright tile
 SURFACE = "#191d3d"   # raised panel, one step above the page background
 BORDER = "#2b3160"    # hairline outline for panels and chips
 
-# Number toggles sit on their own dark strip so the on/off greens read the same
-# on every tile (the addition tile is itself green).
-NUM_STRIP_BG = "#10121f"
-NUM_ON_BG, NUM_ON_FG = GOOD, "#10121f"
-NUM_OFF_BG, NUM_OFF_FG = "#3a3f63", MUTED
-NUM_HOVER_BG = "#525a8c"
+# The number toggles sit on their own inset strip so on/off reads the same on
+# every tile (each tile is a different bright color).
+NUM_STRIP_BG = "#141735"
+NUM_ON_BG, NUM_ON_FG = "#4fd1a5", INK
+NUM_OFF_BG, NUM_OFF_FG = "#333a63", "#8b93c4"
+NUM_HOVER_BG = "#4b5490"
 OP_SYMBOL = {
     "addition": "+",
     "subtraction": "−",
@@ -461,8 +464,12 @@ class Almathus(tk.Tk):
 
     def _build_number_row(self, parent, mode: str):
         """Row of [1]..[10] toggles: which number the operation is played with."""
+        # The strip hugs its chips and is centered under the title. Stretching it
+        # to the tile width (fill="x" / weight=1) leaves slack that Tk hands out
+        # a pixel at a time, which is what made the chips uneven and the row
+        # edges ragged. With no slack every chip is identical by construction.
         strip = tk.Frame(parent, bg=NUM_STRIP_BG)
-        strip.pack(fill="x", padx=14, pady=(0, 14))
+        strip.pack(padx=16, pady=(0, 16))
         boxes: dict[int, tk.Label] = {}
 
         def paint(n: int, hover: bool = False):
@@ -481,9 +488,12 @@ class Almathus(tk.Tk):
             paint(n, hover=True)
 
         for n in range(NUM_MIN, NUM_MAX + 1):
-            lbl = tk.Label(strip, text=str(n), font=self.f_chip, width=2,
-                           padx=0, pady=5, cursor="hand2")
-            lbl.pack(side="left", padx=3, pady=6, expand=True)
+            # width in characters, identical for every chip, so "10" does not
+            # request more room than "1" and the uniform columns can all match
+            lbl = tk.Label(strip, text=str(n), font=self.f_chip, width=2, pady=5,
+                           cursor="hand2")
+            lbl.grid(row=0, column=n - NUM_MIN, sticky="nsew", pady=6,
+                     padx=(6 if n == NUM_MIN else 3, 6 if n == NUM_MAX else 3))
             lbl.bind("<Button-1>", lambda e, k=n: toggle(k))
             lbl.bind("<Enter>", lambda e, k=n: paint(k, hover=True))
             lbl.bind("<Leave>", lambda e, k=n: paint(k))

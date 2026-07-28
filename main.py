@@ -192,6 +192,9 @@ THEMES = {
         NUM_ON_BG="#4fd1a5", NUM_ON_FG="#10121f",
         NUM_OFF_BG="#333a63", NUM_OFF_FG="#8b93c4",
         NUM_HOVER_BG="#4b5490",
+        # Hovering an operation tile lifts it away from the page: bright here,
+        # deep on the light palette. Either way the label stays legible.
+        TILE_HOVER_BG="#f5f6ff", TILE_HOVER_FG="#10121f",
         TITLE_SVG="mario.svg",
         TITLE_ICON="🧮",       # fallback if the drawing cannot be loaded
     ),
@@ -219,6 +222,9 @@ THEMES = {
         NUM_ON_BG="#ff7ab8", NUM_ON_FG="#3d0f26",
         NUM_OFF_BG="#ffd9e6", NUM_OFF_FG="#b07f96",
         NUM_HOVER_BG="#ffb3d3",
+        # A deeper cut of ACCENT, so the tile reads as the same hot pink the rest
+        # of this palette uses for "chosen", with white text over it.
+        TILE_HOVER_BG="#d81b7a", TILE_HOVER_FG="#fff4f8",
         TITLE_SVG="peach.svg",
         TITLE_ICON="👑",
     ),
@@ -831,7 +837,7 @@ class Almathus(tk.Tk):
         for i, m in enumerate(MODES):
             Btn(grid, f"{T(m)}  {OP_SYMBOL[m]}", command=lambda mm=m: self.start_game(mm),
                 font=self.f_tile, bg=MODE_COLORS[m], fg=INK,
-                active_bg=TEXT, active_fg=INK, padx=20, pady=22
+                active_bg=TILE_HOVER_BG, active_fg=TILE_HOVER_FG, padx=20, pady=22
                 ).grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="nsew")
 
         footer = tk.Frame(col, bg=BG)

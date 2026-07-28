@@ -196,6 +196,44 @@ def T(key: str, **kw) -> str:
     return s.format(**kw) if kw else s
 
 
+def bind_wheel(widget, handler) -> None:
+    """Send `widget`'s wheel and trackpad scrolling to `handler`.
+
+    X11 reports the wheel as buttons 4 and 5, so those are bound there as well.
+    Not elsewhere: on Aqua and Windows those numbers belong to the extra physical
+    buttons of a mouse (Tk answers `<Button-5>` with button 9 here), which have
+    nothing to do with scrolling.
+    """
+    widget.bind("<MouseWheel>", handler)
+    if widget.tk.call("tk", "windowingsystem") == "x11":
+        widget.bind("<Button-4>", handler)
+        widget.bind("<Button-5>", handler)
+
+
+def wheel_units(ev) -> int:
+    """A wheel or trackpad event as a number of lines to scroll, sign included.
+
+    The three platforms say it three different ways: macOS sends a small signed
+    delta and a *lot* of events during one two-finger swipe, Windows sends
+    multiples of 120 (a notch is 120), and X11 sends no delta at all — it reports
+    the wheel as buttons 4 (up) and 5 (down), which is why a button number shows
+    up here (see `bind_wheel`). Three lines per notch or button, and macOS'
+    fine-grained delta is taken as it comes, so a swipe keeps its momentum.
+
+    Capped at five lines an event: how large a single macOS delta gets depends on
+    the Tk build and on whether the gesture is a precise trackpad swipe, and one
+    outsized event must not throw the table from the top to the bottom.
+    """
+    if getattr(ev, "num", 0) in (4, 5):
+        return -3 if ev.num == 4 else 3
+    delta = getattr(ev, "delta", 0) or 0
+    if not delta:
+        return 0
+    lines = delta / 120 * 3 if abs(delta) >= 120 else delta
+    step = min(5, int(abs(lines)) or 1)          # never round a nudge down to nothing
+    return -step if lines > 0 else step
+
+
 def month_label(ym: tuple[int, int] | None) -> str:
     """A `(year, month)` as a person says it: `Juillet 2026` / `July 2026`.
 
@@ -611,10 +649,9 @@ class Dropdown(Btn):
         canvas.configure(width=w, height=view, scrollregion=(0, 0, w, h))
         canvas.itemconfig(window, width=w)           # rows span the full width
         if h > view:
-            # Bound on the Toplevel, not on the canvas: the pointer sits over a
-            # row Label, and Tk walks the event up from there to its window.
-            top.bind("<MouseWheel>",
-                     lambda e: canvas.yview_scroll(-1 * (e.delta or 1), "units"))
+            # Bound on the Toplevel: a row Label's bindtags include its window,
+            # so a wheel event over a row is looked up here as well.
+            bind_wheel(top, lambda e: canvas.yview_scroll(wheel_units(e), "units"))
             if here is not None:                     # open on the month you are on
                 canvas.yview_moveto(max(0.0, (here.winfo_y() - view / 2) / h))
 
@@ -1710,17 +1747,20 @@ class Almathus(tk.Tk):
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(window, width=e.width))
         table.bind("<Configure>",
                    lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        # Only steal the wheel while the pointer is over the table. The pointer
-        # is usually over a row Label, not the canvas, so the binding has to be
-        # global — hence dropping it again on the way out, and on destroy (a
-        # screen change kills the canvas without ever sending <Leave>).
+        # Wheel and trackpad. The pointer is nearly always over a row Label, not
+        # over the canvas, and Tk hands an event to the widget's own bindtags
+        # only — it never walks up to a parent widget — so a plain binding on the
+        # canvas would never fire. The rows are given the canvas as an extra
+        # bindtag at the end of this function instead, which routes their wheel
+        # events here without a single global binding: an <Enter>/<Leave> pair
+        # driving bind_all cannot work, because moving onto a child *is* leaving
+        # the canvas as far as Tk is concerned, so it disarmed itself the moment
+        # the pointer touched a row.
         def wheel(ev):
             if canvas.winfo_exists():
-                canvas.yview_scroll(-1 * (ev.delta or 1), "units")
+                canvas.yview_scroll(wheel_units(ev), "units")
 
-        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", wheel))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
-        canvas.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        bind_wheel(canvas, wheel)
 
         cols = (
             (T("col_date"), "w", 3),
@@ -1757,6 +1797,12 @@ class Almathus(tk.Tk):
                          fg=MUTED if text == "—" else fg,   # a blank is never a value
                          bg=rowbg, anchor=anchor, padx=14, pady=7
                          ).grid(row=r + 2, column=i, sticky="nsew")
+
+        # Every cell scrolls the canvas it sits in: the canvas' path name is
+        # appended to each row's bindtags, so a wheel event delivered to a Label
+        # is looked up on the canvas too, and `wheel` above sees it.
+        for w in (table, *table.winfo_children()):
+            w.bindtags((*w.bindtags(), str(canvas)))
 
     def _save_session(self, cards, total_time, correct):
         stamp = datetime.now()

@@ -743,28 +743,48 @@ class SpeechInput:
 
     def _vosk_numbers(self, audio):
         """Recognize the numbers in an utterance via Vosk's number-only grammar
-        (+N-best). Runs on the STT thread. Returns a list of ints, in order."""
+        (+N-best). Runs on the STT thread. Returns a list of ints, in order.
+
+        Fed in chunks, and every *segment* is collected: Vosk closes a segment on
+        its own when it hears a pause (``AcceptWaveform`` -> True), and that
+        segment's text is then readable only from ``Result()``. Reading just
+        ``FinalResult()`` silently threw the answer away — a capture with ~1s of
+        trailing noise ends the segment, so "quinze" landed in ``Result()`` and
+        the game heard nothing at all.
+        """
         if not self._load_vosk():
             return []
         try:
-            import json as _json
             from vosk import KaldiRecognizer
             grammar = _VOSK_GRAMMAR.get(self.lang, _VOSK_GRAMMAR["fr"])
             rec = KaldiRecognizer(self._vosk_model, float(self._rec_sr), grammar)
             rec.SetMaxAlternatives(6)          # N-best: the number is often just behind [unk]
-            rec.AcceptWaveform(self._normalize(audio).tobytes())   # gain-only (raw audio)
-            res = _json.loads(rec.FinalResult())
-            texts = ([a.get("text", "") for a in res["alternatives"]]
-                     if res.get("alternatives") else [res.get("text", "")])
-            _dbg(f"vosk alts={texts[:4]}")
-            for t in texts:                    # take the highest-confidence number
-                nums = numbers_in(t, self.lang)
-                if nums:
-                    return nums
-            return []
+            data = self._normalize(audio).tobytes()   # gain-only (raw audio)
+            step = max(2, int(self._rec_sr * 0.25) * 2)   # 0.25s chunks, int16-aligned
+            nums = []
+            for i in range(0, len(data), step):
+                if rec.AcceptWaveform(data[i:i + step]):
+                    nums += self._vosk_best(rec.Result())
+            nums += self._vosk_best(rec.FinalResult())
+            return nums
         except Exception as e:
             _dbg("vosk error:", repr(e))
             return []
+
+    def _vosk_best(self, result_json: str) -> list[int]:
+        """Numbers from the best-scoring alternative of one Vosk result that has
+        any (the top alternative is often "[unk]", with the number just behind)."""
+        import json as _json
+        res = _json.loads(result_json)
+        texts = ([a.get("text", "") for a in res["alternatives"]]
+                 if res.get("alternatives") else [res.get("text", "")])
+        if any(t for t in texts):
+            _dbg(f"vosk alts={texts[:4]}")
+        for t in texts:
+            nums = numbers_in(t, self.lang)
+            if nums:
+                return nums
+        return []
 
     def _ensure_model(self):
         """Load the parakeet model. MUST be called on the STT thread only."""

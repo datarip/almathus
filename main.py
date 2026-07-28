@@ -192,7 +192,8 @@ THEMES = {
         NUM_ON_BG="#4fd1a5", NUM_ON_FG="#10121f",
         NUM_OFF_BG="#333a63", NUM_OFF_FG="#8b93c4",
         NUM_HOVER_BG="#4b5490",
-        TITLE_ICON="🧮",
+        TITLE_SVG="mario.svg",
+        TITLE_ICON="🧮",       # fallback if the drawing cannot be loaded
     ),
     # Peach-pink page, plum ink. The whole palette flips light here, so the
     # greens and reds are darkened too: they carry text on a pale background
@@ -218,7 +219,8 @@ THEMES = {
         NUM_ON_BG="#ff7ab8", NUM_ON_FG="#3d0f26",
         NUM_OFF_BG="#ffd9e6", NUM_OFF_FG="#b07f96",
         NUM_HOVER_BG="#ffb3d3",
-        TITLE_ICON="👑",      # only a fallback: girly mode shows GIRLY_IMAGE
+        TITLE_SVG="peach.svg",
+        TITLE_ICON="👑",
     ),
 }
 
@@ -244,7 +246,6 @@ OP_SYMBOL = {
 STATS_DIR = Path(__file__).resolve().parent / "stats"
 PREFS_FILE = Path(__file__).resolve().parent / "prefs.json"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
-GIRLY_IMAGE = ASSETS_DIR / "peach.png"
 
 
 def read_prefs() -> dict:
@@ -814,11 +815,10 @@ class Almathus(tk.Tk):
             bg=CARD_BG, fg=MUTED, padx=22, pady=10).pack(side="left", padx=8)
 
     def _build_title(self, parent):
-        """'🧮 Almathus' — with the princess picture standing in for the abacus
-        in girly mode."""
+        """'<drawing> Almathus' — Mario normally, Peach in girly mode."""
         row = tk.Frame(parent, bg=BG)
         row.pack()
-        icon = self._title_image() if THEME == "girly" else None
+        icon = self._title_image()
         if icon is not None:
             # Tk keeps no reference of its own to an image: drop ours and the
             # label goes blank the moment the garbage collector runs.
@@ -830,18 +830,21 @@ class Almathus(tk.Tk):
         tk.Label(row, text="Almathus", font=self.f_big, fg=ACCENT, bg=BG).pack(side="left")
 
     def _title_image(self):
-        """The girly-mode picture, shrunk to about two lines of title text.
-        Tk can only scale by whole-number subsampling (there is no Pillow here),
-        so the source PNG just needs to be comfortably larger than that.
+        """This theme's drawing, rendered to about two lines of title text.
 
-        Returns None if the file is missing or Tk cannot decode it — the caller
-        falls back to the emoji, so a missing asset never breaks the screen."""
+        Tk 9 rasterizes SVG itself and scales to a target height on the way in,
+        so the drawing stays crisp on any screen — that is the whole reason the
+        assets are SVG and not PNG (Tk's bitmap scaler only does integer steps).
+
+        Returns None if the file is missing or cannot be rendered; the caller
+        falls back to the emoji, so a bad asset never breaks the screen."""
         try:
-            img = tk.PhotoImage(file=str(GIRLY_IMAGE))
+            return tk.PhotoImage(
+                file=str(ASSETS_DIR / TITLE_SVG),
+                format=f"svg -scaletoheight {self.f_big.metrics('linespace') * 2}",
+            )
         except tk.TclError:
             return None
-        step = max(1, round(img.height() / (self.f_big.metrics("linespace") * 2)))
-        return img.subsample(step) if step > 1 else img
 
     def _build_number_row(self, parent):
         """Row of [1]..[10] toggles: the numbers every operation is played with."""

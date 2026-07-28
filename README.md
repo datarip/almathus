@@ -32,14 +32,15 @@ python3 main.py
 ## 👑 Girly mode
 
 A button in the settings footer (*Mode princesse*) flips the whole app from the
-dark blue palette to a peach-pink one, and swaps the 🧮 in the title for the
-picture in `assets/peach.png`. It is purely cosmetic — nothing about the game
-changes — and the choice is remembered in `prefs.json` between runs.
+dark blue palette to a peach-pink one, and swaps the Mario next to the title for
+Peach. It is purely cosmetic — nothing about the game changes — and the choice
+is remembered in `prefs.json` between runs.
 
 Both palettes are the `THEMES` dict at the top of `main.py`; add a third one
-there and it needs nothing else but a way to select it. The picture is scaled
-by whole-number subsampling (Tk's only scaler without Pillow), so supply a PNG
-a few hundred pixels tall. If it is missing, the mode falls back to a 👑 emoji.
+there and it needs nothing else but a way to select it. Each names its drawing
+in `assets/` (`mario.svg`, `peach.svg`) and an emoji to fall back on if that
+file cannot be rendered. They are SVG so Tk 9 can rasterize them straight to the
+title's height — a PNG would only scale in whole steps.
 
 ## Timing & progress tracking
 

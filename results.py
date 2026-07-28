@@ -68,6 +68,10 @@ Hand-editing rules
 
 Rows that can't be parsed at all are skipped on read; they are never rewritten,
 so nothing you type here can be destroyed by the app.
+
+The progress screen can narrow itself down to one month (and print that month as
+a report), but that is only ever a *view*: this stays one flat file, appended to
+in the order the sessions were played, with no per-month sections to keep in sync.
 """
 
 from __future__ import annotations
@@ -287,6 +291,23 @@ def grade(sessions) -> tuple[int, int] | None:
 def fmt_note(note: tuple[int, int] | None) -> str:
     """`15/20`, the way it is written on the sheet. Empty when there is none."""
     return f"{note[0]}/{note[1]}" if note else ""
+
+
+def months(sessions) -> list[tuple[int, int]]:
+    """Every `(year, month)` the log has a dated row in, newest first.
+
+    The progress screen's month filter is built from this, so a month only ever
+    appears in the list once there is something to show in it.
+    """
+    return sorted({(s.day.year, s.day.month) for s in sessions if s.day}, reverse=True)
+
+
+def in_month(session: Session, ym: tuple[int, int] | None) -> bool:
+    """Is this row part of `(year, month)`? `None` means "every month", which is
+    also the only view an undated row can show up in."""
+    if ym is None:
+        return True
+    return session.day is not None and (session.day.year, session.day.month) == ym
 
 
 # --------------------------------------------------------------------------- #

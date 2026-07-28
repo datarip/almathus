@@ -308,9 +308,15 @@ COLUMNS = (("date", "w", 3), ("famille", "w", 4), ("temps", "e", 3),
            ("cartes", "e", 2), ("note", "e", 2), ("temps_moyen", "e", 4))
 
 
-def default_filename(lang: str = "fr", when: datetime | None = None) -> str:
+def default_filename(lang: str = "fr", when: datetime | None = None,
+                     month: tuple[int, int] | None = None) -> str:
+    """`almathus-progres-2026-07-28.pdf`, or `almathus-progres-2026-07.pdf` for a
+    single month: a monthly report is named by the month it covers, not by the
+    day it happened to be printed on."""
     when = when or datetime.now()
     stem = "progres" if lang == "fr" else "progress"
+    if month:
+        return f"almathus-{stem}-{month[0]:04d}-{month[1]:02d}.pdf"
     return f"almathus-{stem}-{when:%Y-%m-%d}.pdf"
 
 
@@ -321,7 +327,8 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
     reuse its `_y_scale` / `_curve` so paper and screen agree to the pixel.
     `palette` is the theme dict; `labels` carries every already-translated
     string (`title`, `subtitle`, `chart_title`, `n_sessions`, `footer`, plus one
-    per column key).
+    per column key). `labels["period"]` is optional: the month the report covers,
+    printed on every page — leave it out (or empty) for the whole history.
     """
     path = Path(path)
     when = when or datetime.now()
@@ -339,6 +346,11 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
                  anchor="e")
         y -= FS_META + 6
         pdf.text(MARGIN, y, labels["subtitle"], FS_META, palette["MUTED"])
+        # The period sits opposite the date it was printed: same line, the accent
+        # colour, so a monthly report says which month it is at a glance.
+        if labels.get("period"):
+            pdf.text(pdf.w - MARGIN, y, labels["period"], FS_META, palette["ACCENT"],
+                     bold=True, anchor="e")
         y -= 12
         pdf.line(MARGIN, y, pdf.w - MARGIN, y, palette["BORDER"])
         return y - 22

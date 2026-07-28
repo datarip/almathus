@@ -105,6 +105,9 @@ STRINGS = {
         "col_note": "Note",
         "col_avg": "Temps moyen / carte",
         "n_sessions": "{n} sessions",
+        "month_all": "Tous les mois",
+        "month_tip": "Filtrer par mois",
+        "no_month_results": "Rien pour ce mois — choisis-en un autre",
         "pdf_button": "📄 PDF",
         "pdf_tip": "Exporter en PDF",
         "pdf_dialog": "Enregistrer mes progrès en PDF",
@@ -157,6 +160,9 @@ STRINGS = {
         "col_note": "Grade",
         "col_avg": "Avg time / card",
         "n_sessions": "{n} sessions",
+        "month_all": "All months",
+        "month_tip": "Filter by month",
+        "no_month_results": "Nothing for this month — pick another one",
         "pdf_button": "📄 PDF",
         "pdf_tip": "Export to PDF",
         "pdf_dialog": "Save my progress as PDF",
@@ -174,10 +180,33 @@ OP_SPOKEN = {
            "multiplication": "times", "division": "divided by"},
 }
 
+# Month names written out, rather than `strftime("%B")`: that one follows the
+# operating system's locale, which has nothing to do with the language the app
+# was started in — a French app on an English Mac would say "July".
+MONTHS = {
+    "fr": ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
+           "août", "septembre", "octobre", "novembre", "décembre"),
+    "en": ("January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December"),
+}
+
 
 def T(key: str, **kw) -> str:
     s = STRINGS[LANG].get(key, key)
     return s.format(**kw) if kw else s
+
+
+def month_label(ym: tuple[int, int] | None) -> str:
+    """A `(year, month)` as a person says it: `Juillet 2026` / `July 2026`.
+
+    Capitalized even in French, where a month is normally lower case: this is a
+    label on a chip and a heading on a report, never a word inside a sentence.
+    `None` is the "every month" entry of the filter.
+    """
+    if ym is None:
+        return T("month_all")
+    name = MONTHS[LANG][ym[1] - 1]
+    return f"{name[:1].upper()}{name[1:]} {ym[0]}"
 
 
 # Colors
@@ -511,6 +540,116 @@ class Tooltip:
         if self.tip:
             self.tip.destroy()
             self.tip = None
+
+
+class Dropdown(Btn):
+    """A `Btn` that drops a list under itself and calls back with what was picked.
+
+    Neither a `ttk.Combobox` nor a `tk.OptionMenu`: both paint themselves in the
+    platform's own colors — the very reason `Btn` is a Label — so a native popup
+    over the pink palette comes out grey on grey. The list is a borderless
+    Toplevel instead, like `Tooltip`, made of `Btn` rows.
+
+    `options` is a list of `(value, label)` pairs; the row standing for the
+    current value is highlighted. A list too tall for the screen scrolls, so
+    years of months can pile up without the bottom of it falling off the display.
+    """
+
+    ARROW = "  ▾"
+    MAX_SCREEN = 0.6                 # of the screen height: taller lists scroll
+
+    def __init__(self, parent, options, value, command, font, **kw):
+        self.options = list(options)
+        self.value = value
+        self._on_pick = command
+        self._font = font
+        self._pop = None
+        super().__init__(parent, self._text_for(value), command=self._toggle,
+                         font=font, **kw)
+        # A screen change destroys the button; the popup is a Toplevel, so it
+        # would otherwise be left floating over whatever comes next.
+        self.bind("<Destroy>", lambda e: self._close(), add="+")
+
+    def _text_for(self, value) -> str:
+        return next((lb for v, lb in self.options if v == value), "") + self.ARROW
+
+    def _toggle(self):
+        self._close() if self._pop else self._open()
+
+    def _open(self):
+        self.update_idletasks()          # the list hangs off this button's geometry
+        self._pop = top = tk.Toplevel(self)
+        top.wm_overrideredirect(True)                # no title bar, no shadow
+        # Built out of sight: measuring the rows maps the window, and the window
+        # manager places it before it hears where we want it — so an unhidden
+        # popup flashes in the corner of the screen on its way under the button.
+        top.wm_withdraw()
+        try:
+            top.wm_attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        frame = tk.Frame(top, bg=SURFACE, highlightthickness=1,
+                         highlightbackground=BORDER)
+        frame.pack(fill="both", expand=True)
+        canvas = tk.Canvas(frame, bg=SURFACE, highlightthickness=0, bd=0)
+        canvas.pack(fill="both", expand=True)
+        rows = tk.Frame(canvas, bg=SURFACE)
+        window = canvas.create_window((0, 0), window=rows, anchor="nw")
+        here = None
+        for v, label in self.options:
+            chosen = v == self.value
+            row = Btn(rows, label, command=lambda v=v: self._choose(v), font=self._font,
+                      bg=ACCENT if chosen else SURFACE, fg=INK if chosen else TEXT,
+                      padx=16, pady=7, anchor="w")
+            row.pack(fill="x")
+            here = row if chosen else here
+
+        rows.update_idletasks()
+        w = max(rows.winfo_reqwidth(), self.winfo_width())
+        h = rows.winfo_reqheight()
+        view = min(h, int(self.winfo_screenheight() * self.MAX_SCREEN))
+        canvas.configure(width=w, height=view, scrollregion=(0, 0, w, h))
+        canvas.itemconfig(window, width=w)           # rows span the full width
+        if h > view:
+            # Bound on the Toplevel, not on the canvas: the pointer sits over a
+            # row Label, and Tk walks the event up from there to its window.
+            top.bind("<MouseWheel>",
+                     lambda e: canvas.yview_scroll(-1 * (e.delta or 1), "units"))
+            if here is not None:                     # open on the month you are on
+                canvas.yview_moveto(max(0.0, (here.winfo_y() - view / 2) / h))
+
+        # Hang it under the button, pushed back inside the screen if it overruns.
+        top.update_idletasks()
+        x = min(max(self.winfo_rootx(), 4),
+                self.winfo_screenwidth() - top.winfo_reqwidth() - 4)
+        top.wm_geometry(f"+{x}+{self.winfo_rooty() + self.winfo_height() + 4}")
+        top.wm_deiconify()
+
+        # The grab hands every click outside the list to the Toplevel itself —
+        # which is how clicking anywhere else (this button included) closes it.
+        top.bind("<ButtonRelease-1>", lambda e: e.widget is top and self._close())
+        top.bind("<Escape>", lambda e: self._close())
+        try:
+            top.grab_set()
+            top.focus_set()
+        except tk.TclError:
+            pass
+
+    def _choose(self, value):
+        self._close()
+        if value != self.value:
+            self.value = value
+            self.config(text=self._text_for(value))
+            self._on_pick(value)
+
+    def _close(self):
+        if self._pop:
+            try:
+                self._pop.grab_release()
+            except tk.TclError:
+                pass
+            self._pop.destroy()
+            self._pop = None
 
 
 # --------------------------------------------------------------------------- #
@@ -1425,8 +1564,10 @@ class Almathus(tk.Tk):
             bg=CARD_BG, fg=TEXT).pack(side="left")
         tk.Label(bar, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG
                  ).pack(side="left", padx=20)
-        tk.Label(bar, text=T("n_sessions", n=len(sessions)), font=self.f_small,
-                 fg=MUTED, bg=BG).pack(side="right")
+        # Reconfigured on every filter change: the count belongs to what is shown.
+        self._n_label = tk.Label(bar, text=T("n_sessions", n=len(sessions)),
+                                 font=self.f_small, fg=MUTED, bg=BG)
+        self._n_label.pack(side="right")
 
         if not sessions:
             tk.Label(f, text=T("no_results"), font=self.f_body, fg=MUTED, bg=BG
@@ -1442,26 +1583,78 @@ class Almathus(tk.Tk):
         self._pdf_status = tk.Label(bar, text="", font=self.f_small, fg=MUTED, bg=BG)
         self._pdf_status.pack(side="right", padx=(0, 12))
 
+        # The month filter, next to the title. Every month the log covers, newest
+        # first, plus the current one even when it is still empty — a parent
+        # opening the screen on the 1st wants to see that this month has begun.
+        # "Tous les mois" stays at the top: it is the whole history, the view
+        # this screen had before there was anything to filter.
+        logged = resultslog.months(sessions)
+        now = datetime.now()
+        current = (now.year, now.month)
+        listed = logged if current in logged else [current] + logged
+        # Open on this month, or — if nothing has been played in it yet — on the
+        # last month that was, so the screen never opens on an empty chart.
+        self._month = current if current in logged else (logged[0] if logged else current)
+        self._all_sessions = sessions
+        picker = Dropdown(bar, [(None, T("month_all"))]
+                          + [(ym, month_label(ym)) for ym in listed],
+                          self._month, self._select_month, font=self.f_small,
+                          bg=CARD_BG, fg=TEXT, padx=14, pady=7)
+        picker.pack(side="left")
+        Tooltip(picker, T("month_tip"), self.f_hint)
+
+        # Only this frame is rebuilt when the month changes, so the header — and
+        # the pick your eye just left — stays put.
+        self._progress_body = tk.Frame(f, bg=BG)
+        self._progress_body.pack(fill="both", expand=True)
+        self._render_progress()
+
+    def _select_month(self, ym: tuple[int, int] | None) -> None:
+        self._month = ym
+        self._render_progress()
+
+    def _render_progress(self):
+        """Chart + table for the month on show — the whole body of the screen."""
+        body = self._progress_body
+        for w in body.winfo_children():
+            w.destroy()
+
+        sessions = [s for s in self._all_sessions
+                    if resultslog.in_month(s, self._month)]
+        # Kept for the PDF export, which prints exactly what is on the screen.
+        self._chart, self._sessions = None, sessions
+        self._n_label.config(text=T("n_sessions", n=len(sessions)))
+
+        if not sessions:
+            tk.Label(body, text=T("no_month_results"), font=self.f_body,
+                     fg=MUTED, bg=BG).pack(expand=True)
+            return
+
         # The chart takes a third of the height; the table gets the rest and scrolls.
-        tk.Label(f, text=T("chart_title"), font=self.f_small, fg=MUTED, bg=BG,
+        tk.Label(body, text=T("chart_title"), font=self.f_small, fg=MUTED, bg=BG,
                  anchor="w").pack(fill="x", padx=32, pady=(6, 0))
-        chart = TimeChart(f, sessions, self.f_small,
+        chart = TimeChart(body, sessions, self.f_small,
                           height=max(190, int(self.winfo_height() * 0.30)))
         chart.pack(fill="x", padx=28, pady=(2, 12))
-        tk.Frame(f, bg=BORDER, height=1).pack(fill="x", padx=28)
+        tk.Frame(body, bg=BORDER, height=1).pack(fill="x", padx=28)
+        self._chart = chart
 
-        # Kept for the PDF export, which redraws this same chart as vectors.
-        self._chart, self._sessions = chart, sessions
-
-        self._build_results_table(f, sessions)
+        self._build_results_table(body, sessions)
 
     def _export_pdf(self):
-        """The progress screen on A4: same chart, whole table, current palette."""
+        """The progress screen on A4: same chart, same rows, current palette.
+
+        With a month selected that is the monthly report — the filter and the
+        export are the same view, so what you see is what gets printed.
+        """
+        if not self._sessions:                    # an empty month has nothing to print
+            self._flash_pdf_status(T("no_month_results"), MUTED)
+            return
         stamp = datetime.now()
         path = filedialog.asksaveasfilename(
             parent=self, title=T("pdf_dialog"), defaultextension=".pdf",
             initialdir=str(resultslog.RESULTS_DIR),
-            initialfile=pdfreport.default_filename(LANG, stamp),
+            initialfile=pdfreport.default_filename(LANG, stamp, self._month),
             filetypes=[("PDF", "*.pdf")],
         )
         if not path:                                   # the parent changed their mind
@@ -1473,6 +1666,9 @@ class Almathus(tk.Tk):
                 labels={
                     "title": T("progress_title"),
                     "subtitle": T("pdf_exported_on", when=stamp.strftime("%d/%m/%Y %H:%M")),
+                    # The month it covers, named on the report itself; empty when
+                    # the whole history is being printed.
+                    "period": "" if self._month is None else month_label(self._month),
                     "chart_title": T("chart_title"),
                     "n_sessions": T("n_sessions", n=len(self._sessions)),
                     "footer": T("pdf_footer"),

@@ -35,6 +35,8 @@ except Exception:  # keep the game usable even if voice.py is absent/broken
 
 DEFAULT_CARDS = 20
 
+MODES = ("addition", "subtraction", "multiplication", "division")
+
 # Operand ranges per mode. Addition/subtraction stay in 0..20 as requested;
 # multiplication/division use smaller factors so results stay kid-sized.
 RANGES = {
@@ -43,6 +45,12 @@ RANGES = {
     "multiplication": {"max_factor": 10},
     "division": {"max_factor": 10},
 }
+
+# The second operand is picked from this set — per mode, the parent/kid can turn
+# numbers off on the settings screen to drill one table at a time (e.g. only
+# [7] selected on multiplication => 3×7, 9×7, 4×7...). 0 is excluded: it would
+# make division undefined and +0 / ×0 pointless.
+NUM_MIN, NUM_MAX = 1, 10
 
 LANG = "fr"  # default language; "en" also supported
 
@@ -134,6 +142,11 @@ MODE_COLORS = {
     "multiplication": "#e15554",
     "division": "#e1bc29",
 }
+# Number toggles sit on their own dark strip so the on/off greens read the same
+# on every tile (the addition tile is itself green).
+NUM_STRIP_BG = "#10121f"
+NUM_ON_BG, NUM_ON_FG = GOOD, "#10121f"
+NUM_OFF_BG, NUM_OFF_FG = "#3a3f63", MUTED
 OP_SYMBOL = {
     "addition": "+",
     "subtraction": "−",
@@ -166,31 +179,27 @@ class Card:
         return f"{self.a} {OP_SYMBOL[self.mode]} {self.b}"
 
 
-def make_card(mode: str) -> Card:
+def make_card(mode: str, allowed: set[int] | None = None) -> Card:
+    # `b` — the number the kid operates *with* — comes from the allowed set,
+    # so locking it down to e.g. {1} yields x−1, y−1, z−1.
+    b = random.choice(sorted(allowed) if allowed else list(range(NUM_MIN, NUM_MAX + 1)))
     if mode == "addition":
-        m = RANGES["addition"]["max"]
-        a, b = random.randint(0, m), random.randint(0, m)
+        a = random.randint(0, RANGES["addition"]["max"])
         return Card(a, b, mode, a + b)
     if mode == "subtraction":
-        m = RANGES["subtraction"]["max"]
-        a = random.randint(0, m)
-        b = random.randint(0, a)          # keep the result >= 0
+        a = random.randint(b, RANGES["subtraction"]["max"])   # keep the result >= 0
         return Card(a, b, mode, a - b)
     if mode == "multiplication":
-        m = RANGES["multiplication"]["max_factor"]
-        a, b = random.randint(0, m), random.randint(0, m)
+        a = random.randint(0, RANGES["multiplication"]["max_factor"])
         return Card(a, b, mode, a * b)
     if mode == "division":
-        m = RANGES["division"]["max_factor"]
-        b = random.randint(1, m)          # no divide by zero
-        answer = random.randint(0, m)
-        a = answer * b                    # guarantees an integer result
-        return Card(a, b, mode, answer)
+        answer = random.randint(0, RANGES["division"]["max_factor"])
+        return Card(answer * b, b, mode, answer)   # a = answer*b => integer result
     raise ValueError(mode)
 
 
-def make_deck(mode: str, n: int) -> list[Card]:
-    return [make_card(mode) for _ in range(n)]
+def make_deck(mode: str, n: int, allowed: set[int] | None = None) -> list[Card]:
+    return [make_card(mode, allowed) for _ in range(n)]
 
 
 # --------------------------------------------------------------------------- #
@@ -260,6 +269,8 @@ class Almathus(tk.Tk):
         # session state
         self.mode = "addition"
         self.n_cards = DEFAULT_CARDS
+        # per-mode set of allowed second operands; everything on to start
+        self.allowed = {m: set(range(NUM_MIN, NUM_MAX + 1)) for m in MODES}
         self.deck: list[Card] = []
         self.results: list[Card] = []     # completed cards, in play order
         self.retry_queue: list[Card] = []
@@ -397,13 +408,44 @@ class Almathus(tk.Tk):
         tk.Label(col, text=T("choose_mode"), font=self.f_title, fg=TEXT, bg=BG).pack(pady=(28, 12))
         grid = tk.Frame(col, bg=BG)
         grid.pack()
-        for i, m in enumerate(("addition", "subtraction", "multiplication", "division")):
-            Btn(grid, T(m), command=lambda mm=m: self.start_game(mm), font=self.f_mode,
+        for i, m in enumerate(MODES):
+            tile = tk.Frame(grid, bg=MODE_COLORS[m])
+            tile.grid(row=i // 2, column=i % 2, padx=16, pady=14, sticky="nsew")
+            Btn(tile, T(m), command=lambda mm=m: self.start_game(mm), font=self.f_mode,
                 bg=MODE_COLORS[m], fg="#10121f", active_bg=TEXT, active_fg="#10121f",
-                width=12, padx=16, pady=22,
-                ).grid(row=i // 2, column=i % 2, padx=16, pady=14)
+                width=12, padx=16, pady=18).pack(fill="x")
+            self._build_number_row(tile, m)
 
         self._build_voice_toggle(f)
+
+    def _build_number_row(self, parent, mode: str):
+        """Row of [1]..[10] toggles: which number the operation is played with."""
+        strip = tk.Frame(parent, bg=NUM_STRIP_BG)
+        strip.pack(fill="x", padx=12, pady=(0, 12))
+        boxes: dict[int, tk.Label] = {}
+
+        def paint(n: int):
+            on = n in self.allowed[mode]
+            boxes[n].config(bg=NUM_ON_BG if on else NUM_OFF_BG,
+                            fg=NUM_ON_FG if on else NUM_OFF_FG)
+
+        def toggle(n: int):
+            sel = self.allowed[mode]
+            if n in sel:
+                if len(sel) == 1:
+                    return          # a mode always keeps at least one number
+                sel.discard(n)
+            else:
+                sel.add(n)
+            paint(n)
+
+        for n in range(NUM_MIN, NUM_MAX + 1):
+            lbl = tk.Label(strip, text=str(n), font=self.f_small, width=2,
+                           padx=0, pady=3, cursor="hand2")
+            lbl.pack(side="left", padx=2, pady=5, expand=True)
+            lbl.bind("<Button-1>", lambda e, k=n: toggle(k))
+            boxes[n] = lbl
+            paint(n)
 
     def _build_voice_toggle(self, parent):
         # Only offer the toggle when voice input actually works; otherwise show
@@ -428,7 +470,7 @@ class Almathus(tk.Tk):
     def start_game(self, mode: str):
         self.mode = mode
         self.n_cards = self.count_var.get()
-        self.deck = make_deck(mode, self.n_cards)
+        self.deck = make_deck(mode, self.n_cards, self.allowed[mode])
         self.results = []
         self.retry_queue = []
         self.idx = 0

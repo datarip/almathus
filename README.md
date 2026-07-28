@@ -33,9 +33,80 @@ python3 main.py
 
 - A **total stopwatch** counts up (bottom-right) and a **per-card timer** shows how
   long the current card is taking (bottom-left).
-- Each session is saved to `stats/<timestamp>-<mode>.json`, including per-card
-  time, attempts, and correctness — handy for spotting the operations your kid
-  struggles with over time.
+- Each session is saved twice:
+  - `results/results.csv` — one summary line per session, hand-editable, and the
+    file the **progress screen** reads (see below);
+  - `stats/<timestamp>-<mode>.json` — the full per-card detail (time, attempts,
+    correctness), for finer analysis.
+
+## 📈 Progress screen
+
+Reachable from the **settings screen** (*Mes progrès*) and from the **recap** after
+a game. It reads `results/results.csv` and shows:
+
+- a **chart** of session time over the dates — x is real calendar time, so gaps
+  and plateaus are visible and several sessions on one day stack on the same
+  date. Hover a dot for its date, family and time;
+- the **table** of every session, newest first, with a *temps moyen / carte*
+  column.
+
+## The results log — `results/results.csv`
+
+The digital continuation of the paper *Calcul mental* sheet (Date / Famille /
+Temps), plus the average column. **It is the database**: every finished session is
+appended at the bottom, and anything you edit by hand is what the app shows next
+time. The app only ever appends — it never rewrites what you typed.
+
+### Header definition
+
+Canonical French header (written when `LANG = "fr"`):
+
+```csv
+date,famille,temps,cartes,temps_moyen_par_carte
+2026-06-16,-1,0:31,,
+2026-07-28,-2 et -3,1:35.4,20,4.8
+```
+
+Canonical English header (written when `LANG = "en"`):
+
+```csv
+date,family,time,cards,average_time_per_card
+```
+
+| field | 🇫🇷 header | 🇬🇧 header | meaning |
+|---|---|---|---|
+| date | `date` | `date` | day the session was played |
+| famille | `famille` | `family` | which family was drilled — `-3`, `-1 et -2`, `x7` |
+| temps | `temps` | `time` | total time of the whole session |
+| cartes | `cartes` | `cards` | how many cards were asked |
+| temps moyen | `temps_moyen_par_carte` | `average_time_per_card` | `temps / cartes` |
+
+**Either language is read**, in any column order. Header matching ignores case,
+accents, spaces and underscores (`Temps`, `temps`, `Temps moyen par carte` and
+`temps_moyen` all work), and a few synonyms are accepted — see `ALIASES` in
+`results.py`. Columns the app doesn't know (a `notes` column of your own) are
+left untouched when it appends.
+
+### Editing it by hand
+
+| column | what you can write |
+|---|---|
+| **date** | `2026-06-16`, `16/06/2026`, or just `16/06`. **Leave it empty to repeat the row above** — exactly like the blank cells on the paper sheet. |
+| **famille** | free text. The app writes the operator sign then the numbers that were switched on: `-3`, `-1 et -2`, `x7`, `+1–10`. Signs are ASCII (`+ - x /`) so the column stays easy to type. |
+| **temps** | `1:23` · `1:23.4` · `1'23` · `1'23"4` · `83"` · `83` · `83.4` · `1,23` · `2,01,95`. A comma followed by exactly two digits below 60 is the minute separator (`1,29` = 1 min 29 s); otherwise it's a decimal point (`32,60` = 32.6 s). **Use a dot when you mean a decimal.** |
+| **cartes** | an integer, or empty when unknown (the old paper rows). |
+| **temps moyen** | plain seconds. Leave it empty and it's computed as `temps / cartes`; fill it in for rows where `cartes` is unknown. |
+
+Rows that can't be read at all are skipped, never rewritten.
+
+> The *temps moyen / carte* here is **not** the average on the recap screen. The
+> recap averages the time spent thinking on each card; this column divides the
+> whole session — answer pauses and the reinforcement round included — by the card
+> count, so it always matches the two columns beside it.
+
+The file ships seeded with the sessions from the paper sheet (16/06 → 12/07).
+Blank date cells there were carried down from the row above, the way the sheet
+reads.
 
 ## Ranges
 
@@ -128,5 +199,6 @@ toggle is a good next iteration.
 ## Roadmap / next iterations
 
 - Language toggle on the settings screen.
-- A small dashboard that reads `stats/*.json` and charts progress per operation.
+- Per-operation breakdown on the progress screen, from the richer `stats/*.json`
+  (which facts are still slow, not just the session total).
 - Tune VAD thresholds / timeouts in `voice.py` if your room is noisy.

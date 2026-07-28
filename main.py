@@ -6,7 +6,10 @@ Pure-stdlib Tkinter app. Runs anywhere Python has Tk:
 
 Flow:  Settings -> 5-4-3-2-1-GO! countdown -> cards -> reinforcement round -> recap.
 Per-card time is measured so a parent can see which operations need work.
-Sessions are logged to ./stats/*.json for progress tracking.
+
+Every session is logged twice: the full per-card detail to ./stats/*.json, and
+one summary line to ./results/results.csv — the hand-editable log the progress
+screen charts and tabulates (see results.py for the header definition).
 """
 
 from __future__ import annotations
@@ -23,6 +26,8 @@ from pathlib import Path
 
 import tkinter as tk
 from tkinter import font as tkfont
+
+import results as resultslog
 
 try:
     import voice as voicemod
@@ -84,6 +89,17 @@ STRINGS = {
         "didnt_get": "Je n'ai pas compris, réessaie 🎤",
         "mic_denied": "Micro non autorisé — Réglages ▸ Confidentialité ▸ Microphone",
         "score_spoken": "Tu as eu {c} sur {n}.",
+        "progress": "📈 Mes progrès",
+        "back": "← Retour",
+        "progress_title": "📈 Mes progrès",
+        "chart_title": "Temps par session",
+        "no_results": "Pas encore de résultats — joue une partie !",
+        "col_date": "Date",
+        "col_family": "Famille",
+        "col_time": "Temps",
+        "col_cards": "Cartes",
+        "col_avg": "Temps moyen / carte",
+        "n_sessions": "{n} sessions",
     },
     "en": {
         "title": "Almathus — math through play",
@@ -115,6 +131,17 @@ STRINGS = {
         "didnt_get": "I didn't catch that, try again 🎤",
         "mic_denied": "Mic not allowed — Settings ▸ Privacy ▸ Microphone",
         "score_spoken": "You got {c} out of {n}.",
+        "progress": "📈 My progress",
+        "back": "← Back",
+        "progress_title": "📈 My progress",
+        "chart_title": "Time per session",
+        "no_results": "No results yet — play a game!",
+        "col_date": "Date",
+        "col_family": "Family",
+        "col_time": "Time",
+        "col_cards": "Cards",
+        "col_avg": "Avg time / card",
+        "n_sessions": "{n} sessions",
     },
 }
 
@@ -295,6 +322,131 @@ class Btn(tk.Label):
     def set_colors(self, bg, fg):
         self._bg, self._fg = bg, fg
         self.config(bg=bg, fg=fg)
+
+
+# --------------------------------------------------------------------------- #
+# Progress chart
+#
+# One measure (session time) over one axis (the date), so it is one series: a
+# thin line with dots, a recessive horizontal grid, and a hover tooltip. No
+# legend — a single series is named by the title above it — and deliberately no
+# color-by-famille: families are categorical and open-ended (any text the parent
+# types), and a cycled palette would be unreadable. The famille lives in the
+# tooltip and in the table instead.
+# --------------------------------------------------------------------------- #
+
+
+class TimeChart(tk.Canvas):
+    PAD_L, PAD_R, PAD_T, PAD_B = 66, 24, 16, 30
+    HIT = 32                       # px: how close the pointer must be to a dot
+    # Round y steps a parent reads at a glance: 5 s up to 15 min.
+    STEPS = (5, 10, 15, 20, 30, 60, 90, 120, 180, 300, 600, 900)
+
+    def __init__(self, parent, sessions, font, height=220):
+        super().__init__(parent, bg=BG, height=height, highlightthickness=0, bd=0)
+        # Plotting needs both a date (x) and a time (y). Rows missing either
+        # still show up in the table — they just can't be placed on the chart.
+        self.rows = [s for s in sessions if s.day and s.seconds is not None]
+        self.font = font
+        self.pts: list[tuple[float, float, object]] = []
+        self.bind("<Configure>", lambda e: self.redraw())
+        self.bind("<Motion>", self._hover)
+        self.bind("<Leave>", lambda e: self.delete("tip"))
+
+    def _y_scale(self, peak: float) -> tuple[int, float]:
+        """A step size and a top of scale that give at most 5 gridlines."""
+        for step in self.STEPS:
+            ticks = int(peak / step) + (1 if peak % step else 0)
+            if ticks <= 5:
+                return step, max(step, ticks * step)
+        step = self.STEPS[-1]
+        return step, max(step, (int(peak / step) + 1) * step)
+
+    def redraw(self):
+        self.delete("all")
+        self.pts = []
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 160 or h < 90 or not self.rows:
+            return
+        x0, x1 = self.PAD_L, w - self.PAD_R
+        y0, y1 = self.PAD_T, h - self.PAD_B
+        step, top = self._y_scale(max(s.seconds for s in self.rows))
+
+        def Y(v):
+            return y1 - (v / top) * (y1 - y0)
+
+        # grid + y labels (a zero baseline: these are durations, so the height
+        # of a point has to mean its whole magnitude)
+        v = 0.0
+        while v <= top + 1e-9:
+            y = Y(v)
+            self.create_line(x0, y, x1, y, fill=BORDER)
+            self.create_text(x0 - 10, y, text=resultslog.fmt_duration(v, 0),
+                             anchor="e", font=self.font, fill=MUTED)
+            v += step
+
+        # x is real calendar time, so plateaus and gaps are visible; several
+        # sessions on one day simply stack on the same date.
+        ords = [s.day.toordinal() for s in self.rows]
+        lo, span = min(ords), max(ords) - min(ords)
+
+        def X(o):
+            return (x0 + x1) / 2 if not span else x0 + (o - lo) / span * (x1 - x0)
+
+        pts = [(X(o), Y(s.seconds), s) for o, s in zip(ords, self.rows)]
+        if len(pts) > 1:
+            self.create_line([c for p in pts for c in p[:2]], fill=ACCENT, width=2)
+        for x, y, _ in pts:
+            # a 2px background ring keeps overlapping dots legible
+            self.create_oval(x - 4, y - 4, x + 4, y + 4,
+                             fill=ACCENT, outline=BG, width=2)
+        self.pts = pts
+
+        # x labels: distinct days, thinned by *pixel* distance — the axis is
+        # calendar time, so evenly spaced days are not evenly spaced columns
+        # (two sessions a day apart would print on top of each other).
+        gap = self.font.measure("00/00") + 22
+        kept: list[tuple[object, float]] = []
+        for d in sorted({s.day for s in self.rows}):
+            xd = X(d.toordinal())
+            if not kept or xd - kept[-1][1] >= gap:
+                kept.append((d, xd))
+        last = max(s.day for s in self.rows)
+        if kept and kept[-1][0] != last:      # the newest date always gets a label
+            xd = X(last.toordinal())
+            while kept and xd - kept[-1][1] < gap:
+                kept.pop()
+            kept.append((last, xd))
+        for d, xd in kept:
+            self.create_text(xd, y1 + 14, text=d.strftime("%d/%m"),
+                             anchor="n", font=self.font, fill=MUTED)
+
+    def _hover(self, e):
+        self.delete("tip")
+        best, closest = None, self.HIT ** 2
+        for x, y, s in self.pts:
+            d = (x - e.x) ** 2 + (y - e.y) ** 2
+            if d < closest:
+                best, closest = (x, y, s), d
+        if not best:
+            return
+        x, y, s = best
+        lines = [s.day.strftime("%d/%m/%Y"),
+                 f"{s.famille or '—'} · {resultslog.fmt_duration(s.seconds)}"]
+        if s.avg is not None:
+            lines.append(f"{T('col_avg')} : {s.avg:.1f} s")
+
+        lh = self.font.metrics("linespace") + 2
+        bw = max(self.font.measure(t) for t in lines) + 20
+        bh = lh * len(lines) + 14
+        bx = min(max(x + 14, 4), self.winfo_width() - bw - 4)
+        by = min(max(y - bh - 12, 4), self.winfo_height() - bh - 4)
+        self.create_rectangle(bx, by, bx + bw, by + bh,
+                              fill=SURFACE, outline=BORDER, tags="tip")
+        for i, t in enumerate(lines):
+            self.create_text(bx + 10, by + 7 + i * lh, text=t, anchor="nw",
+                             font=self.font, fill=ACCENT if i == 0 else TEXT, tags="tip")
+        self.create_oval(x - 6, y - 6, x + 6, y + 6, outline=TEXT, width=2, tags="tip")
 
 
 # --------------------------------------------------------------------------- #
@@ -510,7 +662,11 @@ class Almathus(tk.Tk):
                 active_bg=TEXT, active_fg=INK, padx=20, pady=22
                 ).grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="nsew")
 
-        self._build_voice_toggle(col)
+        footer = tk.Frame(col, bg=BG)
+        footer.pack(pady=(18, 4))
+        self._build_voice_toggle(footer)
+        Btn(footer, T("progress"), command=self.show_progress, font=self.f_body,
+            bg=CARD_BG, fg=MUTED, padx=22, pady=10).pack(side="left", padx=8)
 
     def _build_number_row(self, parent):
         """Row of [1]..[10] toggles: the numbers every operation is played with."""
@@ -572,7 +728,7 @@ class Almathus(tk.Tk):
             btn.set_colors(GOOD if on else CARD_BG, "#10121f" if on else MUTED)
 
         btn._command = lambda: (self.voice_enabled.set(not self.voice_enabled.get()), refresh())
-        btn.pack(pady=(22, 4))
+        btn.pack(side="left", padx=8)
         refresh()
 
     # ------------------------------------------------------------------ #
@@ -839,6 +995,8 @@ class Almathus(tk.Tk):
         btns.pack(side="bottom", pady=28)
         Btn(btns, T("again"), command=self.show_settings, font=self.f_mode,
             bg=GOOD, fg="#10121f").pack(side="left", padx=12)
+        Btn(btns, T("progress"), command=self.show_progress, font=self.f_mode,
+            bg=CARD_BG, fg=TEXT).pack(side="left", padx=12)
         Btn(btns, T("quit"), command=self._on_quit, font=self.f_mode,
             bg=CARD_BG, fg=TEXT, active_bg=BAD).pack(side="left", padx=12)
 
@@ -859,10 +1017,119 @@ class Almathus(tk.Tk):
             return "💪", "ENCORE UN EFFORT !" if LANG == "fr" else "KEEP GOING!"
         return "🤕", "ALLEZ, ENCORE UN PEU DE TRAVAIL !" if LANG == "fr" else "A BIT MORE PRACTICE!"
 
+    # ------------------------------------------------------------------ #
+    # Screen 5: progress — the results CSV, charted and tabulated
+    # ------------------------------------------------------------------ #
+    def show_progress(self):
+        self._clear()
+        sessions = resultslog.load_sessions()
+
+        f = tk.Frame(self.container, bg=BG)
+        f.pack(fill="both", expand=True)
+
+        bar = tk.Frame(f, bg=BG)
+        bar.pack(fill="x", padx=28, pady=(18, 6))
+        Btn(bar, T("back"), command=self.show_settings, font=self.f_body,
+            bg=CARD_BG, fg=TEXT).pack(side="left")
+        tk.Label(bar, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG
+                 ).pack(side="left", padx=20)
+        tk.Label(bar, text=T("n_sessions", n=len(sessions)), font=self.f_small,
+                 fg=MUTED, bg=BG).pack(side="right")
+
+        if not sessions:
+            tk.Label(f, text=T("no_results"), font=self.f_body, fg=MUTED, bg=BG
+                     ).pack(expand=True)
+            return
+
+        # The chart takes a third of the height; the table gets the rest and scrolls.
+        tk.Label(f, text=T("chart_title"), font=self.f_small, fg=MUTED, bg=BG,
+                 anchor="w").pack(fill="x", padx=32, pady=(6, 0))
+        chart = TimeChart(f, sessions, self.f_small,
+                          height=max(190, int(self.winfo_height() * 0.30)))
+        chart.pack(fill="x", padx=28, pady=(2, 12))
+        tk.Frame(f, bg=BORDER, height=1).pack(fill="x", padx=28)
+
+        self._build_results_table(f, sessions)
+
+    def _build_results_table(self, parent, sessions):
+        """Every logged session, oldest first — the paper sheet, on screen."""
+        wrap = tk.Frame(parent, bg=BG)
+        wrap.pack(fill="both", expand=True, padx=28, pady=(0, 20))
+
+        canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0, bd=0)
+        bar = tk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        table = tk.Frame(canvas, bg=BG)
+        window = canvas.create_window((0, 0), window=table, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(window, width=e.width))
+        table.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        # Only steal the wheel while the pointer is over the table. The pointer
+        # is usually over a row Label, not the canvas, so the binding has to be
+        # global — hence dropping it again on the way out, and on destroy (a
+        # screen change kills the canvas without ever sending <Leave>).
+        def wheel(ev):
+            if canvas.winfo_exists():
+                canvas.yview_scroll(-1 * (ev.delta or 1), "units")
+
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", wheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        canvas.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        cols = (
+            (T("col_date"), "w", 3),
+            (T("col_family"), "w", 4),
+            (T("col_time"), "e", 3),
+            (T("col_cards"), "e", 2),
+            (T("col_avg"), "e", 4),
+        )
+        for i, (_, _, weight) in enumerate(cols):
+            table.grid_columnconfigure(i, weight=weight)
+
+        for i, (label, anchor, _) in enumerate(cols):
+            tk.Label(table, text=label, font=self.f_small, fg=MUTED, bg=BG,
+                     anchor=anchor, padx=14, pady=8).grid(row=0, column=i, sticky="nsew")
+        tk.Frame(table, bg=BORDER, height=1).grid(row=1, column=0, columnspan=len(cols),
+                                                  sticky="ew")
+
+        # Newest first: the session that just finished sits right under the
+        # header, and the history scrolls away below it.
+        for r, s in enumerate(reversed(sessions)):
+            rowbg = SURFACE if r % 2 else CARD_BG
+            cells = (
+                (s.day.strftime("%d/%m/%Y") if s.day else "—", TEXT),
+                (s.famille or "—", TEXT),
+                (resultslog.fmt_duration(s.seconds) if s.seconds is not None
+                 else (s.raw_time or "—"), ACCENT),
+                (str(s.cards) if s.cards else "—", MUTED),
+                (f"{s.avg:.1f} s" if s.avg is not None else "—", GOOD),
+            )
+            for i, ((text, fg), (_, anchor, _)) in enumerate(zip(cells, cols)):
+                tk.Label(table, text=text, font=self.f_small,
+                         fg=MUTED if text == "—" else fg,   # a blank is never a value
+                         bg=rowbg, anchor=anchor, padx=14, pady=7
+                         ).grid(row=r + 2, column=i, sticky="nsew")
+
     def _save_session(self, cards, total_time, correct):
+        stamp = datetime.now()
+
+        # One summary line in the CSV log — the file the progress screen reads
+        # and the parent can edit by hand. `famille` records what was drilled:
+        # the operator sign plus the numbers that were switched on ("-1 et -2").
+        resultslog.append_session(
+            day=stamp.date(),
+            famille=resultslog.famille_label(self.mode, self.allowed, LANG),
+            seconds=total_time,
+            cards=len(cards),
+            lang=LANG,
+        )
+
+        # ...and the full per-card detail as JSON, for finer analysis later.
         try:
             STATS_DIR.mkdir(exist_ok=True)
-            stamp = datetime.now()
             payload = {
                 "timestamp": stamp.isoformat(timespec="seconds"),
                 "mode": self.mode,

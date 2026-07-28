@@ -48,8 +48,15 @@ Hand-editing rules
   separator (`1,29` = 1 min 29 s); otherwise it is a decimal point
   (`32,60` = 32.6 s). Use a dot when you mean a decimal.
 * **cartes** — an integer, or empty if unknown (the old paper rows).
-* **temps_moyen_par_carte** — normally left to the app. If empty it is computed
-  as `temps / cartes`; fill it in by hand for rows where `cartes` is unknown.
+* **temps_moyen_par_carte** — normally left to the app, in plain seconds. If
+  empty it is computed as `temps / cartes`; fill it in by hand for the old paper
+  rows, where `cartes` is unknown.
+
+  Note this is **not** the average the recap screen shows. The recap averages the
+  time spent thinking on each card; this column divides the *whole* session —
+  including the pause after each answer and the reinforcement round — by the
+  number of cards, so it stays consistent with the two columns beside it and can
+  be checked with a calculator.
 
 Rows that can't be parsed at all are skipped on read; they are never rewritten,
 so nothing you type here can be destroyed by the app.
@@ -250,8 +257,9 @@ def _header_map(header: list[str]) -> dict[str, int]:
     return out
 
 
-def load_sessions(path: Path = RESULTS_FILE) -> list[Session]:
+def load_sessions(path: Path | None = None) -> list[Session]:
     """Every readable row, oldest first. Blank dates inherit the row above."""
+    path = path or RESULTS_FILE
     try:
         with path.open(newline="", encoding="utf-8-sig") as fh:
             rows = list(csv.reader(fh))
@@ -316,13 +324,14 @@ def famille_label(mode: str, numbers: set[int], lang: str = "fr") -> str:
 
 
 def append_session(day: _date, famille: str, seconds: float, cards: int,
-                   lang: str = "fr", path: Path = RESULTS_FILE) -> None:
+                   lang: str = "fr", path: Path | None = None) -> None:
     """Add one line at the bottom, matching whatever header the file already has.
 
     The file wins: if it was hand-edited into English, or its columns reordered,
     or extra columns added, the new row follows it. Only a missing file gets a
     fresh header, in the app's current language.
     """
+    path = path or RESULTS_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
 
     header: list[str] = []
@@ -353,7 +362,9 @@ def append_session(day: _date, famille: str, seconds: float, cards: int,
         "famille": famille,
         "temps": fmt_duration(seconds),
         "cartes": str(cards),
-        "temps_moyen": fmt_duration(seconds / cards) if cards else "",
+        # plain seconds: a per-card average reads better as `4.8` than `0:04.8`
+        # (and is read back just as happily).
+        "temps_moyen": f"{seconds / cards:.1f}" if cards else "",
     }
     row = [""] * len(header)
     for field, i in cols.items():

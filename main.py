@@ -348,6 +348,9 @@ class TimeChart(tk.Canvas):
         # still show up in the table — they just can't be placed on the chart.
         self.rows = [s for s in sessions if s.day and s.seconds is not None]
         self.font = font
+        # Reserve the bottom band from the real font metrics — the fonts scale
+        # with the screen, so a fixed 30 px clipped the date labels on a tall one.
+        self.PAD_B = font.metrics("linespace") + 16
         self.pts: list[tuple[float, float, object]] = []
         self.bind("<Configure>", lambda e: self.redraw())
         self.bind("<Motion>", self._hover)
@@ -418,7 +421,7 @@ class TimeChart(tk.Canvas):
                 kept.pop()
             kept.append((last, xd))
         for d, xd in kept:
-            self.create_text(xd, y1 + 14, text=d.strftime("%d/%m"),
+            self.create_text(xd, y1 + 10, text=d.strftime("%d/%m"),
                              anchor="n", font=self.font, fill=MUTED)
 
     def _hover(self, e):

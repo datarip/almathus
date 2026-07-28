@@ -317,6 +317,7 @@ class SpeechInput:
         self._sd = None
         self._np = None
         self._silent = False   # set True when the last capture was pure silence (no mic access)
+        self._silent_streak = 0  # consecutive silent captures (2 in a row = really no mic)
         self._busy = False     # guard against overlapping listen() calls
         self._rec_sr = _SAMPLE_RATE
         self._jobs: queue.Queue = queue.Queue()   # audio -> the one STT thread
@@ -445,9 +446,15 @@ class SpeechInput:
         try:
             self._silent = False
             audio = self._record(on_state)
-            if self._silent and on_state:
-                _dbg("capture SILENT -> no_mic")
+            # Two silent captures in a row before crying "no mic": the caller stops
+            # re-arming on that signal, so one unlucky window (a stream hiccup, a
+            # capture cut short) used to leave the kid talking to a deaf card.
+            self._silent_streak = self._silent_streak + 1 if self._silent else 0
+            if self._silent_streak >= 2 and on_state:
+                _dbg(f"capture SILENT x{self._silent_streak} -> no_mic")
                 on_state("no_mic")     # only silence -> no mic access / no usable device
+            elif self._silent:
+                _dbg("capture SILENT (1st) -> keep listening")
             self._jobs.put((audio, on_result, on_state, pick))
         except Exception as e:
             _dbg("capture EXCEPTION:", repr(e))

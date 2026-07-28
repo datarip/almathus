@@ -206,27 +206,60 @@ class Card:
         return f"{self.a} {OP_SYMBOL[self.mode]} {self.b}"
 
 
-def make_card(mode: str, allowed: set[int] | None = None) -> Card:
-    # `b` — the number the kid operates *with* — comes from the allowed set,
-    # so locking it down to e.g. {1} yields x−1, y−1, z−1.
-    b = random.choice(sorted(allowed) if allowed else list(range(NUM_MIN, NUM_MAX + 1)))
+def make_card(mode: str, a: int, b: int) -> Card:
     if mode == "addition":
-        a = random.randint(0, RANGES["addition"]["max"])
         return Card(a, b, mode, a + b)
     if mode == "subtraction":
-        a = random.randint(b, RANGES["subtraction"]["max"])   # keep the result >= 0
         return Card(a, b, mode, a - b)
     if mode == "multiplication":
-        a = random.randint(0, RANGES["multiplication"]["max_factor"])
         return Card(a, b, mode, a * b)
     if mode == "division":
-        answer = random.randint(0, RANGES["division"]["max_factor"])
-        return Card(answer * b, b, mode, answer)   # a = answer*b => integer result
+        return Card(a, b, mode, a // b)
     raise ValueError(mode)
 
 
+def every_operation(mode: str, allowed: set[int]) -> list[tuple[int, int]]:
+    """Every distinct operation this mode can ask with these numbers.
+
+    `b` — the number the kid operates *with* — is the one taken from the allowed
+    set, so locking it down to {1} yields x−1, y−1, z−1.
+    """
+    pairs: list[tuple[int, int]] = []
+    for b in sorted(allowed):
+        if mode == "addition":
+            pairs += [(a, b) for a in range(RANGES["addition"]["max"] + 1)]
+        elif mode == "subtraction":
+            # start at b so the result never goes negative
+            pairs += [(a, b) for a in range(b, RANGES["subtraction"]["max"] + 1)]
+        elif mode == "multiplication":
+            pairs += [(a, b) for a in range(RANGES["multiplication"]["max_factor"] + 1)]
+        elif mode == "division":
+            # a = answer*b, which guarantees an integer result
+            pairs += [(ans * b, b) for ans in range(RANGES["division"]["max_factor"] + 1)]
+        else:
+            raise ValueError(mode)
+    return pairs
+
+
 def make_deck(mode: str, n: int, allowed: set[int] | None = None) -> list[Card]:
-    return [make_card(mode, allowed) for _ in range(n)]
+    """Deal n cards as a shuffled bag: no operation comes back until every other
+    one has been asked. Drawing each card independently meant the same easy sum
+    could show up two or three times in a round.
+
+    Locking the numbers down can leave fewer distinct operations than cards asked
+    for (7× has only 11 facts). The card count wins there — the bag is reshuffled
+    and dealt again, so repeats start only once the kid has seen the whole set.
+    """
+    pool = every_operation(mode, allowed or set(range(NUM_MIN, NUM_MAX + 1)))
+    if not pool:
+        return []
+    deck: list[Card] = []
+    while len(deck) < n:
+        bag = random.sample(pool, len(pool))
+        if deck and len(bag) > 1 and bag[0] == (deck[-1].a, deck[-1].b):
+            bag.append(bag.pop(0))       # no repeat across the seam either
+        deck += [make_card(mode, a, b) for a, b in bag[:n - len(deck)]]
+    return deck
 
 
 # --------------------------------------------------------------------------- #

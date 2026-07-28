@@ -62,9 +62,11 @@ a game. It reads `results/results.csv` and shows:
   spike that said nothing about progress). x is real calendar time, so gaps and
   plateaus are visible. Hover a dot for its date, families, session count and
   average. The curve is a monotone cubic through the points: soft, but it never
-  dips below a value the kid actually scored;
-- the **table** of every session, newest first, with a *temps moyen / carte*
-  column;
+  dips below a value the kid actually scored. Days that recorded a score also
+  carry a small **note tag** over their dot — `18/20`, right answers over cards
+  asked — which steps up out of the way when two tags would collide;
+- the **table** of every session, newest first, with a *note* column (`18/20`)
+  and a *temps moyen / carte* column;
 - a **📄 PDF** button in the top-right corner (hover it for the *Exporter en PDF*
   bubble). It asks where to save, then writes an **A4** report — the same chart,
   redrawn as vectors, and the whole table flowing over as many pages as it
@@ -78,22 +80,23 @@ a game. It reads `results/results.csv` and shows:
 The digital continuation of the paper *Calcul mental* sheet (Date / Famille /
 Temps), plus the average column. **It is the database**: every finished session is
 appended at the bottom, and anything you edit by hand is what the app shows next
-time. The app only ever appends — it never rewrites what you typed.
+time. The app only ever appends — the one exception is the header line, which
+grows when a column it knows about is missing from your file (see below).
 
 ### Header definition
 
 Canonical French header (written when `LANG = "fr"`):
 
 ```csv
-date,famille,temps,cartes,temps_moyen_par_carte
-2026-06-16,-1,0:31,,
-2026-07-28,-2 et -3,1:35.4,20,4.8
+date,famille,temps,cartes,note,temps_moyen_par_carte
+2026-06-16,-1,0:31,,,
+2026-07-28,-2 et -3,1:35.4,20,18,4.8
 ```
 
 Canonical English header (written when `LANG = "en"`):
 
 ```csv
-date,family,time,cards,average_time_per_card
+date,family,time,cards,grade,average_time_per_card
 ```
 
 | field | 🇫🇷 header | 🇬🇧 header | meaning |
@@ -102,13 +105,17 @@ date,family,time,cards,average_time_per_card
 | famille | `famille` | `family` | which family was drilled — `-3`, `-1 et -2`, `x7` |
 | temps | `temps` | `time` | total time of the whole session |
 | cartes | `cartes` | `cards` | how many cards were asked |
+| note | `note` | `grade` | cards answered right on the first try |
 | temps moyen | `temps_moyen_par_carte` | `average_time_per_card` | `temps / cartes` |
 
 **Either language is read**, in any column order. Header matching ignores case,
 accents, spaces and underscores (`Temps`, `temps`, `Temps moyen par carte` and
 `temps_moyen` all work), and a few synonyms are accepted — see `ALIASES` in
-`results.py`. Columns the app doesn't know (a `notes` column of your own) are
-left untouched when it appends.
+`results.py`. Columns the app doesn't know (a `commentaire` column of your own)
+are left untouched when it appends. A column it *does* know but your file lacks
+— `note` in a file written before that column existed — is added to the end of
+the header the first time there is something to write in it; every existing row
+keeps its cells.
 
 ### Editing it by hand
 
@@ -118,6 +125,7 @@ left untouched when it appends.
 | **famille** | free text. The app writes the operator sign then the numbers that were switched on: `-3`, `-1 et -2`, `x7`, `+1–10`. Signs are ASCII (`+ - x /`) so the column stays easy to type. |
 | **temps** | `1:23` · `1:23.4` · `1'23` · `1'23"4` · `83"` · `83` · `83.4` · `1,23` · `2,01,95`. A comma followed by exactly two digits below 60 is the minute separator (`1,29` = 1 min 29 s); otherwise it's a decimal point (`32,60` = 32.6 s). **Use a dot when you mean a decimal.** |
 | **cartes** | an integer, or empty when unknown (the old paper rows). |
+| **note** | how many cards were right on the first try, as a bare number (`15`) — the denominator is the `cartes` cell beside it. A hand-written `15/20` is read too, keeping only the numerator. Screen, chart and PDF all show it as `15/20`. |
 | **temps moyen** | plain seconds. Leave it empty and it's computed as `temps / cartes`; fill it in for rows where `cartes` is unknown. |
 
 Rows that can't be read at all are skipped, never rewritten.

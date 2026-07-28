@@ -102,6 +102,7 @@ STRINGS = {
         "col_family": "Famille",
         "col_time": "Temps",
         "col_cards": "Cartes",
+        "col_note": "Note",
         "col_avg": "Temps moyen / carte",
         "n_sessions": "{n} sessions",
         "pdf_button": "📄 PDF",
@@ -153,6 +154,7 @@ STRINGS = {
         "col_family": "Family",
         "col_time": "Time",
         "col_cards": "Cards",
+        "col_note": "Grade",
         "col_avg": "Avg time / card",
         "n_sessions": "{n} sessions",
         "pdf_button": "📄 PDF",
@@ -530,6 +532,7 @@ class Tooltip:
 class TimeChart(tk.Canvas):
     PAD_L, PAD_R, PAD_T, PAD_B = 66, 24, 16, 30
     HIT = 32                       # px: how close the pointer must be to a dot
+    NOTE_GAP = 12                  # px: clearance between a note tag and its dot
     # Round y steps a parent reads at a glance: 5 s up to 15 min.
     STEPS = (5, 10, 15, 20, 30, 60, 90, 120, 180, 300, 600, 900)
 
@@ -545,6 +548,10 @@ class TimeChart(tk.Canvas):
         self.days = [(d, sum(g_.seconds for g_ in g) / len(g), g)
                      for d, g in sorted(by_day.items())]
         self.font = font
+        # A note tag sits above its dot, so the plot needs headroom for one —
+        # otherwise the best day's tag is clipped by the top of the canvas.
+        if any(resultslog.grade(g) for _, _, g in self.days):
+            self.PAD_T = font.metrics("linespace") + 22
         # Reserve the bottom band from the real font metrics — the fonts scale
         # with the screen, so a fixed 30 px clipped the date labels on a tall one.
         self.PAD_B = font.metrics("linespace") + 16
@@ -641,6 +648,7 @@ class TimeChart(tk.Canvas):
             self.create_oval(x - 4, y - 4, x + 4, y + 4,
                              fill=ACCENT, outline=BG, width=2)
         self.pts = pts
+        self._draw_notes(pts)
 
         # x labels: distinct days, thinned by *pixel* distance — the axis is
         # calendar time, so evenly spaced days are not evenly spaced columns
@@ -660,6 +668,55 @@ class TimeChart(tk.Canvas):
         for d, xd in kept:
             self.create_text(xd, y1 + 10, text=d.strftime("%d/%m"),
                              anchor="n", font=self.font, fill=MUTED)
+
+    def _round_rect(self, x0, y0, x1, y1, r, **kw):
+        """Tk has no rounded rectangle. A polygon that repeats its corner points
+        and is then smoothed gives one: the doubled points pin the straight
+        edges, and the single ones round the turns."""
+        return self.create_polygon(
+            x0 + r, y0, x1 - r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y0 + r,
+            x1, y1 - r, x1, y1 - r, x1, y1, x1 - r, y1, x1 - r, y1, x0 + r, y1,
+            x0 + r, y1, x0, y1, x0, y1 - r, x0, y1 - r, x0, y0 + r, x0, y0 + r,
+            x0, y0, smooth=True, **kw)
+
+    def _draw_notes(self, pts):
+        """The day's note as a small tag over its dot — `15/20`, the number the
+        sheet is really about. Days that never recorded one (the old paper rows)
+        simply get no tag.
+
+        Tags are placed left to right; one that would land on a tag already
+        placed climbs above it and trades its speech-bubble tail for a thin
+        stem, so it still says which dot it belongs to.
+        """
+        placed: list[tuple[float, float, float, float]] = []
+        bh = self.font.metrics("linespace") + 6
+
+        def free(bx, by, bw):
+            return not any(bx < px + pw and px < bx + bw and by < py + ph
+                           and py < by + bh for px, py, pw, ph in placed)
+
+        for x, y, (_, _, group) in pts:
+            text = resultslog.fmt_note(resultslog.grade(group))
+            if not text:
+                continue
+            bw = self.font.measure(text) + 14
+            bx = min(max(x - bw / 2, 2), max(2.0, self.winfo_width() - bw - 2))
+            home = y - self.NOTE_GAP - bh          # where it would sit undisturbed
+            by = home
+            while not free(bx, by, bw) and by - (bh + 3) >= 2:
+                by -= bh + 3
+            by = max(by, 2)
+            placed.append((bx, by, bw, bh))
+
+            if by == home and abs(bx + bw / 2 - x) < 0.5:
+                # right above its own dot: a speech-bubble tail down to it
+                self.create_polygon(x - 5, by + bh - 1, x + 5, by + bh - 1,
+                                    x, y - 5, fill=ACCENT, outline=ACCENT)
+            else:
+                self.create_line(bx + bw / 2, by + bh, x, y - 5, fill=ACCENT, width=1)
+            self._round_rect(bx, by, bx + bw, by + bh, 5, fill=ACCENT, outline=BG)
+            self.create_text(bx + bw / 2, by + bh / 2, text=text, font=self.font,
+                             fill=BG, anchor="center")
 
     def _hover(self, e):
         self.delete("tip")
@@ -1423,6 +1480,7 @@ class Almathus(tk.Tk):
                     "famille": T("col_family"),
                     "temps": T("col_time"),
                     "cartes": T("col_cards"),
+                    "note": T("col_note"),
                     "temps_moyen": T("col_avg"),
                 },
                 when=stamp,
@@ -1473,6 +1531,7 @@ class Almathus(tk.Tk):
             (T("col_family"), "w", 4),
             (T("col_time"), "e", 3),
             (T("col_cards"), "e", 2),
+            (T("col_note"), "e", 2),
             (T("col_avg"), "e", 4),
         )
         for i, (_, _, weight) in enumerate(cols):
@@ -1494,6 +1553,7 @@ class Almathus(tk.Tk):
                 (resultslog.fmt_duration(s.seconds) if s.seconds is not None
                  else (s.raw_time or "—"), ACCENT),
                 (str(s.cards) if s.cards else "—", MUTED),
+                (resultslog.fmt_note(s.note) or "—", ACCENT),
                 (f"{s.avg:.1f} s" if s.avg is not None else "—", GOOD),
             )
             for i, ((text, fg), (_, anchor, _)) in enumerate(zip(cells, cols)):
@@ -1513,6 +1573,7 @@ class Almathus(tk.Tk):
             famille=resultslog.famille_label(self.mode, self.allowed, LANG),
             seconds=total_time,
             cards=len(cards),
+            correct=correct,
             lang=LANG,
         )
 

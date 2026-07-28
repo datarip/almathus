@@ -176,6 +176,40 @@ class Pdf:
         parts.append("S")
         self._ops.append(" ".join(parts))
 
+    def polygon(self, coords, fill) -> None:
+        if len(coords) < 6:
+            return
+        r, g, b = _rgb(fill)
+        parts = [f"{_n(r)} {_n(g)} {_n(b)} rg",
+                 f"{_n(coords[0])} {_n(coords[1])} m"]
+        for i in range(2, len(coords), 2):
+            parts.append(f"{_n(coords[i])} {_n(coords[i + 1])} l")
+        parts.append("h f")
+        self._ops.append(" ".join(parts))
+
+    def round_rect(self, x, y, w, h, r, fill, outline=None, width=1.0) -> None:
+        """A filled rectangle with rounded corners — the note tags on the chart.
+        Each corner is one bezier, the same 0.5523 pull `circle` uses."""
+        r = min(r, w / 2, h / 2)
+        k = r * 0.5523
+        x1, y1 = x + w, y + h
+        path = (f"{_n(x + r)} {_n(y)} m {_n(x1 - r)} {_n(y)} l "
+                f"{_n(x1 - r + k)} {_n(y)} {_n(x1)} {_n(y + r - k)} {_n(x1)} {_n(y + r)} c "
+                f"{_n(x1)} {_n(y1 - r)} l "
+                f"{_n(x1)} {_n(y1 - r + k)} {_n(x1 - r + k)} {_n(y1)} {_n(x1 - r)} {_n(y1)} c "
+                f"{_n(x + r)} {_n(y1)} l "
+                f"{_n(x + r - k)} {_n(y1)} {_n(x)} {_n(y1 - r + k)} {_n(x)} {_n(y1 - r)} c "
+                f"{_n(x)} {_n(y + r)} l "
+                f"{_n(x)} {_n(y + r - k)} {_n(x + r - k)} {_n(y)} {_n(x + r)} {_n(y)} c h")
+        fr, fg, fb = _rgb(fill)
+        head = f"{_n(fr)} {_n(fg)} {_n(fb)} rg"
+        if outline:
+            orr, og, ob = _rgb(outline)
+            self._ops.append(f"{head} {_n(orr)} {_n(og)} {_n(ob)} RG {_n(width)} w "
+                             f"{path} B")
+        else:
+            self._ops.append(f"{head} {path} f")
+
     def circle(self, cx, cy, r, fill, outline=None, width=1.0) -> None:
         k = r * 0.5523                       # bezier arc, close enough to round
         path = (f"{_n(cx + r)} {_n(cy)} m "
@@ -266,11 +300,12 @@ class Pdf:
 MARGIN = 40.0
 CHART_H = 200.0
 ROW_H = 17.0
-FS_TITLE, FS_META, FS_AXIS, FS_ROW, FS_FOOT = 20, 9.5, 8, 9, 7.5
+FS_TITLE, FS_META, FS_AXIS, FS_ROW, FS_FOOT, FS_NOTE = 20, 9.5, 8, 9, 7.5, 7.5
+NOTE_H, NOTE_GAP = 12.0, 7.0   # a note tag on the chart, and its clearance
 
 # Same weights as the on-screen table, so the columns line up with the app.
 COLUMNS = (("date", "w", 3), ("famille", "w", 4), ("temps", "e", 3),
-           ("cartes", "e", 2), ("temps_moyen", "e", 4))
+           ("cartes", "e", 2), ("note", "e", 2), ("temps_moyen", "e", 4))
 
 
 def default_filename(lang: str = "fr", when: datetime | None = None) -> str:
@@ -349,6 +384,7 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
             (resultslog.fmt_duration(s.seconds) if s.seconds is not None
              else (s.raw_time or "—"), palette["ACCENT"]),
             (str(s.cards) if s.cards else "—", palette["MUTED"]),
+            (resultslog.fmt_note(s.note) or "—", palette["ACCENT"]),
             (f"{s.avg:.1f} s" if s.avg is not None else "—", palette["GOOD"]),
         )
         baseline = y - ROW_H + (ROW_H - FS_ROW) / 2 + 1.5
@@ -379,7 +415,9 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
     y_labels = [resultslog.fmt_duration(v, 0)
                 for v in _frange(0, top, step)]
     pad_l = max(measure(t, FS_AXIS) for t in y_labels) + 12
-    pad_r, pad_t, pad_b = 10.0, 10.0, FS_AXIS + 12
+    has_notes = any(resultslog.grade(g) for _, _, g in days)
+    pad_r, pad_b = 10.0, FS_AXIS + 12
+    pad_t = (NOTE_H + NOTE_GAP + 4) if has_notes else 10.0   # headroom for a tag
     x0, x1 = x + pad_l, x + w - pad_r
     y0, y1 = y + pad_b, y + h - pad_t      # y0 is the zero baseline, y1 the top
 
@@ -404,6 +442,7 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
         pdf.polyline(type(chart)._curve(pts), palette["ACCENT"], 1.6)
     for px, py, _ in pts:
         pdf.circle(px, py, 2.6, palette["ACCENT"], outline=palette["BG"], width=1.2)
+    _draw_notes(pdf, pts, x + 2, x + w - 2, y + h - NOTE_H - 2, palette)
 
     # Date labels thinned by pixel distance, like the widget: the axis is
     # calendar time, so neighbouring days are not neighbouring columns.
@@ -422,6 +461,38 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
     for d, xd in kept:
         pdf.text(xd, y0 - FS_AXIS - 4, d.strftime("%d/%m"), FS_AXIS,
                  palette["MUTED"], anchor="center")
+
+
+def _draw_notes(pdf: Pdf, pts, x_min, x_max, y_max, palette) -> None:
+    """The screen's note tags, on paper: `15/20` over the dot it grades.
+
+    Same rules as the widget — centred over the dot, stepping up out of the way
+    of a tag already placed, tail traded for a stem once it has moved.
+    """
+    placed: list[tuple[float, float, float]] = []
+    for px, py, (_, _, group) in pts:
+        text = resultslog.fmt_note(resultslog.grade(group))
+        if not text:
+            continue
+        bw = measure(text, FS_NOTE) + 10
+        bx = min(max(px - bw / 2, x_min), max(x_min, x_max - bw))
+        home = py + NOTE_GAP
+        by = home
+        while any(bx < ox + ow and ox < bx + bw and abs(by - oy) < NOTE_H + 2
+                  for ox, oy, ow in placed) and by + NOTE_H + 3 <= y_max:
+            by += NOTE_H + 3
+        by = min(by, y_max)
+        placed.append((bx, by, bw))
+
+        if by == home and abs(bx + bw / 2 - px) < 0.5:
+            pdf.polygon([px - 4, by + 1, px + 4, by + 1, px, py + 4],
+                        palette["ACCENT"])
+        else:
+            pdf.line(bx + bw / 2, by, px, py + 4, palette["ACCENT"], 0.8)
+        pdf.round_rect(bx, by, bw, NOTE_H, 3.5, palette["ACCENT"],
+                       outline=palette["BG"], width=0.8)
+        pdf.text(bx + bw / 2, by + (NOTE_H - FS_NOTE) / 2 + 1.5, text, FS_NOTE,
+                 palette["BG"], anchor="center")
 
 
 def _frange(start: float, stop: float, step: float) -> list[float]:

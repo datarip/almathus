@@ -194,25 +194,38 @@ def _strip_accents(s: str) -> str:
                    if unicodedata.category(c) != "Mn")
 
 
-def parse_number(text: str, lang: str = "fr") -> Optional[int]:
-    """Extract an integer from a transcript. None if unclear.
+def numbers_in(text: str, lang: str = "fr") -> list[int]:
+    """Every number in a transcript, in the order it was said.
+
+    The caller needs all of them, not just one: a kid reading the question out
+    loud ("quinze moins quatre") says two numbers and has answered nothing,
+    which is only visible if both survive this far.
 
     Primary path uses the multilingual ``text2num`` library (best for
     FR/EN/ES/PT/DE...); a built-in FR/EN parser is the fallback. Trailing
     punctuation from the recognizer (e.g. "huit.") is ignored either way.
     """
     if not text:
-        return None
+        return []
     try:
         from text_to_num import alpha2digit
         code = lang if lang in ("fr", "en", "es", "pt", "de", "ca", "nl") else "en"
-        # take the LAST number said (handles self-correction: "trois... non, quatre")
         digits = re.findall(r"-?\d+", alpha2digit(text, code))
         if digits:
-            return int(digits[-1])
+            return [int(d) for d in digits]
     except Exception:
         pass
-    return _fallback_parse_number(text)
+    n = _fallback_parse_number(text)
+    return [] if n is None else [n]
+
+
+def parse_number(text: str, lang: str = "fr") -> Optional[int]:
+    """The single number a transcript states, or None.
+
+    The LAST one wins, which handles self-correction ("trois... non, quatre").
+    """
+    nums = numbers_in(text, lang)
+    return nums[-1] if nums else None
 
 
 def _fallback_parse_number(text: str) -> Optional[int]:
@@ -347,8 +360,13 @@ class SpeechInput:
 
     # -- public API -------------------------------------------------------- #
     def listen(self, on_result: Callable[[Optional[int]], None],
-               on_state: Optional[Callable[[str], None]] = None):
+               on_state: Optional[Callable[[str], None]] = None,
+               pick: Optional[Callable[[list], Optional[int]]] = None):
         """Record one utterance in a background thread, then call on_result(int|None).
+
+        ``pick`` turns the numbers heard into the one answer to report (None =
+        heard nothing usable). It is how the caller rejects an utterance that
+        isn't an answer at all; the default keeps the last number said.
 
         on_state("listening"|"thinking") lets the UI show progress. Both callbacks
         fire from a worker thread — marshal to Tk with widget.after(0, ...).
@@ -364,7 +382,7 @@ class SpeechInput:
         self._ensure_stt_thread()
         # Record on a throwaway thread (the mic is fine cross-thread); transcription
         # is handed to the single STT thread that owns the model.
-        threading.Thread(target=self._capture, args=(on_result, on_state),
+        threading.Thread(target=self._capture, args=(on_result, on_state, pick),
                          daemon=True).start()
 
     def cancel(self):
@@ -387,7 +405,7 @@ class SpeechInput:
     def warmup(self):
         """Preload the recognizer on the STT thread so the first answer is instant."""
         self._ensure_stt_thread()
-        self._jobs.put((_WARMUP, None, None))
+        self._jobs.put((_WARMUP, None, None, None))
 
     def boost_input_volume(self, level: int = 80):
         """Raise the macOS mic input gain (moderate — max gain over-amplifies noise
@@ -423,23 +441,23 @@ class SpeechInput:
             self._stt_thread = threading.Thread(target=self._stt_loop, daemon=True)
             self._stt_thread.start()
 
-    def _capture(self, on_result, on_state):
+    def _capture(self, on_result, on_state, pick=None):
         try:
             self._silent = False
             audio = self._record(on_state)
             if self._silent and on_state:
                 _dbg("capture SILENT -> no_mic")
                 on_state("no_mic")     # only silence -> no mic access / no usable device
-            self._jobs.put((audio, on_result, on_state))
+            self._jobs.put((audio, on_result, on_state, pick))
         except Exception as e:
             _dbg("capture EXCEPTION:", repr(e))
-            self._jobs.put((None, on_result, on_state))
+            self._jobs.put((None, on_result, on_state, pick))
 
     def _stt_loop(self):
         """The ONE thread that creates and runs the parakeet model — MLX streams
         are thread-local, so the model must never cross threads."""
         while True:
-            audio, on_result, on_state = self._jobs.get()
+            audio, on_result, on_state, pick = self._jobs.get()
             if audio is _WARMUP:
                 try:
                     self._load_vosk()                 # primary recognizer, fast (~1s)
@@ -462,14 +480,16 @@ class SpeechInput:
                 # isolated digits. Runs on the RAW audio (band-pass breaks Vosk).
                 _t0 = time.monotonic()
                 raw = self._last_raw if self._last_raw is not None else audio
-                parsed = self._vosk_number(raw)
-                _dbg(f"vosk -> {parsed} ({(time.monotonic() - _t0) * 1000:.0f}ms)")
+                nums = self._vosk_numbers(raw)
+                _dbg(f"vosk -> {nums} ({(time.monotonic() - _t0) * 1000:.0f}ms)")
                 # parakeet only as a backup, and only if it's already loaded (never
                 # block on its ~60s load — Vosk handles the common case).
-                if parsed is None and self._model is not None:
+                if not nums and self._model is not None:
                     text = self._transcribe(audio)
-                    parsed = parse_number(text, self.lang)
-                    _dbg(f"parakeet fallback transcript={text!r} -> {parsed}")
+                    nums = numbers_in(text, self.lang)
+                    _dbg(f"parakeet fallback transcript={text!r} -> {nums}")
+                parsed = pick(nums) if pick else (nums[-1] if nums else None)
+                _dbg(f"picked -> {parsed}")
                 on_result(parsed)
             except Exception as e:
                 _dbg("transcribe EXCEPTION:", repr(e))
@@ -721,11 +741,11 @@ class SpeechInput:
             _dbg("vosk load failed:", repr(e))
             return False
 
-    def _vosk_number(self, audio):
-        """Recognize a number from audio via Vosk's number-only grammar (+N-best).
-        Runs on the STT thread. Returns an int or None."""
+    def _vosk_numbers(self, audio):
+        """Recognize the numbers in an utterance via Vosk's number-only grammar
+        (+N-best). Runs on the STT thread. Returns a list of ints, in order."""
         if not self._load_vosk():
-            return None
+            return []
         try:
             import json as _json
             from vosk import KaldiRecognizer
@@ -738,13 +758,13 @@ class SpeechInput:
                      if res.get("alternatives") else [res.get("text", "")])
             _dbg(f"vosk alts={texts[:4]}")
             for t in texts:                    # take the highest-confidence number
-                n = parse_number(t, self.lang)
-                if n is not None:
-                    return n
-            return None
+                nums = numbers_in(t, self.lang)
+                if nums:
+                    return nums
+            return []
         except Exception as e:
             _dbg("vosk error:", repr(e))
-            return None
+            return []
 
     def _ensure_model(self):
         """Load the parakeet model. MUST be called on the STT thread only."""

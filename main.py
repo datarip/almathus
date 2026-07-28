@@ -88,7 +88,6 @@ STRINGS = {
         "listening": "🎧 à l'écoute…",
         "thinking": "🤔 …",
         "didnt_get": "Je n'ai pas compris, réessaie 🎤",
-        "heard": "🗣️ j'ai entendu {n} — appuie sur ✓ ou redis-le",
         "mic_denied": "Micro non autorisé — Réglages ▸ Confidentialité ▸ Microphone",
         "score_spoken": "Tu as eu {c} sur {n}.",
         "progress": "📈 Mes progrès",
@@ -133,7 +132,6 @@ STRINGS = {
         "listening": "🎧 listening…",
         "thinking": "🤔 …",
         "didnt_get": "I didn't catch that, try again 🎤",
-        "heard": "🗣️ I heard {n} — press ✓ or say it again",
         "mic_denied": "Mic not allowed — Settings ▸ Privacy ▸ Microphone",
         "score_spoken": "You got {c} out of {n}.",
         "progress": "📈 My progress",
@@ -310,6 +308,29 @@ class Card:
     @property
     def text(self) -> str:
         return f"{self.a} {OP_SYMBOL[self.mode]} {self.b}"
+
+
+def spoken_answer(nums: list[int], card: Card) -> int | None:
+    """The answer a kid meant, out of every number heard in one utterance.
+
+    Thinking out loud is how kids do mental maths, so the mic hears the question
+    read back ("quinze moins quatre…") far more often than a bare answer. Those
+    utterances used to be submitted as an answer, which failed the card and moved
+    on before the kid had said anything. None here means "not an answer" — the
+    app just keeps listening, so hesitating aloud costs nothing.
+    """
+    if not nums:
+        return None
+    if nums[:2] == [card.a, card.b]:       # the question, read back
+        nums = nums[2:]
+    if not nums:
+        return None
+    if card.answer in nums:                # "quinze moins quatre, ça fait onze"
+        return card.answer
+    n = nums[-1]                           # self-correction: the last number wins
+    if len(nums) == 1 and n in (card.a, card.b):
+        return None                        # a lone operand is the card, not an answer
+    return n
 
 
 def make_card(mode: str, a: int, b: int) -> Card:
@@ -641,8 +662,6 @@ class Almathus(tk.Tk):
         self._tick_job = None
         self._advance_job = None    # the single pending "move to the next card" timer
         self._card_done = False     # answer committed: ignore anything else on this card
-        self._voice_heard = None    # number heard but not confirmed yet
-        self._voice_state = None    # last mic state: listening / thinking
         self._voice_mic_bad = False
 
         # voice engines (both degrade gracefully to no-ops)
@@ -1004,8 +1023,6 @@ class Almathus(tk.Tk):
         self._clear()
         card = self.current
         self._card_done = False
-        self._voice_heard = None
-        self._voice_state = None
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
@@ -1043,7 +1060,6 @@ class Almathus(tk.Tk):
         entry.pack(pady=(2, 2), ipady=6)
         entry.focus_set()
         entry.bind("<Return>", lambda e: self.submit())
-        entry.bind("<KeyPress>", self._on_entry_key)   # typing overrides the mic
         self.feedback = tk.Label(inputs, text="", font=self.f_body, fg=GOOD, bg=BG)
         self.feedback.pack(pady=1)
         # Voice input runs continuously in parallel with the keypad — no button.
@@ -1085,65 +1101,32 @@ class Almathus(tk.Tk):
         self.stt.listen(
             on_result=lambda n: self._post(lambda: self._voice_result(n, target)),
             on_state=lambda s: self._post(lambda: self._voice_status(s)),
+            pick=lambda nums: spoken_answer(nums, target),
         )
 
     def _voice_status(self, state):
         if state == "no_mic":
             self._voice_mic_bad = True   # stop re-arming; capture is silent
-        self._voice_state = state
-        self._voice_paint()
-
-    def _voice_paint(self):
-        """Repaint the little status line under the answer box.
-
-        An unconfirmed heard number outranks listening/thinking: the kid must be
-        able to see what the mic thinks they said for as long as it is pending.
-        """
         lbl = getattr(self, "voice_lbl", None)
         if not (lbl and lbl.winfo_exists()):
             return
-        if self._voice_mic_bad:
+        if state == "no_mic":
             lbl.config(text=T("mic_denied"), fg=BAD)
-        elif self._voice_heard is not None:
-            lbl.config(text=T("heard", n=self._voice_heard), fg=ACCENT)
-        elif self._voice_state == "listening":
+        elif state == "listening":
             lbl.config(text=T("listening"), fg=MUTED)
-        elif self._voice_state == "thinking":
+        elif state == "thinking":
             lbl.config(text=T("thinking"), fg=MUTED)
 
     def _voice_result(self, n, target):
         if self.current is not target or self._card_done:   # card already over
             return
         if n is not None:
-            # A heard number is only *proposed*: it fills the box and is committed
-            # when the kid confirms with ✓/Entrée, or says the same number again.
-            # Auto-submitting straight away meant a kid thinking out loud ("quinze
-            # moins quatre, euh…") had the card answered for them and skipped.
-            confirmed = (n == self._voice_heard)
             self.answer_var.set(str(n))
-            self._voice_heard = n
-            self._voice_paint()
-            if confirmed:
-                self.submit()
-                return
-        # keep listening (unless the mic is unusable)
+            self.submit()                     # auto-submit, in parallel with the keypad
+            return
+        # nothing recognized this round: keep listening (unless the mic is unusable)
         if not self._voice_mic_bad and self.voice_enabled.get():
             self._voice_arm(target)
-
-    def _on_entry_key(self, event):
-        if event.keysym in ("Return", "KP_Enter"):
-            return
-        if self._voice_heard is not None:
-            self._voice_heard = None
-            self._voice_paint()
-
-    def _typed(self, value: str):
-        """Keypad/keyboard input: it overrides whatever the mic proposed, so the
-        pending heard number is dropped (it must not confirm itself later)."""
-        self.answer_var.set(value)
-        if self._voice_heard is not None:
-            self._voice_heard = None
-            self._voice_paint()
 
     def _build_keypad(self, parent):
         pad = tk.Frame(parent, bg=BG)
@@ -1152,11 +1135,11 @@ class Almathus(tk.Tk):
         for r, rowk in enumerate(keys):
             for c, k in enumerate(rowk):
                 if k == "C":
-                    cmd, col, fg = (lambda: self._typed("")), BAD, INK
+                    cmd, col, fg = (lambda: self.answer_var.set("")), BAD, INK
                 elif k == "✓":
                     cmd, col, fg = self.submit, GOOD, INK
                 else:
-                    cmd = (lambda d=k: self._typed(self.answer_var.get() + d))
+                    cmd = (lambda d=k: self.answer_var.set(self.answer_var.get() + d))
                     col, fg = CARD_BG, TEXT
                 Btn(pad, k, command=cmd, font=self.f_mode, bg=col, fg=fg,
                     width=2, padx=16, pady=4).grid(row=r, column=c, padx=6, pady=4)

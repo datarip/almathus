@@ -58,11 +58,12 @@ STRINGS = {
     "fr": {
         "title": "Almathus — les maths en jouant",
         "how_many": "Combien de cartes ?",
-        "choose_mode": "Choisis ton opération :",
-        "addition": "Addition\n+",
-        "subtraction": "Soustraction\n−",
-        "multiplication": "Multiplication\n×",
-        "division": "Division\n÷",
+        "choose_mode": "Choisis ton opération",
+        "numbers_hint": "Touche les nombres pour choisir ce qu'on travaille",
+        "addition": "Addition",
+        "subtraction": "Soustraction",
+        "multiplication": "Multiplication",
+        "division": "Division",
         "go": "GO !",
         "timer_total": "Temps total",
         "timer_card": "Cette carte",
@@ -87,11 +88,12 @@ STRINGS = {
     "en": {
         "title": "Almathus — math through play",
         "how_many": "How many cards?",
-        "choose_mode": "Choose your operation:",
-        "addition": "Addition\n+",
-        "subtraction": "Subtraction\n−",
-        "multiplication": "Multiplication\n×",
-        "division": "Division\n÷",
+        "choose_mode": "Choose your operation",
+        "numbers_hint": "Tap the numbers to pick what to practise",
+        "addition": "Addition",
+        "subtraction": "Subtraction",
+        "multiplication": "Multiplication",
+        "division": "Division",
         "go": "GO!",
         "timer_total": "Total time",
         "timer_card": "This card",
@@ -142,11 +144,15 @@ MODE_COLORS = {
     "multiplication": "#e15554",
     "division": "#e1bc29",
 }
+SURFACE = "#191d3d"   # raised panel, one step above the page background
+BORDER = "#2b3160"    # hairline outline for panels and chips
+
 # Number toggles sit on their own dark strip so the on/off greens read the same
 # on every tile (the addition tile is itself green).
 NUM_STRIP_BG = "#10121f"
 NUM_ON_BG, NUM_ON_FG = GOOD, "#10121f"
 NUM_OFF_BG, NUM_OFF_FG = "#3a3f63", MUTED
+NUM_HOVER_BG = "#525a8c"
 OP_SYMBOL = {
     "addition": "+",
     "subtraction": "−",
@@ -349,13 +355,24 @@ class Almathus(tk.Tk):
 
     # -- fonts ------------------------------------------------------------- #
     def _make_fonts(self):
-        self.f_giant = tkfont.Font(family="Helvetica", size=120, weight="bold")
-        self.f_huge = tkfont.Font(family="Helvetica", size=90, weight="bold")
-        self.f_big = tkfont.Font(family="Helvetica", size=48, weight="bold")
-        self.f_mode = tkfont.Font(family="Helvetica", size=30, weight="bold")
-        self.f_title = tkfont.Font(family="Helvetica", size=28, weight="bold")
-        self.f_body = tkfont.Font(family="Helvetica", size=20)
-        self.f_small = tkfont.Font(family="Helvetica", size=15)
+        # Everything scales with the screen so the settings column still fits
+        # (and stays readable) on a short laptop display.
+        s = min(1.0, self.winfo_screenheight() / 900)
+
+        def F(size, weight="normal"):
+            return tkfont.Font(family="Helvetica", size=max(11, round(size * s)),
+                               weight=weight)
+
+        self.f_giant = F(120, "bold")
+        self.f_huge = F(90, "bold")
+        self.f_big = F(48, "bold")
+        self.f_mode = F(30, "bold")
+        self.f_title = F(28, "bold")
+        self.f_body = F(20)
+        self.f_small = F(15)
+        self.f_tile = F(24, "bold")
+        self.f_chip = F(14, "bold")
+        self.f_hint = F(14)
 
     # -- frame helper ------------------------------------------------------ #
     def _clear(self):
@@ -377,57 +394,81 @@ class Almathus(tk.Tk):
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
+        # One packed column, top to bottom. Never .place() the content here: a
+        # placed frame is not part of the packing flow, so it silently lands on
+        # top of whatever comes after it (that's how the voice toggle ended up
+        # covering the operation tiles).
         col = tk.Frame(f, bg=BG)
-        col.place(relx=0.5, rely=0.5, anchor="center")
+        col.pack(expand=True, padx=24, pady=16)
 
-        tk.Label(col, text="🧮 Almathus", font=self.f_big, fg=ACCENT, bg=BG).pack(pady=(6, 2))
+        tk.Label(col, text="🧮 Almathus", font=self.f_big, fg=ACCENT, bg=BG).pack()
 
-        # number of cards
-        tk.Label(col, text=T("how_many"), font=self.f_title, fg=TEXT, bg=BG).pack(pady=(24, 8))
+        # -- how many cards ------------------------------------------------ #
         self.count_var = tk.IntVar(value=self.n_cards)
-        row = tk.Frame(col, bg=BG)
-        row.pack()
+        panel = tk.Frame(col, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER)
+        panel.pack(pady=(14, 24), ipadx=30, ipady=10)
+        tk.Label(panel, text=T("how_many"), font=self.f_body, fg=MUTED, bg=SURFACE
+                 ).pack(pady=(4, 2))
 
         def bump(d):
             self.count_var.set(max(1, min(99, self.count_var.get() + d)))
 
-        Btn(row, "−", command=lambda: bump(-1), font=self.f_mode,
-            bg=CARD_BG, fg=TEXT, width=2).pack(side="left", padx=8)
-        tk.Label(row, textvariable=self.count_var, font=self.f_big, fg=ACCENT, bg=BG,
+        row = tk.Frame(panel, bg=SURFACE)
+        row.pack()
+        Btn(row, "−", command=lambda: bump(-1), font=self.f_mode, bg=CARD_BG, fg=TEXT,
+            width=2, pady=2).pack(side="left", padx=10)
+        tk.Label(row, textvariable=self.count_var, font=self.f_mode, fg=ACCENT, bg=SURFACE,
                  width=3).pack(side="left")
-        Btn(row, "+", command=lambda: bump(1), font=self.f_mode,
-            bg=CARD_BG, fg=TEXT, width=2).pack(side="left", padx=8)
+        Btn(row, "+", command=lambda: bump(1), font=self.f_mode, bg=CARD_BG, fg=TEXT,
+            width=2, pady=2).pack(side="left", padx=10)
 
-        quick = tk.Frame(col, bg=BG)
-        quick.pack(pady=8)
+        # quick picks double as a segmented control: the live value stays lit
+        quick = tk.Frame(panel, bg=SURFACE)
+        quick.pack(pady=(6, 6))
+        chips: dict[int, Btn] = {}
         for q in (5, 10, 20, 30, 50):
-            Btn(quick, str(q), command=lambda v=q: self.count_var.set(v), font=self.f_small,
-                bg=CARD_BG, fg=MUTED, width=3, padx=8, pady=4).pack(side="left", padx=4)
+            chips[q] = Btn(quick, str(q), command=lambda v=q: self.count_var.set(v),
+                           font=self.f_chip, width=3, padx=10, pady=5,
+                           active_bg=ACCENT, active_fg="#10121f")
+            chips[q].pack(side="left", padx=5)
 
-        # mode buttons
-        tk.Label(col, text=T("choose_mode"), font=self.f_title, fg=TEXT, bg=BG).pack(pady=(28, 12))
+        def lit(*_):
+            v = self.count_var.get()
+            for q, c in chips.items():
+                c.set_colors(*((ACCENT, "#10121f") if q == v else (CARD_BG, MUTED)))
+
+        self.count_var.trace_add("write", lit)
+        lit()
+
+        # -- operations ---------------------------------------------------- #
+        tk.Label(col, text=T("choose_mode"), font=self.f_title, fg=TEXT, bg=BG).pack()
+        tk.Label(col, text=T("numbers_hint"), font=self.f_hint, fg=MUTED, bg=BG
+                 ).pack(pady=(4, 14))
+
         grid = tk.Frame(col, bg=BG)
         grid.pack()
+        for c in (0, 1):                       # keep both tiles the same width
+            grid.grid_columnconfigure(c, uniform="ops", weight=1)
         for i, m in enumerate(MODES):
             tile = tk.Frame(grid, bg=MODE_COLORS[m])
-            tile.grid(row=i // 2, column=i % 2, padx=16, pady=14, sticky="nsew")
-            Btn(tile, T(m), command=lambda mm=m: self.start_game(mm), font=self.f_mode,
-                bg=MODE_COLORS[m], fg="#10121f", active_bg=TEXT, active_fg="#10121f",
-                width=12, padx=16, pady=18).pack(fill="x")
+            tile.grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="nsew")
+            Btn(tile, f"{T(m)}  {OP_SYMBOL[m]}", command=lambda mm=m: self.start_game(mm),
+                font=self.f_tile, bg=MODE_COLORS[m], fg="#10121f",
+                active_bg=TEXT, active_fg="#10121f", padx=20, pady=16).pack(fill="x")
             self._build_number_row(tile, m)
 
-        self._build_voice_toggle(f)
+        self._build_voice_toggle(col)
 
     def _build_number_row(self, parent, mode: str):
         """Row of [1]..[10] toggles: which number the operation is played with."""
         strip = tk.Frame(parent, bg=NUM_STRIP_BG)
-        strip.pack(fill="x", padx=12, pady=(0, 12))
+        strip.pack(fill="x", padx=14, pady=(0, 14))
         boxes: dict[int, tk.Label] = {}
 
-        def paint(n: int):
+        def paint(n: int, hover: bool = False):
             on = n in self.allowed[mode]
-            boxes[n].config(bg=NUM_ON_BG if on else NUM_OFF_BG,
-                            fg=NUM_ON_FG if on else NUM_OFF_FG)
+            boxes[n].config(bg=NUM_ON_BG if on else (NUM_HOVER_BG if hover else NUM_OFF_BG),
+                            fg=NUM_ON_FG if on else (TEXT if hover else NUM_OFF_FG))
 
         def toggle(n: int):
             sel = self.allowed[mode]
@@ -437,13 +478,15 @@ class Almathus(tk.Tk):
                 sel.discard(n)
             else:
                 sel.add(n)
-            paint(n)
+            paint(n, hover=True)
 
         for n in range(NUM_MIN, NUM_MAX + 1):
-            lbl = tk.Label(strip, text=str(n), font=self.f_small, width=2,
-                           padx=0, pady=3, cursor="hand2")
-            lbl.pack(side="left", padx=2, pady=5, expand=True)
+            lbl = tk.Label(strip, text=str(n), font=self.f_chip, width=2,
+                           padx=0, pady=5, cursor="hand2")
+            lbl.pack(side="left", padx=3, pady=6, expand=True)
             lbl.bind("<Button-1>", lambda e, k=n: toggle(k))
+            lbl.bind("<Enter>", lambda e, k=n: paint(k, hover=True))
+            lbl.bind("<Leave>", lambda e, k=n: paint(k))
             boxes[n] = lbl
             paint(n)
 
@@ -453,7 +496,7 @@ class Almathus(tk.Tk):
         if not (self.stt and self.stt.available()):
             return
 
-        btn = Btn(parent, "", font=self.f_body, pady=8)
+        btn = Btn(parent, "", font=self.f_body, padx=22, pady=10)
 
         def refresh():
             on = self.voice_enabled.get()
@@ -461,7 +504,7 @@ class Almathus(tk.Tk):
             btn.set_colors(GOOD if on else CARD_BG, "#10121f" if on else MUTED)
 
         btn._command = lambda: (self.voice_enabled.set(not self.voice_enabled.get()), refresh())
-        btn.pack(side="bottom", pady=8)
+        btn.pack(pady=(22, 4))
         refresh()
 
     # ------------------------------------------------------------------ #

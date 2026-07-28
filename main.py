@@ -88,6 +88,7 @@ STRINGS = {
         "listening": "🎧 à l'écoute…",
         "thinking": "🤔 …",
         "didnt_get": "Je n'ai pas compris, réessaie 🎤",
+        "heard": "🗣️ j'ai entendu {n} — appuie sur ✓ ou redis-le",
         "mic_denied": "Micro non autorisé — Réglages ▸ Confidentialité ▸ Microphone",
         "score_spoken": "Tu as eu {c} sur {n}.",
         "progress": "📈 Mes progrès",
@@ -132,6 +133,7 @@ STRINGS = {
         "listening": "🎧 listening…",
         "thinking": "🤔 …",
         "didnt_get": "I didn't catch that, try again 🎤",
+        "heard": "🗣️ I heard {n} — press ✓ or say it again",
         "mic_denied": "Mic not allowed — Settings ▸ Privacy ▸ Microphone",
         "score_spoken": "You got {c} out of {n}.",
         "progress": "📈 My progress",
@@ -631,11 +633,17 @@ class Almathus(tk.Tk):
         self.deck: list[Card] = []
         self.results: list[Card] = []     # completed cards, in play order
         self.retry_queue: list[Card] = []
+        self.retry_seen: set[tuple] = set()   # operations already queued for retry
         self.idx = 0
         self.current: Card | None = None
         self.card_start = 0.0
         self.game_start = 0.0
         self._tick_job = None
+        self._advance_job = None    # the single pending "move to the next card" timer
+        self._card_done = False     # answer committed: ignore anything else on this card
+        self._voice_heard = None    # number heard but not confirmed yet
+        self._voice_state = None    # last mic state: listening / thinking
+        self._voice_mic_bad = False
 
         # voice engines (both degrade gracefully to no-ops)
         self.tts = voicemod.TTS(LANG) if voicemod else None
@@ -936,6 +944,7 @@ class Almathus(tk.Tk):
         self.deck = make_deck(mode, self.n_cards, self.allowed)
         self.results = []
         self.retry_queue = []
+        self.retry_seen = set()
         self.idx = 0
         # preload the STT model + raise mic gain so the first spoken answer is instant
         if self.voice_enabled.get() and self.stt and self.stt.available():
@@ -954,12 +963,30 @@ class Almathus(tk.Tk):
             self.after(850, lambda: self.countdown(n - 1))
         else:
             self.game_start = time.perf_counter()
-            self.after(750, self.next_card)
+            self._advance_after(750)
 
     # ------------------------------------------------------------------ #
     # Screen 3: play
     # ------------------------------------------------------------------ #
+    def _advance_after(self, ms: int):
+        """Schedule the move to the next card, replacing any pending move.
+
+        Exactly one advance can ever be in flight: a late voice result landing
+        during the feedback flash used to queue a second one, which then popped
+        two cards off the retry queue (one was never asked).
+        """
+        if self._advance_job is not None:
+            self.after_cancel(self._advance_job)
+        self._advance_job = self.after(ms, self._advance)
+
+    def _advance(self):
+        self._advance_job = None
+        self.next_card()
+
     def next_card(self):
+        if self._advance_job is not None:      # any other pending move is stale
+            self.after_cancel(self._advance_job)
+            self._advance_job = None
         # main deck first, then the reinforcement queue
         if self.idx < len(self.deck):
             self.current = self.deck[self.idx]
@@ -976,6 +1003,9 @@ class Almathus(tk.Tk):
     def render_card(self, in_retry: bool):
         self._clear()
         card = self.current
+        self._card_done = False
+        self._voice_heard = None
+        self._voice_state = None
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
@@ -1013,6 +1043,7 @@ class Almathus(tk.Tk):
         entry.pack(pady=(2, 2), ipady=6)
         entry.focus_set()
         entry.bind("<Return>", lambda e: self.submit())
+        entry.bind("<KeyPress>", self._on_entry_key)   # typing overrides the mic
         self.feedback = tk.Label(inputs, text="", font=self.f_body, fg=GOOD, bg=BG)
         self.feedback.pack(pady=1)
         # Voice input runs continuously in parallel with the keypad — no button.
@@ -1049,7 +1080,7 @@ class Almathus(tk.Tk):
         """Listen for one spoken answer; re-arms itself until the card changes."""
         if not (self.stt and self.stt.available()):
             return
-        if self.current is not target or self._voice_mic_bad:
+        if self.current is not target or self._voice_mic_bad or self._card_done:
             return
         self.stt.listen(
             on_result=lambda n: self._post(lambda: self._voice_result(n, target)),
@@ -1059,26 +1090,60 @@ class Almathus(tk.Tk):
     def _voice_status(self, state):
         if state == "no_mic":
             self._voice_mic_bad = True   # stop re-arming; capture is silent
+        self._voice_state = state
+        self._voice_paint()
+
+    def _voice_paint(self):
+        """Repaint the little status line under the answer box.
+
+        An unconfirmed heard number outranks listening/thinking: the kid must be
+        able to see what the mic thinks they said for as long as it is pending.
+        """
         lbl = getattr(self, "voice_lbl", None)
         if not (lbl and lbl.winfo_exists()):
             return
-        if state == "no_mic":
+        if self._voice_mic_bad:
             lbl.config(text=T("mic_denied"), fg=BAD)
-        elif state == "listening":
+        elif self._voice_heard is not None:
+            lbl.config(text=T("heard", n=self._voice_heard), fg=ACCENT)
+        elif self._voice_state == "listening":
             lbl.config(text=T("listening"), fg=MUTED)
-        elif state == "thinking":
+        elif self._voice_state == "thinking":
             lbl.config(text=T("thinking"), fg=MUTED)
 
     def _voice_result(self, n, target):
-        if self.current is not target:       # card already moved on
+        if self.current is not target or self._card_done:   # card already over
             return
         if n is not None:
+            # A heard number is only *proposed*: it fills the box and is committed
+            # when the kid confirms with ✓/Entrée, or says the same number again.
+            # Auto-submitting straight away meant a kid thinking out loud ("quinze
+            # moins quatre, euh…") had the card answered for them and skipped.
+            confirmed = (n == self._voice_heard)
             self.answer_var.set(str(n))
-            self.submit()                     # auto-submit, in parallel with the keypad
-            return
-        # nothing recognized this round: keep listening (unless the mic is unusable)
+            self._voice_heard = n
+            self._voice_paint()
+            if confirmed:
+                self.submit()
+                return
+        # keep listening (unless the mic is unusable)
         if not self._voice_mic_bad and self.voice_enabled.get():
             self._voice_arm(target)
+
+    def _on_entry_key(self, event):
+        if event.keysym in ("Return", "KP_Enter"):
+            return
+        if self._voice_heard is not None:
+            self._voice_heard = None
+            self._voice_paint()
+
+    def _typed(self, value: str):
+        """Keypad/keyboard input: it overrides whatever the mic proposed, so the
+        pending heard number is dropped (it must not confirm itself later)."""
+        self.answer_var.set(value)
+        if self._voice_heard is not None:
+            self._voice_heard = None
+            self._voice_paint()
 
     def _build_keypad(self, parent):
         pad = tk.Frame(parent, bg=BG)
@@ -1087,11 +1152,11 @@ class Almathus(tk.Tk):
         for r, rowk in enumerate(keys):
             for c, k in enumerate(rowk):
                 if k == "C":
-                    cmd, col, fg = (lambda: self.answer_var.set("")), BAD, INK
+                    cmd, col, fg = (lambda: self._typed("")), BAD, INK
                 elif k == "✓":
                     cmd, col, fg = self.submit, GOOD, INK
                 else:
-                    cmd = (lambda d=k: self.answer_var.set(self.answer_var.get() + d))
+                    cmd = (lambda d=k: self._typed(self.answer_var.get() + d))
                     col, fg = CARD_BG, TEXT
                 Btn(pad, k, command=cmd, font=self.f_mode, bg=col, fg=fg,
                     width=2, padx=16, pady=4).grid(row=r, column=c, padx=6, pady=4)
@@ -1108,6 +1173,8 @@ class Almathus(tk.Tk):
         return f"{m:02d}:{s:02d}"
 
     def submit(self):
+        if self._card_done:      # already answered; the card is on its way out
+            return
         card = self.current
         raw = self.answer_var.get().strip()
         if raw in ("", "-"):
@@ -1120,6 +1187,9 @@ class Almathus(tk.Tk):
 
         card.attempts += 1
         is_correct = val == card.answer
+        self._card_done = True
+        if self.stt:
+            self.stt.cancel()    # drop the capture in flight; the card is over
 
         # record time + outcome only on the very first attempt of a card
         if card.correct_first_try is None:
@@ -1128,16 +1198,22 @@ class Almathus(tk.Tk):
             self.results.append(card)
             if self.idx < len(self.deck):
                 self.idx += 1
-            if not is_correct:
-                self.retry_queue.append(card)  # reinforcement later
+            # Reinforce later — but only once per *operation*. A short number
+            # selection deals fewer distinct facts than cards asked for, so the
+            # same operation can be dealt (and failed) twice; queueing both
+            # copies asked it again and again at the end.
+            key = (card.mode, card.a, card.b)
+            if not is_correct and key not in self.retry_seen:
+                self.retry_seen.add(key)
+                self.retry_queue.append(card)
 
         if is_correct:
             self._flash(T("correct"), GOOD)
-            self.after(650, self.next_card)
+            self._advance_after(650)
         else:
             self._flash(T("wrong", a=card.answer), BAD)
             self.answer_var.set("")
-            self.after(1500, self.next_card)
+            self._advance_after(1500)
 
     def _flash(self, text: str, color: str):
         if self._tick_job:

@@ -162,6 +162,26 @@ OP_SYMBOL = {
 }
 
 STATS_DIR = Path(__file__).resolve().parent / "stats"
+PREFS_FILE = Path(__file__).resolve().parent / "prefs.json"
+
+
+def load_allowed() -> set[int]:
+    """Numbers selected last time. A drill often runs for weeks on one number,
+    so the choice has to survive a restart. Anything unreadable or nonsensical
+    falls back to 'all numbers on'."""
+    try:
+        raw = json.loads(PREFS_FILE.read_text(encoding="utf-8"))["numbers"]
+        sel = {int(n) for n in raw if NUM_MIN <= int(n) <= NUM_MAX}
+    except (OSError, ValueError, TypeError, KeyError):
+        sel = set()
+    return sel or set(range(NUM_MIN, NUM_MAX + 1))
+
+
+def save_allowed(sel: set[int]) -> None:
+    try:
+        PREFS_FILE.write_text(json.dumps({"numbers": sorted(sel)}), encoding="utf-8")
+    except OSError:
+        pass  # a read-only install must never break the game
 
 
 # --------------------------------------------------------------------------- #
@@ -276,8 +296,8 @@ class Almathus(tk.Tk):
         # session state
         self.mode = "addition"
         self.n_cards = DEFAULT_CARDS
-        # numbers the operations are played with; everything on to start
-        self.allowed = set(range(NUM_MIN, NUM_MAX + 1))
+        # numbers the operations are played with, restored from the last run
+        self.allowed = load_allowed()
         self.deck: list[Card] = []
         self.results: list[Card] = []     # completed cards, in play order
         self.retry_queue: list[Card] = []
@@ -485,6 +505,9 @@ class Almathus(tk.Tk):
             else:
                 self.allowed.add(n)
             paint(n, hover=True)
+            # write on every tap: quitting goes through os._exit(), so there is
+            # no exit hook late enough to be trusted with this
+            save_allowed(self.allowed)
 
         for n in range(NUM_MIN, NUM_MAX + 1):
             # width in characters, identical for every chip, so "10" does not

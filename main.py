@@ -1744,7 +1744,12 @@ class Almathus(tk.Tk):
 
         table = tk.Frame(canvas, bg=BG)
         window = canvas.create_window((0, 0), window=table, anchor="nw")
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(window, width=e.width))
+        # `e.widget is canvas`: the rows carry the canvas as an extra bindtag (see
+        # below), so this binding is also consulted for *their* <Configure> — and
+        # widening the scrolled window to a single cell's width would collapse the
+        # whole table, one feedback pass at a time.
+        canvas.bind("<Configure>", lambda e: e.widget is canvas
+                    and canvas.itemconfig(window, width=e.width))
         table.bind("<Configure>",
                    lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         # Wheel and trackpad. The pointer is nearly always over a row Label, not

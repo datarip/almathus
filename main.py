@@ -83,6 +83,7 @@ STRINGS = {
         "correct": "Bravo ! 🎉",
         "wrong": "Presque ! La réponse était {a}",
         "voice_toggle": "🎤 Répondre à la voix",
+        "girly_toggle": "👑 Mode princesse",
         "voice_off_hint": "🎤 Voix indisponible : {reason}",
         "listening": "🎧 à l'écoute…",
         "thinking": "🤔 …",
@@ -126,6 +127,7 @@ STRINGS = {
         "correct": "Well done! 🎉",
         "wrong": "Almost! The answer was {a}",
         "voice_toggle": "🎤 Answer by voice",
+        "girly_toggle": "👑 Girly mode",
         "voice_off_hint": "🎤 Voice unavailable: {reason}",
         "listening": "🎧 listening…",
         "thinking": "🤔 …",
@@ -161,28 +163,77 @@ def T(key: str, **kw) -> str:
 
 
 # Colors
-BG = "#0f1226"
-CARD_BG = "#1b1f3b"
-ACCENT = "#ffd23f"
-GOOD = "#3ddc97"
-BAD = "#ff6b6b"
-TEXT = "#f5f6ff"
-MUTED = "#9aa0c8"
-# Soft, cheerful and deliberately gender-neutral: mint, sky, apricot, lilac.
-# All four are light enough to carry the same near-black text.
-MODE_COLORS = {
-    "addition": "#4fd1a5",
-    "subtraction": "#6cb8f5",
-    "multiplication": "#ff9e7d",
-    "division": "#b39ddb",
+#
+# Two palettes with the same keys: the dark default, and the pink "girly" one
+# a kid can flip to from the settings footer. Every screen reads these names as
+# module globals *while it builds its widgets*, so switching themes is
+# apply_theme() followed by a redraw — nothing repaints itself in place.
+THEMES = {
+    "default": dict(
+        BG="#0f1226",
+        CARD_BG="#1b1f3b",
+        ACCENT="#ffd23f",
+        GOOD="#3ddc97",
+        BAD="#ff6b6b",
+        TEXT="#f5f6ff",
+        MUTED="#9aa0c8",
+        INK="#10121f",        # text laid on top of a bright tile
+        SURFACE="#191d3d",    # raised panel, one step above the page background
+        BORDER="#2b3160",     # hairline outline for panels and chips
+        ENTRY_BG="#12152e",   # the answer box, one step *below* the page
+        # Soft, cheerful and deliberately gender-neutral: mint, sky, apricot,
+        # lilac. All four are light enough to carry the same near-black text.
+        MODE_COLORS={
+            "addition": "#4fd1a5",
+            "subtraction": "#6cb8f5",
+            "multiplication": "#ff9e7d",
+            "division": "#b39ddb",
+        },
+        NUM_ON_BG="#4fd1a5", NUM_ON_FG="#10121f",
+        NUM_OFF_BG="#333a63", NUM_OFF_FG="#8b93c4",
+        NUM_HOVER_BG="#4b5490",
+        TITLE_ICON="🧮",
+    ),
+    # Peach-pink page, plum ink. The whole palette flips light here, so the
+    # greens and reds are darkened too: they carry text on a pale background
+    # now, where the dark theme's pastels would wash out.
+    "girly": dict(
+        BG="#ffe6ef",
+        CARD_BG="#ffc8dd",
+        ACCENT="#e6338c",
+        GOOD="#12996f",
+        BAD="#e0304f",
+        TEXT="#43152c",
+        MUTED="#8f5872",
+        INK="#3d0f26",
+        SURFACE="#fff4f8",
+        BORDER="#f3aecb",
+        ENTRY_BG="#fff4f8",
+        MODE_COLORS={
+            "addition": "#ff9ec7",
+            "subtraction": "#cbaaf2",
+            "multiplication": "#ffb08a",
+            "division": "#ffe08a",
+        },
+        NUM_ON_BG="#ff7ab8", NUM_ON_FG="#3d0f26",
+        NUM_OFF_BG="#ffd9e6", NUM_OFF_FG="#b07f96",
+        NUM_HOVER_BG="#ffb3d3",
+        TITLE_ICON="👑",      # only a fallback: girly mode shows GIRLY_IMAGE
+    ),
 }
-INK = "#10121f"       # text laid on top of a bright tile
-SURFACE = "#191d3d"   # raised panel, one step above the page background
-BORDER = "#2b3160"    # hairline outline for panels and chips
 
-NUM_ON_BG, NUM_ON_FG = "#4fd1a5", INK
-NUM_OFF_BG, NUM_OFF_FG = "#333a63", "#8b93c4"
-NUM_HOVER_BG = "#4b5490"
+
+def apply_theme(name: str) -> None:
+    """Rebind the palette globals to one of THEMES. Widgets that already exist
+    keep the colors they were built with, so callers redraw the screen after."""
+    global THEME
+    THEME = name if name in THEMES else "default"
+    globals().update(THEMES[THEME])
+
+
+THEME = "default"
+apply_theme(THEME)
+
 OP_SYMBOL = {
     "addition": "+",
     "subtraction": "−",
@@ -192,6 +243,26 @@ OP_SYMBOL = {
 
 STATS_DIR = Path(__file__).resolve().parent / "stats"
 PREFS_FILE = Path(__file__).resolve().parent / "prefs.json"
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+GIRLY_IMAGE = ASSETS_DIR / "peach.png"
+
+
+def read_prefs() -> dict:
+    """Everything remembered between runs. Anything unreadable reads as empty."""
+    try:
+        prefs = json.loads(PREFS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return prefs if isinstance(prefs, dict) else {}
+
+
+def write_prefs(**updates) -> None:
+    """Merge and write. Writing the whole file from one caller's value would
+    drop every other preference, so each key is folded into what is on disk."""
+    try:
+        PREFS_FILE.write_text(json.dumps(read_prefs() | updates), encoding="utf-8")
+    except OSError:
+        pass  # a read-only install must never break the game
 
 
 def load_allowed() -> set[int]:
@@ -199,18 +270,21 @@ def load_allowed() -> set[int]:
     so the choice has to survive a restart. Anything unreadable or nonsensical
     falls back to 'all numbers on'."""
     try:
-        raw = json.loads(PREFS_FILE.read_text(encoding="utf-8"))["numbers"]
+        raw = read_prefs()["numbers"]
         sel = {int(n) for n in raw if NUM_MIN <= int(n) <= NUM_MAX}
-    except (OSError, ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, KeyError):
         sel = set()
     return sel or set(range(NUM_MIN, NUM_MAX + 1))
 
 
 def save_allowed(sel: set[int]) -> None:
-    try:
-        PREFS_FILE.write_text(json.dumps({"numbers": sorted(sel)}), encoding="utf-8")
-    except OSError:
-        pass  # a read-only install must never break the game
+    write_prefs(numbers=sorted(sel))
+
+
+def load_theme() -> str:
+    """The palette chosen last time — girly mode outlives a restart."""
+    name = read_prefs().get("theme")
+    return name if name in THEMES else "default"
 
 
 # --------------------------------------------------------------------------- #
@@ -301,8 +375,15 @@ def make_deck(mode: str, n: int, allowed: set[int] | None = None) -> list[Card]:
 
 
 class Btn(tk.Label):
-    def __init__(self, parent, text, command=None, bg=CARD_BG, fg=TEXT, font=None,
-                 active_bg=ACCENT, active_fg="#10121f", padx=14, pady=10, **kw):
+    def __init__(self, parent, text, command=None, bg=None, fg=None, font=None,
+                 active_bg=None, active_fg=None, padx=14, pady=10, **kw):
+        # The palette defaults are filled in here rather than in the signature:
+        # default arguments are evaluated once at import, which would nail every
+        # unstyled button to whichever theme happened to be loaded first.
+        bg = bg or CARD_BG
+        fg = fg or TEXT
+        active_bg = active_bg or ACCENT
+        active_fg = active_fg or INK
         super().__init__(parent, text=text, bg=bg, fg=fg, font=font,
                          padx=padx, pady=pady, cursor="hand2", **kw)
         self._bg, self._fg, self._abg, self._afg = bg, fg, active_bg, active_fg
@@ -519,6 +600,7 @@ class TimeChart(tk.Canvas):
 class Almathus(tk.Tk):
     def __init__(self):
         super().__init__()
+        apply_theme(load_theme())      # before any widget reads a color
         self.title(T("title"))
         self.configure(bg=BG)
         self.minsize(720, 640)
@@ -670,7 +752,7 @@ class Almathus(tk.Tk):
         col = tk.Frame(f, bg=BG)
         col.pack(expand=True, padx=24, pady=16)
 
-        tk.Label(col, text="🧮 Almathus", font=self.f_big, fg=ACCENT, bg=BG).pack()
+        self._build_title(col)
 
         # -- how many cards (one compact toolbar row) ----------------------- #
         self.count_var = tk.IntVar(value=self.n_cards)
@@ -727,8 +809,39 @@ class Almathus(tk.Tk):
         footer = tk.Frame(col, bg=BG)
         footer.pack(pady=(18, 4))
         self._build_voice_toggle(footer)
+        self._build_girly_toggle(footer)
         Btn(footer, T("progress"), command=self.show_progress, font=self.f_body,
             bg=CARD_BG, fg=MUTED, padx=22, pady=10).pack(side="left", padx=8)
+
+    def _build_title(self, parent):
+        """'🧮 Almathus' — with the princess picture standing in for the abacus
+        in girly mode."""
+        row = tk.Frame(parent, bg=BG)
+        row.pack()
+        icon = self._title_image() if THEME == "girly" else None
+        if icon is not None:
+            # Tk keeps no reference of its own to an image: drop ours and the
+            # label goes blank the moment the garbage collector runs.
+            self._title_icon = icon
+            tk.Label(row, image=icon, bg=BG).pack(side="left", padx=(0, 16))
+        else:
+            tk.Label(row, text=TITLE_ICON, font=self.f_big, fg=ACCENT, bg=BG
+                     ).pack(side="left", padx=(0, 12))
+        tk.Label(row, text="Almathus", font=self.f_big, fg=ACCENT, bg=BG).pack(side="left")
+
+    def _title_image(self):
+        """The girly-mode picture, shrunk to about two lines of title text.
+        Tk can only scale by whole-number subsampling (there is no Pillow here),
+        so the source PNG just needs to be comfortably larger than that.
+
+        Returns None if the file is missing or Tk cannot decode it — the caller
+        falls back to the emoji, so a missing asset never breaks the screen."""
+        try:
+            img = tk.PhotoImage(file=str(GIRLY_IMAGE))
+        except tk.TclError:
+            return None
+        step = max(1, round(img.height() / (self.f_big.metrics("linespace") * 2)))
+        return img.subsample(step) if step > 1 else img
 
     def _build_number_row(self, parent):
         """Row of [1]..[10] toggles: the numbers every operation is played with."""
@@ -787,11 +900,29 @@ class Almathus(tk.Tk):
         def refresh():
             on = self.voice_enabled.get()
             btn.config(text=f"{T('voice_toggle')} : {'ON ✅' if on else 'OFF'}")
-            btn.set_colors(GOOD if on else CARD_BG, "#10121f" if on else MUTED)
+            btn.set_colors(GOOD if on else CARD_BG, INK if on else MUTED)
 
         btn._command = lambda: (self.voice_enabled.set(not self.voice_enabled.get()), refresh())
         btn.pack(side="left", padx=8)
         refresh()
+
+    def _build_girly_toggle(self, parent):
+        on = THEME == "girly"
+        btn = Btn(parent, f"{T('girly_toggle')} : {'ON 👑' if on else 'OFF'}",
+                  font=self.f_body, padx=22, pady=10,
+                  bg=ACCENT if on else CARD_BG, fg=INK if on else MUTED)
+
+        def flip():
+            apply_theme("default" if THEME == "girly" else "girly")
+            write_prefs(theme=THEME)
+            # The window and its container outlive every screen, so they are
+            # repainted by hand; everything else is rebuilt from the new palette.
+            self.configure(bg=BG)
+            self.container.config(bg=BG)
+            self.show_settings()
+
+        btn._command = flip
+        btn.pack(side="left", padx=8)
 
     # ------------------------------------------------------------------ #
     # Screen 2: countdown
@@ -875,7 +1006,7 @@ class Almathus(tk.Tk):
         self.answer_var = tk.StringVar()
         entry = tk.Entry(inputs, textvariable=self.answer_var, font=self.f_big,
                          justify="center", width=6, bd=0,
-                         bg="#12152e", fg=ACCENT, insertbackground=ACCENT)
+                         bg=ENTRY_BG, fg=ACCENT, insertbackground=ACCENT)
         entry.pack(pady=(2, 2), ipady=6)
         entry.focus_set()
         entry.bind("<Return>", lambda e: self.submit())
@@ -953,9 +1084,9 @@ class Almathus(tk.Tk):
         for r, rowk in enumerate(keys):
             for c, k in enumerate(rowk):
                 if k == "C":
-                    cmd, col, fg = (lambda: self.answer_var.set("")), BAD, "#10121f"
+                    cmd, col, fg = (lambda: self.answer_var.set("")), BAD, INK
                 elif k == "✓":
-                    cmd, col, fg = self.submit, GOOD, "#10121f"
+                    cmd, col, fg = self.submit, GOOD, INK
                 else:
                     cmd = (lambda d=k: self.answer_var.set(self.answer_var.get() + d))
                     col, fg = CARD_BG, TEXT
@@ -1056,7 +1187,7 @@ class Almathus(tk.Tk):
         btns = tk.Frame(f, bg=BG)
         btns.pack(side="bottom", pady=28)
         Btn(btns, T("again"), command=self.show_settings, font=self.f_mode,
-            bg=GOOD, fg="#10121f").pack(side="left", padx=12)
+            bg=GOOD, fg=INK).pack(side="left", padx=12)
         Btn(btns, T("progress"), command=self.show_progress, font=self.f_mode,
             bg=CARD_BG, fg=TEXT).pack(side="left", padx=12)
         Btn(btns, T("quit"), command=self._on_quit, font=self.f_mode,

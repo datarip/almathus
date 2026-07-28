@@ -29,6 +29,18 @@ python3 main.py
 5. **Recap** — score, total time, average time/card, an encouraging emoji, and the
    5 slowest operations so you know what to practise.
 
+## 👑 Girly mode
+
+A button in the settings footer (*Mode princesse*) flips the whole app from the
+dark blue palette to a peach-pink one, and swaps the 🧮 in the title for the
+picture in `assets/peach.png`. It is purely cosmetic — nothing about the game
+changes — and the choice is remembered in `prefs.json` between runs.
+
+Both palettes are the `THEMES` dict at the top of `main.py`; add a third one
+there and it needs nothing else but a way to select it. The picture is scaled
+by whole-number subsampling (Tk's only scaler without Pillow), so supply a PNG
+a few hundred pixels tall. If it is missing, the mode falls back to a 👑 emoji.
+
 ## Timing & progress tracking
 
 - A **total stopwatch** counts up (bottom-right) and a **per-card timer** shows how
@@ -192,6 +204,33 @@ uv sync --extra voice        # sounddevice + numpy + text2num + parakeet-mlx + v
 
 Both TTS and STT degrade to no-ops if unavailable — the game stays fully playable
 with the keypad, and voice input layers on top when it's ready.
+
+### 🐛 Debugging the voice path — `ALMATHUS_VOICE_DEBUG`
+
+An **environment variable**, not a command-line flag (the app takes no arguments).
+Set it to anything other than empty or `0` and `voice.py` traces the whole pipeline
+to stderr, every line prefixed with `[voice]`:
+
+```bash
+ALMATHUS_VOICE_DEBUG=1 uv run almathus
+```
+
+What you get:
+
+- capture setup — sample rate, block size, which detector is active
+  (`webrtcvad` or the energy fallback), and a warning when the device opens at a
+  different rate than requested;
+- why a recording ended — no speech before the pre-timeout, no sustained speech,
+  or a silent/failed capture — each with the measured peak level;
+- recognition results — the raw Vosk alternatives and the parakeet transcript,
+  with the parsed number and Vosk's elapsed time in ms;
+- model load and warmup failures that are otherwise swallowed silently.
+
+Each capture is also copied to `/tmp/almathus_capture.wav`, so you can listen back
+to exactly what the recognizer heard.
+
+Nothing outside `voice.py` reads the variable — the keypad, timing, and results
+log behave identically whether it is set or not.
 
 ## Language
 

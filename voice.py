@@ -7,7 +7,8 @@ Two independent, gracefully-degrading pieces:
                      ``pyttsx3`` if present; otherwise a silent no-op.
 
 * ``SpeechInput``  — records from the mic with simple voice-activity detection
-                     (auto-stops on silence / timeout), transcribes locally with
+                     (one open stream per card, auto-stops when the speaker goes
+                     quiet, so nothing is lost between two answers), transcribes with
                      **parakeet**, and parses the spoken number (French + English).
                      Needs ``sounddevice`` + ``numpy`` and a parakeet backend;
                      if any is missing it reports itself unavailable and the game
@@ -270,9 +271,9 @@ def _fallback_parse_number(text: str) -> Optional[int]:
 
 _SAMPLE_RATE = 16000
 _BLOCK = 320               # 20 ms blocks
-_PRE_TIMEOUT = 5.0         # give up if no speech starts within this
+_PRE_TIMEOUT = 5.0         # mic health check: this much silence, and *nothing* heard
 _SILENCE_HANG = 0.35       # stop this long after speech ends (snappy response)
-_MAX_DURATION = 6.0        # hard cap on a single utterance
+_MAX_DURATION = 6.0        # hard cap on a single utterance, from its onset
 _VOICE_BAND = (300.0, 3400.0)   # Hz — speech band; cuts low rumble & high hiss
 
 # v3 is multilingual (incl. French); v2 is English-only.
@@ -325,6 +326,9 @@ class SpeechInput:
         self._vosk_model = None
         self._vosk_ok = None                      # None=unknown, False=unavailable
         self._noise_floor = None                  # persists across listens (no re-calibration)
+        self._audio_q: queue.Queue = queue.Queue()   # mic blocks, filled while the stream is open
+        self._stream_params = None                # cached (samplerate, blocksize)
+        self._blk = int(_SAMPLE_RATE * 0.02)
         self._boosted = False                     # did we raise the OS mic input gain?
         self._last_raw = None                     # last capture, un-band-passed (for Vosk)
         self._active_stream = None                # the open mic stream, so we can close it on quit
@@ -387,16 +391,23 @@ class SpeechInput:
                          daemon=True).start()
 
     def cancel(self):
+        """End the current listening session (the card is over): the mic closes,
+        so the next card starts on a clean stream and the mic light goes out."""
         self._cancel.set()
+        self._close_stream()
 
     def stop(self):
         """Stop any in-progress capture and release the microphone right away
         (so the OS mic-in-use indicator turns off when the app quits)."""
         self._stopped = True             # prevent the continuous loop from reopening it
         self._cancel.set()
+        self._close_stream()
+
+    def _close_stream(self):
         s = self._active_stream
         self._active_stream = None
         if s is not None:
+            _dbg("closing mic stream")
             for fn in ("abort", "close"):
                 try:
                     getattr(s, fn)()
@@ -479,6 +490,7 @@ class SpeechInput:
             try:
                 if audio is None or self._cancel.is_set():
                     _dbg("no audio (timeout/cancel) -> None")
+                    self._busy = False       # before the callback: it re-arms from here
                     on_result(None)
                     continue
                 if on_state:
@@ -497,6 +509,7 @@ class SpeechInput:
                     _dbg(f"parakeet fallback transcript={text!r} -> {nums}")
                 parsed = pick(nums) if pick else (nums[-1] if nums else None)
                 _dbg(f"picked -> {parsed}")
+                self._busy = False           # a callback that re-arms must not be refused
                 on_result(parsed)
             except Exception as e:
                 _dbg("transcribe EXCEPTION:", repr(e))
@@ -511,7 +524,13 @@ class SpeechInput:
         """Pick a samplerate the current input device supports (devices change:
         Bluetooth, external mics...). Prefer 16 kHz; fall back to the device
         default and common rates. Returns (samplerate, blocksize) or (None, 0).
+
+        Cached: probing costs ~45 ms of CoreAudio round-trips, which used to be
+        paid again on every re-arm. Cleared whenever the stream fails to open,
+        so a device change is still picked up.
         """
+        if self._stream_params is not None:
+            return self._stream_params
         sd = self._sd
         try:
             dev_sr = int(sd.query_devices(kind="input").get("default_samplerate") or 16000)
@@ -521,7 +540,9 @@ class SpeechInput:
         for sr in (16000, 48000, 32000, 8000, dev_sr, 44100, 22050):
             try:
                 sd.check_input_settings(samplerate=sr, channels=1, dtype="int16")
-                return sr, int(sr * 0.02)   # exactly 20 ms frames (WebRTC VAD needs 10/20/30)
+                # exactly 20 ms frames (WebRTC VAD needs 10/20/30)
+                self._stream_params = (sr, int(sr * 0.02))
+                return self._stream_params
             except Exception:
                 continue
         return None, 0
@@ -537,18 +558,55 @@ class SpeechInput:
         except Exception:
             return None, None, None
 
+    def _ensure_stream(self):
+        """Open the mic stream if it isn't already, and keep it open for the whole
+        card. Every block flows into ``_audio_q`` continuously, so the ~200 ms it
+        takes to probe the device and start a stream no longer falls between two
+        listens — a word spoken right as one capture ends is still recorded.
+        Returns (samplerate, blocksize), or (None, 0) if the mic is unusable.
+        """
+        if self._active_stream is not None:
+            return self._rec_sr, self._blk
+        sr, blk = self._pick_stream_params()
+        if sr is None:
+            return None, 0
+
+        def cb(indata, _frames, _tinfo, _status):
+            self._audio_q.put(indata[:, 0].copy())
+
+        try:
+            stream = self._sd.InputStream(samplerate=sr, channels=1, dtype="int16",
+                                          blocksize=blk, callback=cb)
+            stream.start()
+        except Exception as e:
+            _dbg("stream open failed:", repr(e))
+            self._stream_params = None    # re-probe next time (device may have changed)
+            return None, 0
+        actual = int(getattr(stream, "samplerate", sr) or sr)
+        if actual != sr:
+            _dbg(f"record: requested {sr} Hz but device opened at {actual} Hz")
+        self._rec_sr, self._blk = actual, blk
+        while not self._audio_q.empty():  # drop anything stale from a previous stream
+            try:
+                self._audio_q.get_nowait()
+            except queue.Empty:
+                break
+        self._active_stream = stream
+        _dbg(f"record: opened mic stream samplerate={actual} blocksize={blk}")
+        return actual, blk
+
     def _record(self, on_state):
         if self._stopped:
             return None
-        sd, np = self._sd, self._np
-        sr, blk = self._pick_stream_params()
+        np = self._np
+        sr, blk = self._ensure_stream()
         if sr is None:
             self._silent = True          # no usable input device
             return None
-        self._rec_sr = sr
-        _dbg(f"record: samplerate={sr} blocksize={blk}")
+        if self._cancel.is_set():        # cancel() raced with the open
+            self._close_stream()
+            return None
         block_secs = blk / sr
-        frames = []                       # every captured block (RAW), in order
         pre = int(0.25 / block_secs)      # keep a little before the onset
         post = int(0.25 / block_secs)     # ...and a little after the tail
         min_voiced = max(4, int(0.10 / block_secs))   # need ≥0.10s of real speech
@@ -569,8 +627,7 @@ class SpeechInput:
                 wvad = None
         _dbg(f"record: detector={'webrtcvad' if wvad else 'energy'} sr={sr}")
 
-        st = {"start": None, "last": None, "peak": 0.0, "run": 0, "efloor": None}
-        lock = threading.Lock()
+        st = {"peak": 0.0, "run": 0, "efloor": None}
 
         def band_rms(block):
             b = block.astype(np.float32)
@@ -593,76 +650,82 @@ class SpeechInput:
                     pass
             return False
 
-        def cb(indata, _frames, _tinfo, _status):
-            block = indata[:, 0]
-            r = band_rms(block)
-            with lock:
-                i = len(frames)
-                frames.append(block.copy())
-                if r > st["peak"]:
-                    st["peak"] = r
-                if st["start"] is None:
-                    if is_speech(block, r):
-                        st["run"] += 1
-                        if st["run"] >= 2:              # ~40 ms of speech -> go
-                            st["start"] = max(0, i - st["run"] + 1)
-                            st["last"] = i
-                    else:
-                        st["run"] = 0
-                elif r > max(st["peak"] * 0.12, 40.0):  # still speaking (energy)
-                    st["last"] = i
-
         if on_state:
             on_state("listening")
-        try:
-            stream = sd.InputStream(samplerate=sr, channels=1,
-                                    dtype="int16", blocksize=blk, callback=cb)
-        except Exception:
-            self._silent = True   # can't open the mic -> surface the hint
-            return None
-        actual = int(getattr(stream, "samplerate", sr) or sr)
-        if actual != sr:
-            _dbg(f"record: requested {sr} Hz but device opened at {actual} Hz")
-        self._rec_sr = actual
-        self._active_stream = stream
-        if self._stopped or self._cancel.is_set():   # stop() raced with the open -> release now
-            for fn in ("abort", "close"):
-                try:
-                    getattr(stream, fn)()
-                except Exception:
-                    pass
-            self._active_stream = None
-            return None
 
-        t0 = time.monotonic()
-        try:
-            with stream:
-                while not self._cancel.is_set():
-                    time.sleep(block_secs)
-                    now = time.monotonic()
-                    with lock:
-                        started = st["start"] is not None
-                        last, n = st["last"], len(frames)
-                    if now - t0 > _MAX_DURATION:
-                        break
-                    if not started and now - t0 > _PRE_TIMEOUT:
-                        self._silent = st["peak"] < 3.0
-                        _dbg(f"record: no speech in {_PRE_TIMEOUT}s (peak={st['peak']:.0f})")
+        # Segment the running stream block by block. Waiting for the onset has no
+        # deadline: the mic stays open until the card ends, so a kid who thinks in
+        # silence for twenty seconds and then answers is still heard. The timeout
+        # below is only a mic health check — nothing but digital silence trips it.
+        from collections import deque
+        preroll = deque(maxlen=max(1, pre))   # rolling window of the last blocks
+        frames = []                           # the utterance, once it has started
+        onset = voiced_end = 0
+        started = done = False
+        waited = starved = 0
+        while not self._cancel.is_set():
+            try:
+                block = self._audio_q.get(timeout=0.2)
+            except queue.Empty:
+                starved += 1
+                if starved * 0.2 > 2.0:       # stream died (device unplugged?)
+                    _dbg("record: mic stream starved -> reopening next time")
+                    self._close_stream()
+                    self._silent = True
+                    return None
+                continue
+            starved = 0
+            r = band_rms(block)
+            if r > st["peak"]:
+                st["peak"] = r
+            preroll.append(block)             # always: a false start keeps its lead-in
+            if not started:
+                if is_speech(block, r):
+                    st["run"] += 1
+                    if st["run"] >= 2:                  # ~40 ms of speech -> go
+                        started = True
+                        frames = list(preroll)
+                        onset = voiced_end = len(frames) - 1
+                else:
+                    st["run"] = 0
+                waited += 1
+                if waited * block_secs > _PRE_TIMEOUT:
+                    waited = 0
+                    if st["peak"] < 3.0:                # not even room tone -> no mic
+                        _dbg(f"record: silence for {_PRE_TIMEOUT}s (peak={st['peak']:.0f})")
+                        self._silent = True
                         return None
-                    if started and last is not None and \
-                            (n - last) * block_secs > _SILENCE_HANG:
-                        break                       # speaker went quiet -> done
-        finally:
-            self._active_stream = None
+                    st["peak"] = 0.0        # forget a stale bang; keep waiting for speech
+                continue
+            frames.append(block)
+            i = len(frames) - 1
+            if r > max(st["peak"] * 0.12, 40.0):        # still speaking (energy)
+                voiced_end = i
+            if (i - voiced_end) * block_secs > _SILENCE_HANG:
+                done = True                             # speaker went quiet -> done
+            elif (i - onset) * block_secs > _MAX_DURATION:
+                done = True                             # hard cap on one utterance
+            if not done:
+                continue
+            if voiced_end - onset + 1 >= min_voiced:
+                break                                   # a real utterance -> transcribe it
+            # A cough, a chair, a door: too short to be an answer. Drop it and keep
+            # listening on the same stream — bouncing back through the caller to
+            # re-arm would reopen the mic and go deaf for ~200 ms each time, which
+            # in a room with any ambient noise happens every few hundred ms.
+            _dbg(f"record: false start ({voiced_end - onset + 1} blocks), still listening")
+            started = done = False
+            st["run"] = 0
+            st["peak"] = 0.0
+            frames = []
 
-        with lock:
-            start, last, peak = st["start"], st["last"], st["peak"]
-        voiced = (last - start + 1) if (start is not None and last is not None) else 0
-        if start is None or voiced < min_voiced:
+        peak = st["peak"]
+        voiced = voiced_end - onset + 1 if started else 0
+        if not started or voiced < min_voiced:
             self._silent = peak < 3.0
-            _dbg(f"record: no sustained speech (start={start}, voiced={voiced}, peak={peak:.0f})")
+            _dbg(f"record: cancelled (started={started}, voiced={voiced}, peak={peak:.0f})")
             return None
-        seg = frames[max(0, start - pre): min(len(frames), last + post + 1)]
+        seg = frames[:voiced_end + post + 1]
         _dbg(f"record: captured {len(seg)} blocks (~{len(seg)*block_secs:.1f}s), peak={peak:.0f}")
         if not seg:
             return None

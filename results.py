@@ -14,11 +14,11 @@ HEADER DEFINITION
 
 Canonical French header (written when LANG = "fr"):
 
-    date,famille,temps,cartes,temps_moyen_par_carte
+    date,famille,temps,cartes,note,temps_moyen_par_carte
 
 Canonical English header (written when LANG = "en"):
 
-    date,family,time,cards,average_time_per_card
+    date,family,time,cards,grade,average_time_per_card
 
 | field         | fr header               | en header              | meaning                                   |
 |---------------|-------------------------|------------------------|-------------------------------------------|
@@ -26,13 +26,16 @@ Canonical English header (written when LANG = "en"):
 | `famille`     | `famille`               | `family`               | which operation family was drilled ("-3") |
 | `temps`       | `temps`                 | `time`                 | total time of the whole session           |
 | `cartes`      | `cartes`                | `cards`                | how many cards were asked                 |
+| `note`        | `note`                  | `grade`                | cards answered right the first time       |
 | `temps_moyen` | `temps_moyen_par_carte` | `average_time_per_card`| `temps / cartes`                          |
 
 Either language is accepted on read, in any column order, and header matching
 ignores case, accents, spaces and underscores — so `Temps`, `temps`,
 `Temps moyen par carte` and `temps_moyen` all land on the right field. A handful
 of synonyms are accepted too (see ALIASES). Columns the app doesn't know are
-kept in place and left empty when it appends.
+kept in place and left empty when it appends. A column the app *does* know but
+the file lacks is added to the end of the header the first time there is
+something to write in it — at the end, so every existing row keeps its cells.
 
 Hand-editing rules
 ------------------
@@ -48,6 +51,11 @@ Hand-editing rules
   separator (`1,29` = 1 min 29 s); otherwise it is a decimal point
   (`32,60` = 32.6 s). Use a dot when you mean a decimal.
 * **cartes** — an integer, or empty if unknown (the old paper rows).
+* **note** — how many cards were answered right on the first try. Written as a
+  bare number (`15`), because the denominator is the `cartes` cell next to it;
+  the screen, the chart and the PDF all show it as `15/20`. A hand-written
+  `15/20` is read too — only the numerator is kept. Empty on the old paper rows,
+  and on any row with no card count there is nothing to show.
 * **temps_moyen_par_carte** — normally left to the app, in plain seconds. If
   empty it is computed as `temps / cartes`; fill it in by hand for the old paper
   rows, where `cartes` is unknown.
@@ -65,6 +73,7 @@ so nothing you type here can be destroyed by the app.
 from __future__ import annotations
 
 import csv
+import io
 import unicodedata
 from dataclasses import dataclass
 from datetime import date as _date
@@ -74,9 +83,9 @@ from pathlib import Path
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 RESULTS_FILE = RESULTS_DIR / "results.csv"
 
-# The five logical fields, in canonical order. `temps_moyen` is derived but kept
+# The six logical fields, in canonical order. `temps_moyen` is derived but kept
 # as a real column so it can be hand-filled for rows with no card count.
-FIELDS = ("date", "famille", "temps", "cartes", "temps_moyen")
+FIELDS = ("date", "famille", "temps", "cartes", "note", "temps_moyen")
 
 HEADERS = {
     "fr": {
@@ -84,6 +93,7 @@ HEADERS = {
         "famille": "famille",
         "temps": "temps",
         "cartes": "cartes",
+        "note": "note",
         "temps_moyen": "temps_moyen_par_carte",
     },
     "en": {
@@ -91,6 +101,7 @@ HEADERS = {
         "famille": "family",
         "temps": "time",
         "cartes": "cards",
+        "note": "grade",
         "temps_moyen": "average_time_per_card",
     },
 }
@@ -102,6 +113,8 @@ ALIASES = {
     "temps": ("temps", "time", "duree", "duration", "temps_total", "total_time"),
     "cartes": ("cartes", "cards", "nb_cartes", "n_cartes", "n_cards", "card_count",
                "nombre_de_cartes"),
+    "note": ("note", "notes", "grade", "grades", "score", "reussites", "reussies",
+             "bonnes_reponses", "correct", "correct_answers"),
     "temps_moyen": ("temps_moyen_par_carte", "temps_moyen", "temps_moyen_carte",
                     "moyenne", "average_time_per_card", "average_time", "avg_time",
                     "avg_time_per_card", "average"),
@@ -215,6 +228,15 @@ def parse_int(text: str) -> int | None:
         return None
 
 
+def parse_note(text: str) -> int | None:
+    """The `note` cell: `15`, or the `15/20` a parent naturally writes.
+
+    Only the numerator is kept — the denominator is the `cartes` cell, and the
+    two would only ever disagree by accident.
+    """
+    return parse_int((text or "").split("/")[0])
+
+
 # --------------------------------------------------------------------------- #
 # Model
 # --------------------------------------------------------------------------- #
@@ -230,6 +252,7 @@ class Session:
     seconds: float | None
     cards: int | None
     avg_seconds: float | None
+    correct: int | None = None
     raw_time: str = ""
 
     @property
@@ -240,6 +263,30 @@ class Session:
         if self.seconds is not None and self.cards:
             return self.seconds / self.cards
         return None
+
+    @property
+    def note(self) -> tuple[int, int] | None:
+        """`(right, asked)` — the grade, or None if this row never recorded one."""
+        return grade([self])
+
+
+def grade(sessions) -> tuple[int, int] | None:
+    """The grade over a group of rows: right answers over cards asked.
+
+    Rows that recorded neither are simply not part of the fraction, so a day
+    that mixes a played session with a hand-typed paper row is graded on the
+    session alone. None when nothing in the group carries a score.
+    """
+    scored = [(s.correct, s.cards) for s in sessions
+              if s.correct is not None and s.cards]
+    if not scored:
+        return None
+    return sum(c for c, _ in scored), sum(n for _, n in scored)
+
+
+def fmt_note(note: tuple[int, int] | None) -> str:
+    """`15/20`, the way it is written on the sheet. Empty when there is none."""
+    return f"{note[0]}/{note[1]}" if note else ""
 
 
 # --------------------------------------------------------------------------- #
@@ -295,6 +342,7 @@ def load_sessions(path: Path | None = None) -> list[Session]:
                 seconds=seconds,
                 cards=parse_int(cell(row, "cartes")),
                 avg_seconds=parse_duration(cell(row, "temps_moyen")),
+                correct=parse_note(cell(row, "note")),
                 raw_time=raw_time,
             )
         )
@@ -323,7 +371,53 @@ def famille_label(mode: str, numbers: set[int], lang: str = "fr") -> str:
     return JOINER.get(lang, " et ").join(f"{sign}{n}" for n in nums)
 
 
+def _header_names(header: list[str], default: dict[str, str]) -> dict[str, str]:
+    """The language dictionary the file is already written in.
+
+    Used when adding a column to an existing file, so the new name matches the
+    ones beside it rather than the app's current language. `date` is spelled the
+    same in both, so a tie falls back to the app's own setting.
+    """
+    keys = {_key(c) for c in header}
+    scores = {lang: sum(1 for n in names.values() if _key(n) in keys)
+              for lang, names in HEADERS.items()}
+    ranked = sorted(scores, key=lambda lang: -scores[lang])
+    top, runner_up = ranked[0], ranked[1:]
+    if runner_up and scores[top] == scores[runner_up[0]]:
+        return default
+    return HEADERS[top]
+
+
+def _extend_header(path: Path, header: list[str], extra: list[str]) -> list[str]:
+    """Add column names to the header line of an existing file.
+
+    Only the first line is rewritten; every data line is copied through byte for
+    byte, so hand-typed rows — including the ones we cannot even parse — survive
+    untouched. New names go at the *end*: the old rows are then simply short by
+    those cells, which reads as empty, where inserting mid-header would shift
+    every value one column to the right.
+    """
+    try:
+        # newline="" on both ends: the line endings the file came with are data
+        # here, not something to translate.
+        with path.open(newline="", encoding="utf-8-sig") as fh:
+            raw = fh.read()
+    except (OSError, UnicodeDecodeError):
+        return header
+    first, sep, rest = raw.partition("\n")
+    grown = header + extra
+    line = io.StringIO()
+    csv.writer(line, lineterminator="").writerow(grown)
+    try:
+        with path.open("w", newline="", encoding="utf-8") as fh:
+            fh.write(line.getvalue() + first[len(first.rstrip("\r")):] + sep + rest)
+    except OSError:
+        return header
+    return grown
+
+
 def append_session(day: _date, famille: str, seconds: float, cards: int,
+                   correct: int | None = None,
                    lang: str = "fr", path: Path | None = None) -> None:
     """Add one line at the bottom, matching whatever header the file already has.
 
@@ -356,16 +450,27 @@ def append_session(day: _date, famille: str, seconds: float, cards: int,
         cols = {f: i for i, f in enumerate(FIELDS)}
     else:
         cols = _header_map(header)
+        names = _header_names(header, names)
 
     values = {
         "date": day.isoformat(),
         "famille": famille,
         "temps": fmt_duration(seconds),
         "cartes": str(cards),
+        # the numerator only: the denominator is the `cartes` cell beside it.
+        "note": "" if correct is None else str(correct),
         # plain seconds: a per-card average reads better as `4.8` than `0:04.8`
         # (and is read back just as happily).
         "temps_moyen": f"{seconds / cards:.1f}" if cards else "",
     }
+
+    # A file written before a column existed has nowhere to put it: give it one
+    # rather than dropping the value on the floor.
+    missing = [f for f in FIELDS if f not in cols and values.get(f)]
+    if missing and not write_header:
+        header = _extend_header(path, header, [names[f] for f in missing])
+        cols = _header_map(header)
+
     row = [""] * len(header)
     for field, i in cols.items():
         if i < len(row):

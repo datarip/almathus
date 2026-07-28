@@ -46,10 +46,9 @@ RANGES = {
     "division": {"max_factor": 10},
 }
 
-# The second operand is picked from this set — per mode, the parent/kid can turn
-# numbers off on the settings screen to drill one table at a time (e.g. only
-# [7] selected on multiplication => 3×7, 9×7, 4×7...). 0 is excluded: it would
-# make division undefined and +0 / ×0 pointless.
+# The second operand is picked from the numbers switched on in the settings
+# screen, so the kid can drill one at a time (only [7] => 3×7, 9×7, 4×7...).
+# 0 is excluded: it would make division undefined and +0 / ×0 pointless.
 NUM_MIN, NUM_MAX = 1, 10
 
 LANG = "fr"  # default language; "en" also supported
@@ -58,8 +57,9 @@ STRINGS = {
     "fr": {
         "title": "Almathus — les maths en jouant",
         "how_many": "Combien de cartes ?",
+        "choose_numbers": "Avec quels nombres ?",
+        "numbers_hint": "Touche un nombre pour l'allumer ou l'éteindre",
         "choose_mode": "Choisis ton opération",
-        "numbers_hint": "Touche les nombres pour choisir ce qu'on travaille",
         "addition": "Addition",
         "subtraction": "Soustraction",
         "multiplication": "Multiplication",
@@ -88,8 +88,9 @@ STRINGS = {
     "en": {
         "title": "Almathus — math through play",
         "how_many": "How many cards?",
+        "choose_numbers": "With which numbers?",
+        "numbers_hint": "Tap a number to switch it on or off",
         "choose_mode": "Choose your operation",
-        "numbers_hint": "Tap the numbers to pick what to practise",
         "addition": "Addition",
         "subtraction": "Subtraction",
         "multiplication": "Multiplication",
@@ -150,9 +151,6 @@ INK = "#10121f"       # text laid on top of a bright tile
 SURFACE = "#191d3d"   # raised panel, one step above the page background
 BORDER = "#2b3160"    # hairline outline for panels and chips
 
-# The number toggles sit on their own inset strip so on/off reads the same on
-# every tile (each tile is a different bright color).
-NUM_STRIP_BG = "#141735"
 NUM_ON_BG, NUM_ON_FG = "#4fd1a5", INK
 NUM_OFF_BG, NUM_OFF_FG = "#333a63", "#8b93c4"
 NUM_HOVER_BG = "#4b5490"
@@ -278,8 +276,8 @@ class Almathus(tk.Tk):
         # session state
         self.mode = "addition"
         self.n_cards = DEFAULT_CARDS
-        # per-mode set of allowed second operands; everything on to start
-        self.allowed = {m: set(range(NUM_MIN, NUM_MAX + 1)) for m in MODES}
+        # numbers the operations are played with; everything on to start
+        self.allowed = set(range(NUM_MIN, NUM_MAX + 1))
         self.deck: list[Card] = []
         self.results: list[Card] = []     # completed cards, in play order
         self.retry_queue: list[Card] = []
@@ -375,6 +373,7 @@ class Almathus(tk.Tk):
         self.f_small = F(15)
         self.f_tile = F(24, "bold")
         self.f_chip = F(14, "bold")
+        self.f_num = F(20, "bold")
         self.f_hint = F(14)
 
     # -- frame helper ------------------------------------------------------ #
@@ -406,99 +405,102 @@ class Almathus(tk.Tk):
 
         tk.Label(col, text="🧮 Almathus", font=self.f_big, fg=ACCENT, bg=BG).pack()
 
-        # -- how many cards ------------------------------------------------ #
+        # -- how many cards (one compact toolbar row) ----------------------- #
         self.count_var = tk.IntVar(value=self.n_cards)
         panel = tk.Frame(col, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER)
-        panel.pack(pady=(14, 24), ipadx=30, ipady=10)
-        tk.Label(panel, text=T("how_many"), font=self.f_body, fg=MUTED, bg=SURFACE
-                 ).pack(pady=(4, 2))
+        panel.pack(fill="x", pady=(14, 18))
+        bar = tk.Frame(panel, bg=SURFACE)
+        bar.pack(pady=12)
+        tk.Label(bar, text=T("how_many"), font=self.f_body, fg=MUTED, bg=SURFACE
+                 ).pack(side="left", padx=(0, 18))
 
         def bump(d):
             self.count_var.set(max(1, min(99, self.count_var.get() + d)))
 
-        row = tk.Frame(panel, bg=SURFACE)
-        row.pack()
-        Btn(row, "−", command=lambda: bump(-1), font=self.f_mode, bg=CARD_BG, fg=TEXT,
-            width=2, pady=2).pack(side="left", padx=10)
-        tk.Label(row, textvariable=self.count_var, font=self.f_mode, fg=ACCENT, bg=SURFACE,
+        Btn(bar, "−", command=lambda: bump(-1), font=self.f_mode, bg=CARD_BG, fg=TEXT,
+            width=2, pady=0).pack(side="left", padx=6)
+        tk.Label(bar, textvariable=self.count_var, font=self.f_mode, fg=ACCENT, bg=SURFACE,
                  width=3).pack(side="left")
-        Btn(row, "+", command=lambda: bump(1), font=self.f_mode, bg=CARD_BG, fg=TEXT,
-            width=2, pady=2).pack(side="left", padx=10)
+        Btn(bar, "+", command=lambda: bump(1), font=self.f_mode, bg=CARD_BG, fg=TEXT,
+            width=2, pady=0).pack(side="left", padx=6)
 
         # quick picks double as a segmented control: the live value stays lit
-        quick = tk.Frame(panel, bg=SURFACE)
-        quick.pack(pady=(6, 6))
         chips: dict[int, Btn] = {}
         for q in (5, 10, 20, 30, 50):
-            chips[q] = Btn(quick, str(q), command=lambda v=q: self.count_var.set(v),
-                           font=self.f_chip, width=3, padx=10, pady=5,
-                           active_bg=ACCENT, active_fg="#10121f")
-            chips[q].pack(side="left", padx=5)
+            chips[q] = Btn(bar, str(q), command=lambda v=q: self.count_var.set(v),
+                           font=self.f_chip, width=3, padx=10, pady=6,
+                           active_bg=ACCENT, active_fg=INK)
+            chips[q].pack(side="left", padx=(18 if q == 5 else 5, 0))
 
         def lit(*_):
             v = self.count_var.get()
             for q, c in chips.items():
-                c.set_colors(*((ACCENT, "#10121f") if q == v else (CARD_BG, MUTED)))
+                c.set_colors(*((ACCENT, INK) if q == v else (CARD_BG, MUTED)))
 
         self.count_var.trace_add("write", lit)
         lit()
 
-        # -- operations ---------------------------------------------------- #
-        tk.Label(col, text=T("choose_mode"), font=self.f_title, fg=TEXT, bg=BG).pack()
-        tk.Label(col, text=T("numbers_hint"), font=self.f_hint, fg=MUTED, bg=BG
+        # -- which numbers (step 1) ---------------------------------------- #
+        self._build_number_row(col)
+
+        # -- which operation (step 2, and it starts the game) --------------- #
+        tk.Label(col, text=T("choose_mode"), font=self.f_title, fg=TEXT, bg=BG
                  ).pack(pady=(4, 14))
 
         grid = tk.Frame(col, bg=BG)
-        grid.pack()
+        grid.pack(fill="x")
         for c in (0, 1):                       # keep both tiles the same width
             grid.grid_columnconfigure(c, uniform="ops", weight=1)
         for i, m in enumerate(MODES):
-            tile = tk.Frame(grid, bg=MODE_COLORS[m])
-            tile.grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="nsew")
-            Btn(tile, f"{T(m)}  {OP_SYMBOL[m]}", command=lambda mm=m: self.start_game(mm),
-                font=self.f_tile, bg=MODE_COLORS[m], fg="#10121f",
-                active_bg=TEXT, active_fg="#10121f", padx=20, pady=16).pack(fill="x")
-            self._build_number_row(tile, m)
+            Btn(grid, f"{T(m)}  {OP_SYMBOL[m]}", command=lambda mm=m: self.start_game(mm),
+                font=self.f_tile, bg=MODE_COLORS[m], fg=INK,
+                active_bg=TEXT, active_fg=INK, padx=20, pady=22
+                ).grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="nsew")
 
         self._build_voice_toggle(col)
 
-    def _build_number_row(self, parent, mode: str):
-        """Row of [1]..[10] toggles: which number the operation is played with."""
-        # The strip hugs its chips and is centered under the title. Stretching it
-        # to the tile width (fill="x" / weight=1) leaves slack that Tk hands out
-        # a pixel at a time, which is what made the chips uneven and the row
-        # edges ragged. With no slack every chip is identical by construction.
-        strip = tk.Frame(parent, bg=NUM_STRIP_BG)
-        strip.pack(padx=16, pady=(0, 16))
+    def _build_number_row(self, parent):
+        """Row of [1]..[10] toggles: the numbers every operation is played with."""
+        panel = tk.Frame(parent, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER)
+        panel.pack(fill="x", pady=(0, 22), ipady=10)
+        tk.Label(panel, text=T("choose_numbers"), font=self.f_body, fg=MUTED, bg=SURFACE
+                 ).pack(pady=(6, 2))
+
+        # The row hugs its chips instead of stretching: slack is what Tk hands
+        # out a pixel at a time, and that is what made the chips uneven.
+        strip = tk.Frame(panel, bg=SURFACE)
+        strip.pack(pady=(2, 4))
         boxes: dict[int, tk.Label] = {}
 
         def paint(n: int, hover: bool = False):
-            on = n in self.allowed[mode]
+            on = n in self.allowed
             boxes[n].config(bg=NUM_ON_BG if on else (NUM_HOVER_BG if hover else NUM_OFF_BG),
                             fg=NUM_ON_FG if on else (TEXT if hover else NUM_OFF_FG))
 
         def toggle(n: int):
-            sel = self.allowed[mode]
-            if n in sel:
-                if len(sel) == 1:
-                    return          # a mode always keeps at least one number
-                sel.discard(n)
+            if n in self.allowed:
+                if len(self.allowed) == 1:
+                    return          # always keep at least one number to play with
+                self.allowed.discard(n)
             else:
-                sel.add(n)
+                self.allowed.add(n)
             paint(n, hover=True)
 
         for n in range(NUM_MIN, NUM_MAX + 1):
             # width in characters, identical for every chip, so "10" does not
             # request more room than "1" and the uniform columns can all match
-            lbl = tk.Label(strip, text=str(n), font=self.f_chip, width=2, pady=5,
+            lbl = tk.Label(strip, text=str(n), font=self.f_num, width=2, pady=8,
                            cursor="hand2")
-            lbl.grid(row=0, column=n - NUM_MIN, sticky="nsew", pady=6,
-                     padx=(6 if n == NUM_MIN else 3, 6 if n == NUM_MAX else 3))
+            lbl.grid(row=0, column=n - NUM_MIN, sticky="nsew", pady=8,
+                     padx=(8 if n == NUM_MIN else 4, 8 if n == NUM_MAX else 4))
             lbl.bind("<Button-1>", lambda e, k=n: toggle(k))
             lbl.bind("<Enter>", lambda e, k=n: paint(k, hover=True))
             lbl.bind("<Leave>", lambda e, k=n: paint(k))
             boxes[n] = lbl
             paint(n)
+
+        tk.Label(panel, text=T("numbers_hint"), font=self.f_hint, fg=MUTED, bg=SURFACE
+                 ).pack(pady=(2, 6))
 
     def _build_voice_toggle(self, parent):
         # Only offer the toggle when voice input actually works; otherwise show
@@ -523,7 +525,7 @@ class Almathus(tk.Tk):
     def start_game(self, mode: str):
         self.mode = mode
         self.n_cards = self.count_var.get()
-        self.deck = make_deck(mode, self.n_cards, self.allowed[mode])
+        self.deck = make_deck(mode, self.n_cards, self.allowed)
         self.results = []
         self.retry_queue = []
         self.idx = 0

@@ -64,7 +64,14 @@ a game. It reads `results/results.csv` and shows:
   average. The curve is a monotone cubic through the points: soft, but it never
   dips below a value the kid actually scored;
 - the **table** of every session, newest first, with a *temps moyen / carte*
-  column.
+  column;
+- a **📄 PDF** button in the top-right corner (hover it for the *Exporter en PDF*
+  bubble). It asks where to save, then writes an **A4** report — the same chart,
+  redrawn as vectors, and the whole table flowing over as many pages as it
+  needs, each one repeating the header. The paper uses **the palette currently on
+  screen**, so an export made in girly mode comes out pink. Written by
+  `pdfreport.py`, which builds the file by hand — no print library, no new
+  dependency.
 
 ## The results log — `results/results.csv`
 

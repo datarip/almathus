@@ -25,8 +25,10 @@ from datetime import datetime
 from pathlib import Path
 
 import tkinter as tk
+from tkinter import filedialog
 from tkinter import font as tkfont
 
+import pdfreport
 import results as resultslog
 
 try:
@@ -102,6 +104,13 @@ STRINGS = {
         "col_cards": "Cartes",
         "col_avg": "Temps moyen / carte",
         "n_sessions": "{n} sessions",
+        "pdf_button": "📄 PDF",
+        "pdf_tip": "Exporter en PDF",
+        "pdf_dialog": "Enregistrer mes progrès en PDF",
+        "pdf_exported_on": "Exporté le {when}",
+        "pdf_footer": "Almathus · page {page} / {total}",
+        "pdf_saved": "✓ PDF enregistré",
+        "pdf_failed": "Échec de l'export PDF",
     },
     "en": {
         "title": "Almathus — math through play",
@@ -146,6 +155,13 @@ STRINGS = {
         "col_cards": "Cards",
         "col_avg": "Avg time / card",
         "n_sessions": "{n} sessions",
+        "pdf_button": "📄 PDF",
+        "pdf_tip": "Export to PDF",
+        "pdf_dialog": "Save my progress as PDF",
+        "pdf_exported_on": "Exported on {when}",
+        "pdf_footer": "Almathus · page {page} / {total}",
+        "pdf_saved": "✓ PDF saved",
+        "pdf_failed": "PDF export failed",
     },
 }
 
@@ -435,6 +451,64 @@ class Btn(tk.Label):
     def set_colors(self, bg, fg):
         self._bg, self._fg = bg, fg
         self.config(bg=bg, fg=fg)
+
+
+class Tooltip:
+    """A small label that appears under a widget on hover and says what it does.
+
+    A borderless Toplevel rather than a Label inside the screen: the bubble is
+    wider than the icon it hangs off and has to be free to overflow the header
+    row (and, near the right edge, to slide back inside the screen).
+    """
+
+    def __init__(self, widget, text, font, delay=350):
+        self.widget, self.text, self.font, self.delay = widget, text, font, delay
+        self.tip = None
+        self.job = None
+        # `add="+"` — Btn already binds these to its own hover paint.
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<Button-1>", self._hide, add="+")
+        widget.bind("<Destroy>", self._hide, add="+")
+
+    def _schedule(self, _e=None):
+        self._cancel()
+        self.job = self.widget.after(self.delay, self._show)
+
+    def _cancel(self):
+        if self.job:
+            try:
+                self.widget.after_cancel(self.job)
+            except tk.TclError:
+                pass
+            self.job = None
+
+    def _show(self):
+        self.job = None
+        if self.tip or not self.widget.winfo_exists():
+            return
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)          # no title bar, no shadow frame
+        try:
+            self.tip.wm_attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        tk.Label(self.tip, text=self.text, font=self.font, bg=SURFACE, fg=TEXT,
+                 padx=10, pady=5, highlightthickness=1, highlightbackground=BORDER
+                 ).pack()
+        self.tip.update_idletasks()
+        # Hang it under the widget, right edges aligned — the button lives in the
+        # top-right corner, so a left-aligned bubble would run off the screen.
+        w = self.tip.winfo_reqwidth()
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() - w
+        x = max(4, min(x, self.widget.winfo_screenwidth() - w - 4))
+        self.tip.wm_geometry(f"+{x}+{self.widget.winfo_rooty() + self.widget.winfo_height() + 6}")
+
+    def _hide(self, _e=None):
+        self._cancel()
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
 
 
 # --------------------------------------------------------------------------- #
@@ -1302,6 +1376,15 @@ class Almathus(tk.Tk):
                      ).pack(expand=True)
             return
 
+        # Export lives next to the session count: same corner, same weight as the
+        # rest of the header. Its result is reported in the label beside it.
+        pdf_btn = Btn(bar, T("pdf_button"), command=self._export_pdf, font=self.f_small,
+                      bg=CARD_BG, fg=MUTED, padx=14, pady=7)
+        pdf_btn.pack(side="right", padx=(0, 14))
+        Tooltip(pdf_btn, T("pdf_tip"), self.f_hint)
+        self._pdf_status = tk.Label(bar, text="", font=self.f_small, fg=MUTED, bg=BG)
+        self._pdf_status.pack(side="right", padx=(0, 12))
+
         # The chart takes a third of the height; the table gets the rest and scrolls.
         tk.Label(f, text=T("chart_title"), font=self.f_small, fg=MUTED, bg=BG,
                  anchor="w").pack(fill="x", padx=32, pady=(6, 0))
@@ -1310,7 +1393,52 @@ class Almathus(tk.Tk):
         chart.pack(fill="x", padx=28, pady=(2, 12))
         tk.Frame(f, bg=BORDER, height=1).pack(fill="x", padx=28)
 
+        # Kept for the PDF export, which redraws this same chart as vectors.
+        self._chart, self._sessions = chart, sessions
+
         self._build_results_table(f, sessions)
+
+    def _export_pdf(self):
+        """The progress screen on A4: same chart, whole table, current palette."""
+        stamp = datetime.now()
+        path = filedialog.asksaveasfilename(
+            parent=self, title=T("pdf_dialog"), defaultextension=".pdf",
+            initialdir=str(resultslog.RESULTS_DIR),
+            initialfile=pdfreport.default_filename(LANG, stamp),
+            filetypes=[("PDF", "*.pdf")],
+        )
+        if not path:                                   # the parent changed their mind
+            return
+        try:
+            pdfreport.export_progress(
+                path, self._sessions, self._chart,
+                palette=THEMES[THEME],
+                labels={
+                    "title": T("progress_title"),
+                    "subtitle": T("pdf_exported_on", when=stamp.strftime("%d/%m/%Y %H:%M")),
+                    "chart_title": T("chart_title"),
+                    "n_sessions": T("n_sessions", n=len(self._sessions)),
+                    "footer": T("pdf_footer"),
+                    "date": T("col_date"),
+                    "famille": T("col_family"),
+                    "temps": T("col_time"),
+                    "cartes": T("col_cards"),
+                    "temps_moyen": T("col_avg"),
+                },
+                when=stamp,
+            )
+        except (OSError, ValueError) as exc:
+            self._flash_pdf_status(f"{T('pdf_failed')} — {exc}", BAD)
+            return
+        self._flash_pdf_status(T("pdf_saved"), GOOD)
+
+    def _flash_pdf_status(self, text, color, ms=4000):
+        """Say how it went beside the button, then get out of the way."""
+        if not self._pdf_status.winfo_exists():
+            return
+        self._pdf_status.config(text=text, fg=color)
+        self.after(ms, lambda: self._pdf_status.winfo_exists()
+                   and self._pdf_status.config(text=""))
 
     def _build_results_table(self, parent, sessions):
         """Every logged session, oldest first — the paper sheet, on screen."""

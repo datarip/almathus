@@ -300,8 +300,12 @@ class Pdf:
 MARGIN = 40.0
 CHART_H = 200.0
 ROW_H = 17.0
-FS_TITLE, FS_META, FS_AXIS, FS_ROW, FS_FOOT, FS_NOTE = 20, 9.5, 8, 9, 7.5, 7.5
-NOTE_H, NOTE_GAP = 12.0, 7.0   # a note tag on the chart, and its clearance
+FS_TITLE, FS_META, FS_AXIS, FS_ROW, FS_FOOT, FS_NOTE = 20, 9.5, 8, 9, 7.5, 6
+# A note tag on the chart, and its clearance. Deliberately smaller than the axis
+# beside it — the tags sit inside the plot, one per day, and at the axis' size a
+# fortnight of daily sessions buried the curve they annotate. Kept in step with
+# the screen's own tag face, so paper and screen stay the same picture.
+NOTE_H, NOTE_GAP = 9.5, 5.0
 
 # Same weights as the on-screen table, so the columns line up with the app.
 COLUMNS = (("date", "w", 3), ("famille", "w", 4), ("temps", "e", 3),
@@ -454,7 +458,8 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
         pdf.polyline(type(chart)._curve(pts), palette["ACCENT"], 1.6)
     for px, py, _ in pts:
         pdf.circle(px, py, 2.6, palette["ACCENT"], outline=palette["BG"], width=1.2)
-    _draw_notes(pdf, pts, x + 2, x + w - 2, y + h - NOTE_H - 2, palette)
+    # Held inside the plot, give or take a hair, so a tag cannot land on a y label.
+    _draw_notes(pdf, pts, x0 - 4, x1 + 4, y + h - NOTE_H - 2, palette)
 
     # Date labels thinned by pixel distance, like the widget: the axis is
     # calendar time, so neighbouring days are not neighbouring columns.
@@ -486,22 +491,22 @@ def _draw_notes(pdf: Pdf, pts, x_min, x_max, y_max, palette) -> None:
         text = resultslog.fmt_note(resultslog.grade(group))
         if not text:
             continue
-        bw = measure(text, FS_NOTE) + 10
+        bw = measure(text, FS_NOTE) + 7
         bx = min(max(px - bw / 2, x_min), max(x_min, x_max - bw))
         home = py + NOTE_GAP
         by = home
         while any(bx < ox + ow and ox < bx + bw and abs(by - oy) < NOTE_H + 2
-                  for ox, oy, ow in placed) and by + NOTE_H + 3 <= y_max:
-            by += NOTE_H + 3
+                  for ox, oy, ow in placed) and by + NOTE_H + 2 <= y_max:
+            by += NOTE_H + 2
         by = min(by, y_max)
         placed.append((bx, by, bw))
 
         if by == home and abs(bx + bw / 2 - px) < 0.5:
-            pdf.polygon([px - 4, by + 1, px + 4, by + 1, px, py + 4],
+            pdf.polygon([px - 3, by + 1, px + 3, by + 1, px, py + 4],
                         palette["ACCENT"])
         else:
             pdf.line(bx + bw / 2, by, px, py + 4, palette["ACCENT"], 0.8)
-        pdf.round_rect(bx, by, bw, NOTE_H, 3.5, palette["ACCENT"],
+        pdf.round_rect(bx, by, bw, NOTE_H, 2.8, palette["ACCENT"],
                        outline=palette["BG"], width=0.8)
         pdf.text(bx + bw / 2, by + (NOTE_H - FS_NOTE) / 2 + 1.5, text, FS_NOTE,
                  palette["BG"], anchor="center")

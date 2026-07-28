@@ -708,11 +708,11 @@ class Dropdown(Btn):
 class TimeChart(tk.Canvas):
     PAD_L, PAD_R, PAD_T, PAD_B = 66, 24, 16, 30
     HIT = 32                       # px: how close the pointer must be to a dot
-    NOTE_GAP = 12                  # px: clearance between a note tag and its dot
+    NOTE_GAP = 8                   # px: clearance between a note tag and its dot
     # Round y steps a parent reads at a glance: 5 s up to 15 min.
     STEPS = (5, 10, 15, 20, 30, 60, 90, 120, 180, 300, 600, 900)
 
-    def __init__(self, parent, sessions, font, height=220):
+    def __init__(self, parent, sessions, font, note_font=None, height=220):
         super().__init__(parent, bg=BG, height=height, highlightthickness=0, bd=0)
         # Plotting needs both a date (x) and a time (y). Rows missing either
         # still show up in the table — they just can't be placed on the chart.
@@ -724,10 +724,15 @@ class TimeChart(tk.Canvas):
         self.days = [(d, sum(g_.seconds for g_ in g) / len(g), g)
                      for d, g in sorted(by_day.items())]
         self.font = font
+        # The tags get their own, smaller face. They sit *inside* the plot, one per
+        # day, so at the axis' size a fortnight of daily sessions covered its own
+        # curve and the tags ran into each other; small and bold they still read.
+        self.note_font = note_font or font
+        self.NOTE_H = self.note_font.metrics("linespace") + 4
         # A note tag sits above its dot, so the plot needs headroom for one —
         # otherwise the best day's tag is clipped by the top of the canvas.
         if any(resultslog.grade(g) for _, _, g in self.days):
-            self.PAD_T = font.metrics("linespace") + 22
+            self.PAD_T = self.NOTE_H + self.NOTE_GAP + 6
         # Reserve the bottom band from the real font metrics — the fonts scale
         # with the screen, so a fixed 30 px clipped the date labels on a tall one.
         self.PAD_B = font.metrics("linespace") + 16
@@ -824,7 +829,7 @@ class TimeChart(tk.Canvas):
             self.create_oval(x - 4, y - 4, x + 4, y + 4,
                              fill=ACCENT, outline=BG, width=2)
         self.pts = pts
-        self._draw_notes(pts)
+        self._draw_notes(pts, x0, x1)
 
         # x labels: distinct days, thinned by *pixel* distance — the axis is
         # calendar time, so evenly spaced days are not evenly spaced columns
@@ -855,17 +860,19 @@ class TimeChart(tk.Canvas):
             x0 + r, y1, x0, y1, x0, y1 - r, x0, y1 - r, x0, y0 + r, x0, y0 + r,
             x0, y0, smooth=True, **kw)
 
-    def _draw_notes(self, pts):
+    def _draw_notes(self, pts, x_min, x_max):
         """The day's note as a small tag over its dot — `15/20`, the number the
         sheet is really about. Days that never recorded one (the old paper rows)
         simply get no tag.
 
         Tags are placed left to right; one that would land on a tag already
         placed climbs above it and trades its speech-bubble tail for a thin
-        stem, so it still says which dot it belongs to.
+        stem, so it still says which dot it belongs to. They are kept within the
+        plot (give or take a few pixels), so the leftmost one cannot sit on top
+        of the y-axis labels the way it did when the canvas edge was the limit.
         """
         placed: list[tuple[float, float, float, float]] = []
-        bh = self.font.metrics("linespace") + 6
+        bh = self.NOTE_H
 
         def free(bx, by, bw):
             return not any(bx < px + pw and px < bx + bw and by < py + ph
@@ -875,23 +882,26 @@ class TimeChart(tk.Canvas):
             text = resultslog.fmt_note(resultslog.grade(group))
             if not text:
                 continue
-            bw = self.font.measure(text) + 14
-            bx = min(max(x - bw / 2, 2), max(2.0, self.winfo_width() - bw - 2))
+            bw = self.note_font.measure(text) + 8
+            # 6 px of slack on either side: enough for the first and last tags to
+            # stay centred on their dots, not enough to reach an axis label.
+            lo, hi = x_min - 6, x_max + 6
+            bx = min(max(x - bw / 2, lo), max(lo, hi - bw))
             home = y - self.NOTE_GAP - bh          # where it would sit undisturbed
             by = home
-            while not free(bx, by, bw) and by - (bh + 3) >= 2:
-                by -= bh + 3
+            while not free(bx, by, bw) and by - (bh + 2) >= 2:
+                by -= bh + 2
             by = max(by, 2)
             placed.append((bx, by, bw, bh))
 
             if by == home and abs(bx + bw / 2 - x) < 0.5:
                 # right above its own dot: a speech-bubble tail down to it
-                self.create_polygon(x - 5, by + bh - 1, x + 5, by + bh - 1,
+                self.create_polygon(x - 4, by + bh - 1, x + 4, by + bh - 1,
                                     x, y - 5, fill=ACCENT, outline=ACCENT)
             else:
                 self.create_line(bx + bw / 2, by + bh, x, y - 5, fill=ACCENT, width=1)
-            self._round_rect(bx, by, bx + bw, by + bh, 5, fill=ACCENT, outline=BG)
-            self.create_text(bx + bw / 2, by + bh / 2, text=text, font=self.font,
+            self._round_rect(bx, by, bx + bw, by + bh, 4, fill=ACCENT, outline=BG)
+            self.create_text(bx + bw / 2, by + bh / 2, text=text, font=self.note_font,
                              fill=BG, anchor="center")
 
     def _hover(self, e):
@@ -1065,6 +1075,12 @@ class Almathus(tk.Tk):
         self.f_chip = F(14, "bold")
         self.f_num = F(20, "bold")
         self.f_hint = F(14)
+        # The chart's note tags, below the 11 px floor F() keeps for everything
+        # else: a tag is one short number on a coloured pill inside the plot, not
+        # a line of text to read, and at any larger size a fortnight of them
+        # covers the curve they annotate. Bold, so small still reads.
+        self.f_tag = tkfont.Font(family="Helvetica", size=max(9, round(11 * s)),
+                                 weight="bold")
 
     # -- frame helper ------------------------------------------------------ #
     def _clear(self):
@@ -1670,7 +1686,7 @@ class Almathus(tk.Tk):
         # The chart takes a third of the height; the table gets the rest and scrolls.
         tk.Label(body, text=T("chart_title"), font=self.f_small, fg=MUTED, bg=BG,
                  anchor="w").pack(fill="x", padx=32, pady=(6, 0))
-        chart = TimeChart(body, sessions, self.f_small,
+        chart = TimeChart(body, sessions, self.f_small, note_font=self.f_tag,
                           height=max(190, int(self.winfo_height() * 0.30)))
         chart.pack(fill="x", padx=28, pady=(2, 12))
         tk.Frame(body, bg=BORDER, height=1).pack(fill="x", padx=28)

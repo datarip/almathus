@@ -196,42 +196,85 @@ def T(key: str, **kw) -> str:
     return s.format(**kw) if kw else s
 
 
-def bind_wheel(widget, handler) -> None:
-    """Send `widget`'s wheel and trackpad scrolling to `handler`.
+WHEEL_LINE = 22          # px one line of scrolling is worth — about a table row
+WHEEL_MAX = 5 * WHEEL_LINE   # ...and the most a single event may scroll
 
-    X11 reports the wheel as buttons 4 and 5, so those are bound there as well.
-    Not elsewhere: on Aqua and Windows those numbers belong to the extra physical
-    buttons of a mouse (Tk answers `<Button-5>` with button 9 here), which have
-    nothing to do with scrolling.
+
+def bind_wheel(widget, scroll) -> None:
+    """Call `scroll(pixels)` for every scroll gesture delivered to `widget`.
+
+    Three different events mean "scroll", and a scrollable widget has to answer
+    all of them:
+
+    * `<MouseWheel>` — a mouse wheel, and on Tk 8 a trackpad as well.
+    * `<TouchpadScroll>` — Tk 9's pixel-precise trackpad event. On macOS it is
+      sent *instead* of `<MouseWheel>` for a two-finger swipe, so without this
+      binding a trackpad scrolls nothing at all.
+    * Buttons 4 and 5 — how X11 reports a wheel, and bound there only: on Aqua
+      and Windows those numbers belong to the extra physical buttons of a mouse
+      (Tk answers `<Button-5>` with button 9 here), which have nothing to do
+      with scrolling.
+
+    The handler is given pixels, not lines, because a trackpad speaks pixels;
+    the canvases scrolled this way set `yscrollincrement=1` so that a "unit" of
+    `yview_scroll` is one pixel.
     """
-    widget.bind("<MouseWheel>", handler)
+    widget.bind("<MouseWheel>", lambda e: scroll(wheel_pixels(e)))
+    try:
+        widget.bind("<TouchpadScroll>", lambda e: scroll(touchpad_pixels(e)))
+    except tk.TclError:                  # Tk 8 has no such event: wheel only
+        pass
     if widget.tk.call("tk", "windowingsystem") == "x11":
-        widget.bind("<Button-4>", handler)
-        widget.bind("<Button-5>", handler)
+        widget.bind("<Button-4>", lambda e: scroll(wheel_pixels(e)))
+        widget.bind("<Button-5>", lambda e: scroll(wheel_pixels(e)))
 
 
-def wheel_units(ev) -> int:
-    """A wheel or trackpad event as a number of lines to scroll, sign included.
+def wheel_pixels(ev) -> int:
+    """A wheel event as a signed number of pixels to scroll by.
 
-    The three platforms say it three different ways: macOS sends a small signed
-    delta and a *lot* of events during one two-finger swipe, Windows sends
-    multiples of 120 (a notch is 120), and X11 sends no delta at all — it reports
-    the wheel as buttons 4 (up) and 5 (down), which is why a button number shows
-    up here (see `bind_wheel`). Three lines per notch or button, and macOS'
-    fine-grained delta is taken as it comes, so a swipe keeps its momentum.
-
-    Capped at five lines an event: how large a single macOS delta gets depends on
-    the Tk build and on whether the gesture is a precise trackpad swipe, and one
-    outsized event must not throw the table from the top to the bottom.
+    Tk 9 reports a notch as 120 on all three platforms; Tk 8 on Aqua sent a
+    small raw delta instead, which is read as lines as it comes so that an older
+    build keeps working. X11 sends no delta at all — it reports the wheel as
+    buttons 4 (up) and 5 (down), which is why a button number shows up here.
+    Three lines per notch or button.
     """
     if getattr(ev, "num", 0) in (4, 5):
-        return -3 if ev.num == 4 else 3
-    delta = getattr(ev, "delta", 0) or 0
-    if not delta:
+        lines = -3.0 if ev.num == 4 else 3.0
+    else:
+        delta = getattr(ev, "delta", 0) or 0
+        if not delta:
+            return 0
+        # A positive delta is a scroll *up*, which walks the view towards the
+        # top of the scrollregion — the negative direction.
+        lines = -(delta / 120 * 3 if abs(delta) >= 120 else delta)
+    return capped_scroll(lines * WHEEL_LINE)
+
+
+def touchpad_pixels(ev) -> int:
+    """The vertical half of a `<TouchpadScroll>` delta, as pixels to scroll by.
+
+    One integer carries both axes: dx in the high 16 bits, dy in the low 16 as a
+    signed value (this is what Tk's own `tk::PreciseScrollDeltas` unpacks). dx is
+    dropped — nothing on these screens scrolls sideways. The sign is flipped for
+    the same reason as a wheel delta's: the gesture and the view move opposite ways.
+    """
+    low = ev.delta & 0xFFFF
+    dy = low if low < 0x8000 else low - 0x10000
+    return capped_scroll(-dy)
+
+
+def capped_scroll(pixels: float) -> int:
+    """Whole pixels, never rounding a nudge down to nothing, never a wild jump.
+
+    macOS sends a *lot* of events during one two-finger swipe, each a few pixels,
+    so a slow drag must keep its smallest steps; and how large a single delta can
+    get depends on the Tk build and on the gesture, so one outsized event must
+    not throw the table from the top to the bottom.
+    """
+    if not pixels:
         return 0
-    lines = delta / 120 * 3 if abs(delta) >= 120 else delta
-    step = min(5, int(abs(lines)) or 1)          # never round a nudge down to nothing
-    return -step if lines > 0 else step
+    step = min(WHEEL_MAX, max(1, round(abs(pixels))))
+    return step if pixels > 0 else -step
 
 
 def month_label(ym: tuple[int, int] | None) -> str:
@@ -646,12 +689,15 @@ class Dropdown(Btn):
         w = max(rows.winfo_reqwidth(), self.winfo_width())
         h = rows.winfo_reqheight()
         view = min(h, int(self.winfo_screenheight() * self.MAX_SCREEN))
-        canvas.configure(width=w, height=view, scrollregion=(0, 0, w, h))
+        # `yscrollincrement=1`: without it a canvas scrolls a tenth of its own
+        # height per unit, which on a list this size is half the popup a nudge.
+        canvas.configure(width=w, height=view, scrollregion=(0, 0, w, h),
+                         yscrollincrement=1)
         canvas.itemconfig(window, width=w)           # rows span the full width
         if h > view:
             # Bound on the Toplevel: a row Label's bindtags include its window,
             # so a wheel event over a row is looked up here as well.
-            bind_wheel(top, lambda e: canvas.yview_scroll(wheel_units(e), "units"))
+            bind_wheel(top, lambda px: canvas.yview_scroll(px, "units"))
             if here is not None:                     # open on the month you are on
                 canvas.yview_moveto(max(0.0, (here.winfo_y() - view / 2) / h))
 
@@ -1752,7 +1798,11 @@ class Almathus(tk.Tk):
         wrap = tk.Frame(parent, bg=BG)
         wrap.pack(fill="both", expand=True, padx=28, pady=(0, 20))
 
-        canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0, bd=0)
+        # `yscrollincrement=1` makes a `yview_scroll` unit one pixel: a canvas
+        # left at 0 scrolls a tenth of its own height per unit instead, so a
+        # single nudge of the wheel would jump most of the table at a time.
+        canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0, bd=0,
+                           yscrollincrement=1)
         bar = tk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=bar.set)
         bar.pack(side="right", fill="y")
@@ -1772,14 +1822,14 @@ class Almathus(tk.Tk):
         # over the canvas, and Tk hands an event to the widget's own bindtags
         # only — it never walks up to a parent widget — so a plain binding on the
         # canvas would never fire. The rows are given the canvas as an extra
-        # bindtag at the end of this function instead, which routes their wheel
+        # bindtag at the end of this function instead, which routes their scroll
         # events here without a single global binding: an <Enter>/<Leave> pair
         # driving bind_all cannot work, because moving onto a child *is* leaving
         # the canvas as far as Tk is concerned, so it disarmed itself the moment
         # the pointer touched a row.
-        def wheel(ev):
+        def wheel(pixels):
             if canvas.winfo_exists():
-                canvas.yview_scroll(wheel_units(ev), "units")
+                canvas.yview_scroll(pixels, "units")
 
         bind_wheel(canvas, wheel)
 

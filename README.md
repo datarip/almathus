@@ -21,7 +21,7 @@ python3 main.py
 
 1. **Settings** — pick how many cards (default **20**) and tap one of four big
    mode buttons: **Addition · Soustraction · Multiplication · Division**.
-2. **5-4-3-2-1-GO!** countdown.
+2. **3-2-1-GO!** countdown, each number on a beep of the sample.
 3. **Cards** — each operation is shown in big numbers (e.g. `8 − 2`). Answer with
    the keyboard (Enter to validate) or the on-screen number pad.
 4. **Reinforcement round** — every card missed on the first try comes back at the

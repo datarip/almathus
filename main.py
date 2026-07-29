@@ -387,13 +387,14 @@ PREFS_FILE = Path(__file__).resolve().parent / "prefs.json"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 SOUNDS_DIR = ASSETS_DIR / "sounds"
 
-COUNTDOWN_STEPS = 5      # 5-4-3-2-1, then GO!
-COUNTDOWN_TICK = 850     # ms one number stays on screen
-# Where the "GO!" sits inside countdown.mp3. The sample is a racing start — three
-# lights, then the launch — and its lights are spaced wider than this screen's
-# numbers, so it is started *late* rather than at the top of the count: that puts
-# its green light on the frame that says GO!, which is the beat a kid reacts to.
-COUNTDOWN_GO_AT = 2700   # ms into the sample
+COUNTDOWN_STEPS = 3      # 3-2-1, then GO!
+# countdown.mp3 is three beeps and a launch tone, laid out on an exact one-second
+# grid: beeps at 485, 1485 and 2485 ms, the tone at 3485 ms, ringing to 4460. The
+# numbers on screen are hung off that grid rather than the other way round, so a
+# beep and a number land on the same instant instead of merely near one another.
+COUNTDOWN_TICK = 1000    # ms one number stays on screen = the gap between beeps
+COUNTDOWN_GO_AT = 3485   # ms into the sample where the launch tone starts
+COUNTDOWN_GO_LEN = 975   # ms it rings for, after which the sample is silent
 
 
 def read_prefs() -> dict:
@@ -1408,11 +1409,18 @@ class Almathus(tk.Tk):
         if self.voice_enabled.get() and self.stt and self.stt.available():
             self.stt.warmup()
             self.stt.boost_input_volume()
-        # Held back so the sample's green light lands on the GO! frame; the count
-        # is short enough that a negative lead just means "start it now".
+        # Both the count and the sample have a run-up to their GO! — three ticks
+        # on screen, COUNTDOWN_GO_AT in the file — and lining the two up is a
+        # matter of making the shorter one wait for the longer. This sample opens
+        # with silence before its first beep, so here it is the picture that
+        # waits; a sample that starts on its first beep would flip that, and
+        # neither case needs its own branch.
         lead = COUNTDOWN_STEPS * COUNTDOWN_TICK - COUNTDOWN_GO_AT
+        # The settings screen must not sit there through the wait, whichever way
+        # it falls: the game has begun, the count just has not caught up yet.
+        self._clear()
         self.after(max(0, lead), lambda: self.sfx.play("countdown"))
-        self.countdown(COUNTDOWN_STEPS)
+        self.after(max(0, -lead), lambda: self.countdown(COUNTDOWN_STEPS))
 
     def countdown(self, n: int):
         self._clear()
@@ -1425,13 +1433,15 @@ class Almathus(tk.Tk):
             self.after(COUNTDOWN_TICK, lambda: self.countdown(n - 1))
         else:
             self.game_start = time.perf_counter()
-            # The sample runs on past its green light — engine noise, over what
-            # is by then the first question being read aloud. It goes out with
-            # the GO! frame. The answer sounds are deliberately *not* cut this
-            # way: they are shorter than the pause that follows them, so they
-            # ring out over the top of the next card, which is the point of them.
-            self.after(750, self.sfx.stop)
-            self._advance_after(750)
+            # GO! is held for exactly as long as the tone rings, so the word and
+            # the sound end together and the first question is read aloud into
+            # silence rather than over a tail. The stop() is then a no-op on this
+            # sample and a safety net on a longer one. The answer sounds are
+            # deliberately *not* cut this way: they are shorter than the pause
+            # that follows them, so they ring out over the top of the next card,
+            # which is the point of them.
+            self.after(COUNTDOWN_GO_LEN, self.sfx.stop)
+            self._advance_after(COUNTDOWN_GO_LEN)
 
     # ------------------------------------------------------------------ #
     # Screen 3: play

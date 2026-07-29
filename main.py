@@ -466,6 +466,11 @@ def spoken_answer(nums: list[int], card: Card) -> int | None:
     utterances used to be submitted as an answer, which failed the card and moved
     on before the kid had said anything. None here means "not an answer" — the
     app just keeps listening, so hesitating aloud costs nothing.
+
+    The recognizer only ever hands this function utterances that were numbers and
+    nothing else (see ``voice.strict_numbers``); this is the last filter, and it
+    is about *which* number of several was meant, not about whether numbers were
+    said at all.
     """
     if not nums:
         return None
@@ -1044,8 +1049,11 @@ class Almathus(tk.Tk):
         self.game_start = 0.0
         self._tick_job = None
         self._advance_job = None    # the single pending "move to the next card" timer
+        self._voice_job = None      # the watchdog that keeps this card's mic armed
         self._card_done = False     # answer committed: ignore anything else on this card
         self._fanfare_job = None    # the recap's pending "start the music" timer
+        self._pump_job = None       # the worker-thread -> Tk callback pump
+        self._stopping = False      # latched on quit: schedule no more timers
         self._voice_mic_bad = False
 
         # sound effects (a no-op if no command-line player is installed)
@@ -1086,6 +1094,19 @@ class Almathus(tk.Tk):
                 pass
 
     def _shutdown(self):
+        # Timers first: a pending callback that runs after the window is gone
+        # raises out of Tcl ("invalid command name ..._pump") with nowhere to
+        # report it.
+        self._stopping = True
+        for job in ("_pump_job", "_tick_job", "_advance_job", "_voice_job",
+                    "_fanfare_job"):
+            pending = getattr(self, job, None)
+            if pending is not None:
+                try:
+                    self.after_cancel(pending)
+                except Exception:
+                    pass
+                setattr(self, job, None)
         # The player is a child process: quitting through os._exit() leaves it
         # orphaned, still playing to an empty screen, unless it is killed here.
         self.sfx.stop()
@@ -1108,6 +1129,8 @@ class Almathus(tk.Tk):
         os._exit(0)
 
     def _pump(self):
+        if self._stopping:
+            return                    # the window is going away; stop rescheduling
         try:
             while True:
                 self._ui_queue.get_nowait()()
@@ -1115,7 +1138,7 @@ class Almathus(tk.Tk):
             pass
         except Exception:
             pass
-        self.after(40, self._pump)
+        self._pump_job = self.after(40, self._pump)
 
     def _post(self, fn):
         """Schedule fn() to run on the Tk thread (safe to call from any thread)."""
@@ -1166,6 +1189,9 @@ class Almathus(tk.Tk):
         if self._tick_job:
             self.after_cancel(self._tick_job)
             self._tick_job = None
+        if self._voice_job:
+            self.after_cancel(self._voice_job)
+            self._voice_job = None
         if self.stt:
             self.stt.cancel()
         if self.tts:
@@ -1374,6 +1400,10 @@ class Almathus(tk.Tk):
         self.retry_queue = []
         self.retry_seen = set()
         self.idx = 0
+        # No card is on screen yet, so the countdown's move to the first one is
+        # not "leaving an unanswered card" — see _advance().
+        self.current = None
+        self._card_done = False
         # preload the STT model + raise mic gain so the first spoken answer is instant
         if self.voice_enabled.get() and self.stt and self.stt.available():
             self.stt.warmup()
@@ -1419,6 +1449,11 @@ class Almathus(tk.Tk):
 
     def _advance(self):
         self._advance_job = None
+        # A card is left ONLY once an answer has been committed to it. Nothing
+        # else — no timer, no stray callback, no late voice result — can take a
+        # question off the screen: a child who needs a minute to think gets it.
+        if self.current is not None and not self._card_done:
+            return
         self.next_card()
 
     def next_card(self):
@@ -1506,6 +1541,7 @@ class Almathus(tk.Tk):
         # read the operation aloud, then listen continuously
         if voice_on:
             self._speak_operation(card, then=lambda: self._voice_arm(card))
+            self._voice_watch(card)
 
     def _show_keypad(self):
         kp = getattr(self, "keypad_frame", None)
@@ -1533,6 +1569,24 @@ class Almathus(tk.Tk):
             on_state=lambda s: self._post(lambda: self._voice_status(s)),
             pick=lambda nums: spoken_answer(nums, target),
         )
+
+    def _voice_watch(self, target):
+        """Keep the mic armed for as long as this card is up.
+
+        Listening re-arms itself from its own result callback, which is a chain:
+        one dropped link (a callback that lands while a capture is already
+        running, a worker that dies) and the card goes quietly deaf, with the
+        child talking to a question that will never hear them. This second,
+        independent timer notices within a second and arms it again.
+        """
+        self._voice_job = None
+        if self.current is not target or self._card_done:
+            return                        # this card is over; stop watching it
+        talking = bool(self.tts and self.tts.speaking())
+        if not talking and not self._voice_mic_bad and self.voice_enabled.get():
+            if self.stt and self.stt.available() and not self.stt.listening():
+                self._voice_arm(target)
+        self._voice_job = self.after(1000, lambda: self._voice_watch(target))
 
     def _voice_status(self, state):
         if state == "no_mic":

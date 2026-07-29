@@ -1426,6 +1426,8 @@ class Almathus(tk.Tk):
         tk.Label(body, text=card.text, font=self.f_huge, fg=TEXT, bg=CARD_BG,
                  padx=80, pady=12).grid(row=1, column=0, pady=(0, 8))
 
+        voice_on = bool(self.voice_enabled.get() and self.stt and self.stt.available())
+
         inputs = tk.Frame(body, bg=BG)
         inputs.grid(row=2, column=0, pady=(0, 8))
         self.answer_var = tk.StringVar()
@@ -1445,17 +1447,26 @@ class Almathus(tk.Tk):
             self.voice_lbl = tk.Label(inputs, text="", font=self.f_small, fg=MUTED, bg=BG)
             self.voice_lbl.pack(pady=1)
 
-        # on-screen keypad (kid-friendly; works with touch/mouse too)
-        kp = tk.Frame(body, bg=BG)
-        kp.grid(row=3, column=0)
-        self._build_keypad(kp)
+        # On-screen keypad (kid-friendly; works with touch/mouse too). It is built
+        # either way but stays hidden while answering by voice: a grid of digits
+        # under the question only distracts a child who is meant to speak. It is
+        # revealed again the moment the mic turns out to be unusable.
+        self.keypad_frame = tk.Frame(body, bg=BG)
+        self._build_keypad(self.keypad_frame)
+        if not voice_on:
+            self._show_keypad()
 
         self.card_start = time.perf_counter()
         self._tick()
 
-        # read the operation aloud, then listen continuously (parallel to the keypad)
-        if self.voice_enabled.get() and self.stt and self.stt.available():
+        # read the operation aloud, then listen continuously
+        if voice_on:
             self._speak_operation(card, then=lambda: self._voice_arm(card))
+
+    def _show_keypad(self):
+        kp = getattr(self, "keypad_frame", None)
+        if kp and kp.winfo_exists() and not kp.winfo_manager():
+            kp.grid(row=3, column=0)
 
     def _speak_operation(self, card: "Card", then=None):
         if not (self.tts and self.tts.available()):
@@ -1482,6 +1493,7 @@ class Almathus(tk.Tk):
     def _voice_status(self, state):
         if state == "no_mic":
             self._voice_mic_bad = True   # stop re-arming; capture is silent
+            self._show_keypad()          # give the child a way back in
         lbl = getattr(self, "voice_lbl", None)
         if not (lbl and lbl.winfo_exists()):
             return

@@ -168,32 +168,43 @@ in parallel with the keypad** — there is no mic button. Each card is read alou
 then the app keeps listening and re-arming until the card changes. A spoken number
 is auto-filled and auto-submitted; the keypad stays fully usable the whole time.
 
-Two different libraries do two different jobs — they are **complementary, not
-alternatives**:
-
 ```
-mic audio ──▶ [VAD record] ──▶ parakeet ──▶ text2num ──▶ integer ──▶ auto-submit
-              (voice.py)       speech→text   words→number
+mic audio ──▶ [VAD record] ──▶ [is it a voice?] ──▶ Vosk ──▶ [numbers only?] ──▶ auto-submit
+              (voice.py)        level + pitch       ↘ parakeet ↗   strict rule
 ```
 
-1. **parakeet** (`parakeet-mlx`) is the **speech-to-text** — it turns the recorded
-   audio into a raw transcript string, e.g. `"vingt-deux."`. Runs locally; the
-   default model is `mlx-community/parakeet-tdt-0.6b-v3` (**multilingual**, incl.
-   French — note `v2` is English-only).
-2. **text2num** (imported as `text_to_num`) is the **words→number** step — it turns
-   parakeet's transcript into an `int`, e.g. `"vingt-deux."` → `22`. This is what
-   absorbs the trailing `". "` parakeet adds and any filler words. A small built-in
-   parser is the fallback if `text2num` isn't installed.
+Each stage can only ever say "not an answer", in which case the card stays up and
+the app keeps listening. **Nothing takes a card off the screen but an answer.**
 
-Voice-activity detection records from first speech until ~0.7 s of silence (or a
-~6 s cap), so you don't press anything.
+1. **Record.** Voice-activity detection records from first speech until ~0.35 s of
+   silence (or a ~6 s cap), so you don't press anything. Waiting for speech has no
+   deadline — think for as long as you like.
+2. **Was that a voice?** The captured audio is judged on level, signal-to-noise and
+   *voicing* — the vocal-fold pitch that speech has and noise, taps and whispers do
+   not. This is what keeps a chair or a cough out of the recognizer.
+3. **Recognize.** **Vosk** with a vocabulary restricted to number words is the
+   primary recognizer (~100 ms, and the accurate one for isolated digits like the
+   French "un"). **parakeet** (`parakeet-mlx`, default model
+   `mlx-community/parakeet-tdt-0.6b-v3`, multilingual) is the recognizer for
+   languages with no Vosk model — English out of the box — and an opt-in backup
+   otherwise.
+4. **Numbers only.** The transcript is accepted **only if every word in it is a
+   number** (`voice.strict_numbers`). One stray word — a filler, an operator, a
+   recognizer's `[unk]` — and the whole utterance is refused. Vosk is read the same
+   strict way: its winning hypothesis must be made of number words alone *and*
+   score within `ALMATHUS_VOICE_ALT_GAP` of its best hypothesis overall, and a
+   second decode by the full un-constrained model can veto it.
 
-**Number-grammar fallback (Vosk).** parakeet is a general recognizer and mis-hears
-some isolated single words — notably the French **"un"** (heard as "Mm"/"On"). When
-parakeet returns no number, the audio is re-run through **Vosk** with a grammar
-restricted to number words, which reliably recovers "un" → 1 (and rescues other
-mis-hears like "sept" heard as "Set"). Vosk returns `[unk]` for non-numbers, so it
-doesn't force a number onto hesitations. It needs a model in `./models`:
+This is the part that was wrong before. The parser used to pick the numbers out of
+whatever it was handed and drop the rest, so a kid reading the question aloud
+("quinze moins quatre") answered `4`, and "je sais pas" — which a number-grammar
+recognizer hears as "quinze seize [unk]" — answered `16`. Measured over a 68-clip
+French corpus, **19 of the 30 non-number utterances were scored as an answer**;
+under the strict rule, 3 are (the one-syllable fillers "euh", "non", "oh non"),
+while 33 of 38 spoken numbers are still recognized. English, through parakeet,
+scores 33/33 numbers with no false accepts.
+
+**Vosk models** live in `./models`. French:
 
 ```bash
 curl -L -o /tmp/vosk-fr.zip https://alphacephei.com/vosk/models/vosk-model-small-fr-0.22.zip
@@ -201,13 +212,24 @@ unzip /tmp/vosk-fr.zip -d models/
 # override location with ALMATHUS_VOSK_MODEL=/path/to/model
 ```
 
-If the model is absent, the fallback is silently disabled (parakeet still handles
-everything except the hardest single words).
+With no Vosk model for the language, parakeet is loaded instead and handles
+everything (this is the English path — the model name just has to contain the
+language code, e.g. `vosk-model-small-en-us-0.15`, for Vosk to be picked up).
+
+Tuning, if a room needs it — all optional, all with measured defaults:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ALMATHUS_VOICE_ALT_GAP` | `0.5` | how far behind the top hypothesis an all-numbers one may score. Higher = more numbers recognized, more noise accepted |
+| `ALMATHUS_VOICE_VETO_CONF` | `0.9` | how sure the un-constrained model must be before it overrules the number grammar |
+| `ALMATHUS_VOICE_MIN_LEVEL` | `120` | absolute loudness floor for "someone is talking" |
+| `ALMATHUS_VOICE_MIN_SNR` | `3.0` | how far a voice must stand above the room |
+| `ALMATHUS_VOICE_MIN_VOICED` | `0.25` | fraction of frames that must carry vocal-fold pitch |
 
 Enable it:
 
 ```bash
-uv sync --extra voice        # sounddevice + numpy + text2num + parakeet-mlx + vosk
+uv sync --extra voice        # sounddevice + numpy + vosk + parakeet-mlx + webrtcvad
 ```
 
 - First run downloads the parakeet model (~600 MB). **macOS microphone permission
@@ -240,10 +262,21 @@ What you get:
   or a silent/failed capture — each with the measured peak level;
 - recognition results — the raw Vosk alternatives and the parakeet transcript,
   with the parsed number and Vosk's elapsed time in ms;
+- **why an utterance was refused** — how far behind the top hypothesis the
+  all-numbers one scored, or what the un-constrained model heard instead;
 - model load and warmup failures that are otherwise swallowed silently.
 
 Each capture is also copied to `/tmp/almathus_capture.wav`, so you can listen back
 to exactly what the recognizer heard.
+
+### ✅ Tests
+
+```bash
+uv run python test_voice.py       # what counts as a spoken answer (no mic, no model)
+uv run python test_game_flow.py   # a card leaves the screen only when answered
+```
+
+`test_game_flow.py` opens a Tk window briefly and stubs the microphone out.
 
 Nothing outside `voice.py` reads the variable — the keypad, timing, and results
 log behave identically whether it is set or not.

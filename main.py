@@ -459,7 +459,8 @@ class Card:
         return f"{self.a} {OP_SYMBOL[self.mode]} {self.b}"
 
 
-def spoken_answer(nums: list[int], card: Card) -> int | None:
+def spoken_answer(nums: list[int], card: Card,
+                  said_once: set[int] | None = None) -> int | None:
     """The answer a kid meant, out of every number heard in one utterance.
 
     Thinking out loud is how kids do mental maths, so the mic hears the question
@@ -472,6 +473,9 @@ def spoken_answer(nums: list[int], card: Card) -> int | None:
     nothing else (see ``voice.strict_numbers``); this is the last filter, and it
     is about *which* number of several was meant, not about whether numbers were
     said at all.
+
+    ``said_once`` is the set of lone operands already heard on THIS card, and it
+    is what keeps the rule below from going too far — see there.
     """
     if not nums:
         return None
@@ -483,7 +487,18 @@ def spoken_answer(nums: list[int], card: Card) -> int | None:
         return card.answer
     n = nums[-1]                           # self-correction: the last number wins
     if len(nums) == 1 and n in (card.a, card.b):
-        return None                        # a lone operand is the card, not an answer
+        # A lone operand is usually the card being read aloud, not an answer — but
+        # it is also a perfectly ordinary wrong answer, and refusing it outright
+        # made one number per session unsayable: a whole session is built on one
+        # number ("− 4"), so that number is an operand of *every* card, and a kid
+        # answering "quatre" got silence, every time, on every card. Refuse it the
+        # first time it is heard on a card and take it the second: reading the
+        # question back produces the operand once, an answer is repeated when
+        # nothing happens.
+        if said_once is None or n not in said_once:
+            if said_once is not None:
+                said_once.add(n)
+            return None
     return n
 
 
@@ -1052,6 +1067,7 @@ class Almathus(tk.Tk):
         self._advance_job = None    # the single pending "move to the next card" timer
         self._voice_job = None      # the watchdog that keeps this card's mic armed
         self._card_done = False     # answer committed: ignore anything else on this card
+        self._said_once: set[int] = set()   # lone operands already heard on this card
         self._fanfare_job = None    # the recap's pending "start the music" timer
         self._pump_job = None       # the worker-thread -> Tk callback pump
         self._stopping = False      # latched on quit: schedule no more timers
@@ -1487,6 +1503,7 @@ class Almathus(tk.Tk):
         self._clear()
         card = self.current
         self._card_done = False
+        self._said_once = set()     # a new card: the operands are unheard again
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
@@ -1577,7 +1594,7 @@ class Almathus(tk.Tk):
         self.stt.listen(
             on_result=lambda n: self._post(lambda: self._voice_result(n, target)),
             on_state=lambda s: self._post(lambda: self._voice_status(s)),
-            pick=lambda nums: spoken_answer(nums, target),
+            pick=lambda nums: spoken_answer(nums, target, self._said_once),
         )
 
     def _voice_watch(self, target):

@@ -166,16 +166,46 @@ def test_voice_flow():
         app.destroy()
 
 
+def test_spoken_answer():
+    """Which number of an utterance is the answer — and which is the card.
+
+    No window and no mic: this is the last filter in front of scoring, and the
+    one that decides whether saying a number does anything at all.
+    """
+    card = M.Card(9, 4, "subtraction", 5)       # a "− 4" session: 4 is on every card
+
+    assert M.spoken_answer([5], card) == 5, "the right answer was not taken"
+    assert M.spoken_answer([7], card) == 7, "a wrong answer was not taken"
+    assert M.spoken_answer([9, 4, 5], card) == 5, "the question read back, then answered"
+    assert M.spoken_answer([], card) is None
+
+    # A lone operand: the question read aloud the first time, an answer the
+    # second. Without this a whole session's number could never be said —
+    # "quatre" on a "− 4" card was refused for as long as the child repeated it.
+    said: set[int] = set()
+    assert M.spoken_answer([4], card, said) is None, "the card read aloud was scored"
+    assert M.spoken_answer([4], card, said) == 4, "a repeated answer was still refused"
+    assert M.spoken_answer([9], card, said) is None, "the other operand, first time"
+    assert M.spoken_answer([9], card, said) == 9, "the other operand, repeated"
+
+    # ...and the state is per card: a fresh card refuses it once again.
+    assert M.spoken_answer([4], card, set()) is None, "a new card did not start clean"
+
+    # An operand that IS the answer is always taken — it was never in doubt.
+    exact = M.Card(8, 4, "subtraction", 4)
+    assert M.spoken_answer([4], exact, set()) == 4, "the right answer was refused"
+
+
 def main() -> int:
     failures = []
-    for test in (test_keypad_flow, test_voice_flow):
+    for test in (test_spoken_answer, test_keypad_flow, test_voice_flow):
         try:
             test()
             print(f"ok   {test.__name__}")
         except Exception as e:            # noqa: BLE001 — a failure report, not a handler
             failures.append(f"FAIL {test.__name__}: {e}")
             print(failures[-1])
-    print(f"{2 - len(failures)}/2 passed")
+    print(f"{3 - len(failures)}/3 passed")
     return 1 if failures else 0
 
 

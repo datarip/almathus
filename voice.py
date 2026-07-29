@@ -276,6 +276,40 @@ _SILENCE_HANG = 0.35       # stop this long after speech ends (snappy response)
 _MAX_DURATION = 6.0        # hard cap on a single utterance, from its onset
 _VOICE_BAND = (300.0, 3400.0)   # Hz — speech band; cuts low rumble & high hiss
 
+
+def _envf(name: str, default: float) -> float:
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+# --- "was that actually a spoken answer?" ---------------------------------- #
+# The onset detector is deliberately trigger-happy (WebRTC VAD at its most
+# sensitive) so a soft answer is never missed. That leaves it starting on room
+# tone, a stomach gurgling under the laptop, a chair. Those captures used to go
+# straight to Vosk, which — asked to choose among number words — obliges: 0.6 s
+# of room tone at peak 41 came back "cent et" and scored the card as 100.
+#
+# So the utterance is judged AFTER the fact, on three measurements (thresholds
+# from measured speech-vs-noise separation; see the constants' comments):
+# Each is overridable from the environment, so a room can be tuned without an edit.
+_MIN_SNR = _envf("ALMATHUS_VOICE_MIN_SNR", 3.0)
+                      # peak must clear the room's own noise floor by this factor
+_MIN_LEVEL = _envf("ALMATHUS_VOICE_MIN_LEVEL", 120.0)
+                      # ...and this absolute band RMS. Room tone measured 41-100;
+                      # the quietest real answer of that same session, 295.
+_MIN_VOICED = _envf("ALMATHUS_VOICE_MIN_VOICED", 0.25)
+                      # fraction of energetic frames that must be *voiced* — i.e.
+                      # show vocal-fold pitch. This is the one that matters: over
+                      # TTS speech (adult and child pitch, clean and at 24 dB SNR)
+                      # it measured 0.45-1.00, over noise at every level 0.00.
+                      # A whisper has no vocal-fold vibration, so it lands with
+                      # the noise; that is exactly why whispers must not count.
+_NACF_MIN = _envf("ALMATHUS_VOICE_NACF", 0.40)
+                      # per-frame normalised autocorrelation peak that is "voiced"
+_F0_BAND = (100.0, 600.0)   # Hz — pitch search range, low man to shouting child
+
 # v3 is multilingual (incl. French); v2 is English-only.
 _DEFAULT_PARAKEET = "mlx-community/parakeet-tdt-0.6b-v3"
 
@@ -547,6 +581,78 @@ class SpeechInput:
                 continue
         return None, 0
 
+    def _judge(self, span, sr, peak, floor, voiced_blocks, min_voiced):
+        """Was that a frank, spoken answer? -> (ok, a line of metrics for the log).
+
+        Three questions, cheapest first: was it long enough to be a word, was it
+        loud enough to be someone talking rather than the room, and was it voiced
+        — an actual voice rather than noise or a whisper.
+        """
+        if voiced_blocks < min_voiced:
+            return False, f"too short ({voiced_blocks} blocks)"
+        floor = floor or 0.0
+        snr = peak / max(floor, 1.0)
+        if peak < _MIN_LEVEL or snr < _MIN_SNR:
+            return False, f"too faint (peak={peak:.0f} floor={floor:.0f} snr={snr:.1f})"
+        vf = self._voiced_fraction(self._np.concatenate(span), sr)
+        stats = f"peak={peak:.0f} snr={snr:.1f} voiced={vf:.2f}"
+        if vf < _MIN_VOICED:
+            return False, f"not a voice ({stats})"
+        return True, stats
+
+    def _voiced_fraction(self, raw, sr) -> float:
+        """How much of this utterance was *voiced* — produced with the vocal folds
+        vibrating — as a fraction of its energetic frames, in 0..1.
+
+        Speech carries a pitch: the waveform repeats at F0, so its normalised
+        autocorrelation has a tall peak at the pitch lag. Noise does not repeat,
+        and neither does a whisper (the folds stay open — a whisper is filtered
+        turbulence). Measured over TTS number words this reads 0.45-1.00, and
+        over noise of any loudness 0.00, which is a far wider margin than mere
+        loudness gives: quiet speech and loud noise overlap in level, never here.
+
+        Runs on the raw capture (the speech band-pass would cut a deep voice's
+        fundamental) after a high-pass that removes the sub-90 Hz rumble a laptop
+        picks up through the desk — that rumble is periodic and would otherwise
+        read as perfectly "voiced".
+        """
+        np = self._np
+        x = np.asarray(raw, dtype=np.float32)
+        win, hop = int(sr * 0.04), int(sr * 0.02)
+        if len(x) < win:
+            return 0.0
+        x = self._highpass(x, sr)
+        lo, hi = int(sr / _F0_BAND[1]), int(sr / _F0_BAND[0])
+        starts = range(0, len(x) - win + 1, hop)
+        frames = np.stack([x[i:i + win] for i in starts])
+        frames -= frames.mean(axis=1, keepdims=True)
+        energy = np.sqrt((frames * frames).mean(axis=1)) + 1e-9
+        # Only frames carrying the utterance itself: the pre/post-roll silence
+        # around it would otherwise dilute the fraction towards zero.
+        loud = energy > max(float(energy.max()) * 0.25, 1.0)
+        if not loud.any():
+            return 0.0
+        frames = frames[loud]
+        # Autocorrelation via FFT (zero-padded so it stays linear, not circular).
+        n = 1 << int(2 * win - 1).bit_length()
+        spec = np.fft.rfft(frames, n=n, axis=1)
+        ac = np.fft.irfft(spec * np.conj(spec), n=n, axis=1)[:, :hi + 1]
+        zero = ac[:, 0]
+        nacf = np.where(zero > 0, ac[:, lo:hi + 1].max(axis=1) / np.where(zero > 0, zero, 1), 0.0)
+        return float(np.mean(nacf > _NACF_MIN))
+
+    def _highpass(self, x, sr):
+        """Drop everything under ~90 Hz (desk rumble), keep every voice pitch."""
+        np = self._np
+        try:
+            from scipy.signal import butter, sosfilt
+            return sosfilt(butter(2, 90.0, btype="high", fs=sr, output="sos"), x)
+        except Exception:
+            # No scipy: subtract a moving average, which is the same thing crudely.
+            k = max(3, int(sr / 90.0)) | 1
+            pad = np.pad(x, k // 2, mode="edge")
+            return x - np.convolve(pad, np.ones(k) / k, mode="valid")[:len(x)]
+
     def _make_bandpass(self, sr):
         """Butterworth band-pass over the speech band. Returns (sos, sosfilt,
         sosfilt_zi) or (None, ...) if scipy is unavailable (then VAD uses raw RMS)."""
@@ -609,7 +715,9 @@ class SpeechInput:
         block_secs = blk / sr
         pre = int(0.25 / block_secs)      # keep a little before the onset
         post = int(0.25 / block_secs)     # ...and a little after the tail
-        min_voiced = max(4, int(0.10 / block_secs))   # need ≥0.10s of real speech
+        min_voiced = max(4, int(0.16 / block_secs))   # need ≥0.16s of real speech —
+                                                      # shorter than any spoken digit,
+                                                      # longer than a click or a tap
 
         sos, sosfilt, sosfilt_zi = self._make_bandpass(sr)
         zi = {"z": sosfilt_zi(sos) * 0.0 if sos is not None else None}
@@ -627,7 +735,10 @@ class SpeechInput:
                 wvad = None
         _dbg(f"record: detector={'webrtcvad' if wvad else 'energy'} sr={sr}")
 
-        st = {"peak": 0.0, "run": 0, "efloor": None}
+        # The noise floor carries over between captures: it is a property of the
+        # room, not of one utterance, and re-learning it from scratch each time
+        # left the very first blocks of a capture with no reference at all.
+        st = {"peak": 0.0, "run": 0, "efloor": self._noise_floor}
 
         def band_rms(block):
             b = block.astype(np.float32)
@@ -641,6 +752,7 @@ class SpeechInput:
             # WebRTC misfires (e.g. it did nothing at very high input gain).
             f = st["efloor"]
             st["efloor"] = r if f is None else (r if r < f else f * 0.98 + r * 0.02)
+            self._noise_floor = st["efloor"]
             if r > max(st["efloor"] * 4.0, 60.0):
                 return True
             if wvad is not None and len(block) == blk:
@@ -663,6 +775,7 @@ class SpeechInput:
         onset = voiced_end = 0
         started = done = False
         waited = starved = 0
+        verdict = ""                          # the accepted utterance's metrics
         while not self._cancel.is_set():
             try:
                 block = self._audio_q.get(timeout=0.2)
@@ -699,7 +812,10 @@ class SpeechInput:
                 continue
             frames.append(block)
             i = len(frames) - 1
-            if r > max(st["peak"] * 0.12, 40.0):        # still speaking (energy)
+            # Still speaking? Energy has to stand above both this utterance's own
+            # peak and the room — the flat 40 floor alone meant that in a quiet
+            # room every block of silence counted as speech.
+            if r > max(st["peak"] * 0.12, (st["efloor"] or 0.0) * 1.5, 40.0):
                 voiced_end = i
             if (i - voiced_end) * block_secs > _SILENCE_HANG:
                 done = True                             # speaker went quiet -> done
@@ -707,13 +823,16 @@ class SpeechInput:
                 done = True                             # hard cap on one utterance
             if not done:
                 continue
-            if voiced_end - onset + 1 >= min_voiced:
+            ok, verdict = self._judge(frames[onset:voiced_end + 1], sr, st["peak"],
+                                      st["efloor"], voiced_end - onset + 1, min_voiced)
+            if ok:
                 break                                   # a real utterance -> transcribe it
-            # A cough, a chair, a door: too short to be an answer. Drop it and keep
-            # listening on the same stream — bouncing back through the caller to
-            # re-arm would reopen the mic and go deaf for ~200 ms each time, which
-            # in a room with any ambient noise happens every few hundred ms.
-            _dbg(f"record: false start ({voiced_end - onset + 1} blocks), still listening")
+            # A cough, a chair, a door, a gurgle, a whisper: not an answer. Drop it
+            # and keep listening on the same stream — bouncing back through the
+            # caller to re-arm would reopen the mic and go deaf for ~200 ms each
+            # time, which in a room with any ambient noise happens every few
+            # hundred ms.
+            _dbg(f"record: not an answer — {verdict}, still listening")
             started = done = False
             st["run"] = 0
             st["peak"] = 0.0
@@ -726,7 +845,7 @@ class SpeechInput:
             _dbg(f"record: cancelled (started={started}, voiced={voiced}, peak={peak:.0f})")
             return None
         seg = frames[:voiced_end + post + 1]
-        _dbg(f"record: captured {len(seg)} blocks (~{len(seg)*block_secs:.1f}s), peak={peak:.0f}")
+        _dbg(f"record: captured {len(seg)} blocks (~{len(seg)*block_secs:.1f}s), {verdict}")
         if not seg:
             return None
         raw = np.concatenate(seg).astype(np.float32)

@@ -4,3 +4,4 @@ __pycache__/
 stats/
 models/
 prefs.json
+.DS_Store

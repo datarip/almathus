@@ -7,6 +7,10 @@ Pure-stdlib Tkinter app. Runs anywhere Python has Tk:
 Flow:  Settings -> 5-4-3-2-1-GO! countdown -> cards -> reinforcement round -> recap.
 Per-card time is measured so a parent can see which operations need work.
 
+Four moments of that flow have a sound (see sfx.py and assets/README.md): the
+countdown, a right answer, a wrong one, and the winner's music over the recap.
+They need a command-line player on PATH and are silently skipped without one.
+
 Every session is logged twice: the full per-card detail to ./stats/*.json, and
 one summary line to ./results/results.csv — the hand-editable log the progress
 screen charts and tabulates (see results.py for the header definition).
@@ -30,6 +34,7 @@ from tkinter import font as tkfont
 
 import pdfreport
 import results as resultslog
+import sfx
 
 try:
     import voice as voicemod
@@ -380,6 +385,15 @@ OP_SYMBOL = {
 STATS_DIR = Path(__file__).resolve().parent / "stats"
 PREFS_FILE = Path(__file__).resolve().parent / "prefs.json"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+SOUNDS_DIR = ASSETS_DIR / "sounds"
+
+COUNTDOWN_STEPS = 5      # 5-4-3-2-1, then GO!
+COUNTDOWN_TICK = 850     # ms one number stays on screen
+# Where the "GO!" sits inside countdown.mp3. The sample is a racing start — three
+# lights, then the launch — and its lights are spaced wider than this screen's
+# numbers, so it is started *late* rather than at the top of the count: that puts
+# its green light on the frame that says GO!, which is the beat a kid reacts to.
+COUNTDOWN_GO_AT = 2700   # ms into the sample
 
 
 def read_prefs() -> dict:
@@ -1031,7 +1045,11 @@ class Almathus(tk.Tk):
         self._tick_job = None
         self._advance_job = None    # the single pending "move to the next card" timer
         self._card_done = False     # answer committed: ignore anything else on this card
+        self._fanfare_job = None    # the recap's pending "start the music" timer
         self._voice_mic_bad = False
+
+        # sound effects (a no-op if no command-line player is installed)
+        self.sfx = sfx.Sound(SOUNDS_DIR)
 
         # voice engines (both degrade gracefully to no-ops)
         self.tts = voicemod.TTS(LANG) if voicemod else None
@@ -1068,6 +1086,9 @@ class Almathus(tk.Tk):
                 pass
 
     def _shutdown(self):
+        # The player is a child process: quitting through os._exit() leaves it
+        # orphaned, still playing to an empty screen, unless it is killed here.
+        self.sfx.stop()
         if self.stt:
             self.stt.stop()                                  # close mic stream (mic light off)
             self.stt.restore_input_volume(50)                # idempotent
@@ -1129,6 +1150,18 @@ class Almathus(tk.Tk):
                                  weight="bold")
 
     # -- frame helper ------------------------------------------------------ #
+    def _hush(self):
+        """Silence the game — the sound playing, and the one about to.
+
+        Called when a screen is left rather than from `_clear()`: the answer
+        sounds are *meant* to ring out over the card that follows, and `_clear()`
+        runs between two cards.
+        """
+        if self._fanfare_job is not None:
+            self.after_cancel(self._fanfare_job)
+            self._fanfare_job = None
+        self.sfx.stop()
+
     def _clear(self):
         if self._tick_job:
             self.after_cancel(self._tick_job)
@@ -1145,6 +1178,7 @@ class Almathus(tk.Tk):
     # ------------------------------------------------------------------ #
     def show_settings(self):
         self._clear()
+        self._hush()             # leaving the recap: the fanfare goes with it
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
@@ -1344,7 +1378,11 @@ class Almathus(tk.Tk):
         if self.voice_enabled.get() and self.stt and self.stt.available():
             self.stt.warmup()
             self.stt.boost_input_volume()
-        self.countdown(5)
+        # Held back so the sample's green light lands on the GO! frame; the count
+        # is short enough that a negative lead just means "start it now".
+        lead = COUNTDOWN_STEPS * COUNTDOWN_TICK - COUNTDOWN_GO_AT
+        self.after(max(0, lead), lambda: self.sfx.play("countdown"))
+        self.countdown(COUNTDOWN_STEPS)
 
     def countdown(self, n: int):
         self._clear()
@@ -1354,9 +1392,15 @@ class Almathus(tk.Tk):
                  font=self.f_giant, fg=ACCENT if n > 0 else GOOD, bg=BG
                  ).place(relx=0.5, rely=0.45, anchor="center")
         if n > 0:
-            self.after(850, lambda: self.countdown(n - 1))
+            self.after(COUNTDOWN_TICK, lambda: self.countdown(n - 1))
         else:
             self.game_start = time.perf_counter()
+            # The sample runs on past its green light — engine noise, over what
+            # is by then the first question being read aloud. It goes out with
+            # the GO! frame. The answer sounds are deliberately *not* cut this
+            # way: they are shorter than the pause that follows them, so they
+            # ring out over the top of the next card, which is the point of them.
+            self.after(750, self.sfx.stop)
             self._advance_after(750)
 
     # ------------------------------------------------------------------ #
@@ -1578,9 +1622,11 @@ class Almathus(tk.Tk):
                 self.retry_queue.append(card)
 
         if is_correct:
+            self.sfx.play("correct")
             self._flash(T("correct"), GOOD)
             self._advance_after(650)
         else:
+            self.sfx.play("wrong")
             self._flash(T("wrong", a=card.answer), BAD)
             self.answer_var.set("")
             self._advance_after(1500)
@@ -1642,10 +1688,27 @@ class Almathus(tk.Tk):
         Btn(btns, T("quit"), command=self._on_quit, font=self.f_mode,
             bg=CARD_BG, fg=TEXT, active_bg=BAD).pack(side="left", padx=12)
 
-        # speak the same encouragement shown on screen, in a warm voice
+        # The winner's music, once — then, over the silence it leaves, the same
+        # encouragement that is on screen, spoken in a warm voice. Chained rather
+        # than timed: the two would talk over each other, and a child who taps
+        # "Rejouer" mid-fanfare gets neither (a cut-short sound skips its
+        # callback), which is exactly right — that game is over.
+        say = None
         if self.tts and self.tts.available():
             spoken = f"{msg} {T('score_spoken', c=correct, n=n)}"
-            self.after(400, lambda: self.tts.speak(spoken))
+            # The sound player calls this from a worker thread, so it goes back
+            # onto the Tk loop through the pump like every other voice callback.
+            def say():
+                self._post(lambda: self.tts.speak(spoken))
+
+        # A beat before the music, so that the cheer for the card that just ended
+        # the game gets to finish — starting a sound cuts the one before it, and
+        # this screen arrives while that one is still going.
+        def fanfare():
+            self._fanfare_job = None
+            self.sfx.play("victory", then=say)
+
+        self._fanfare_job = self.after(700, fanfare)
 
     @staticmethod
     def _verdict(pct: float):
@@ -1664,6 +1727,7 @@ class Almathus(tk.Tk):
     # ------------------------------------------------------------------ #
     def show_progress(self):
         self._clear()
+        self._hush()             # ditto — this screen is for reading, not cheering
         sessions = resultslog.load_sessions()
 
         f = tk.Frame(self.container, bg=BG)

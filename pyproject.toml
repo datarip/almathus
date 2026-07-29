@@ -8,11 +8,13 @@ dependencies = []
 
 [project.optional-dependencies]
 # Voice answering (STT). TTS uses macOS `say` and needs nothing installed.
-# text2num: robust multilingual spoken-number parsing (FR/EN/ES/PT/DE...).
-# parakeet-mlx targets Apple Silicon; on other platforms set ALMATHUS_PARAKEET_CMD.
-# vosk: number-only grammar fallback that rescues words parakeet mis-hears (e.g. "un").
+# vosk: number-only grammar, the primary recognizer where a model exists.
 #   Needs a model in ./models — see README (download vosk-model-small-fr-0.22).
-voice = ["sounddevice", "numpy", "text2num", "parakeet-mlx", "vosk", "webrtcvad-wheels"]
+# parakeet-mlx targets Apple Silicon; on other platforms set ALMATHUS_PARAKEET_CMD.
+#   It is the recognizer for languages with no Vosk model (English out of the box).
+# Spoken numbers are parsed by voice.strict_numbers — no library, on purpose: the
+#   rule has to be "numbers and nothing else", which a general parser will not do.
+voice = ["sounddevice", "numpy", "parakeet-mlx", "vosk", "webrtcvad-wheels"]
 
 [project.scripts]
 almathus = "main:main"

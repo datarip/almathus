@@ -62,11 +62,25 @@ def main():
         w.writeframes(norm.tobytes())
     print("Fichier enregistré : /tmp/almathus_mic.wav")
 
+    # Vosk d'abord : c'est le reconnaisseur principal en français (~100 ms).
+    print("\nReconnaissance Vosk (grammaire de nombres)…")
+    if s._load_vosk():
+        nums = s._vosk_numbers(audio)
+        print(f"  nombres     : {nums or '— rien retenu'}")
+        if not nums:
+            print("      Un énoncé n'est accepté que s'il ne contient QUE des")
+            print("      nombres. Relance avec ALMATHUS_VOICE_DEBUG=1 pour voir")
+            print("      les hypothèses de Vosk et la raison du refus.")
+    else:
+        print("  modèle Vosk introuvable — voir le README (dossier ./models)")
+
     print("\nTranscription parakeet (premier appel = chargement du modèle ~60s)…")
     raw = s._transcribe(audio)
     normd = s._transcribe(norm)
     print(f"  brut        : {raw!r}  -> {voice.parse_number(raw, 'fr')}")
     print(f"  normalisé   : {normd!r}  -> {voice.parse_number(normd, 'fr')}")
+    print("\n  (parakeet transcrit le français vers l'anglais : en français il ne")
+    print("   sert que de secours, et la règle « que des nombres » le filtre.)")
 
 
 if __name__ == "__main__":

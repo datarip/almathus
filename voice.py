@@ -161,6 +161,11 @@ class TTS:
             if on_done:
                 on_done()
 
+    def speaking(self) -> bool:
+        """Is the app talking right now? The mic must not be armed while it is,
+        or the question read aloud gets captured as the answer to itself."""
+        return bool(self._proc and self._proc.poll() is None)
+
     def stop(self):
         if self._proc and self._proc.poll() is None:
             try:
@@ -171,23 +176,61 @@ class TTS:
 
 
 # --------------------------------------------------------------------------- #
-# Number parsing (French + English words, or digits)
+# Number parsing — STRICT: an utterance is either only numbers, or nothing
 # --------------------------------------------------------------------------- #
+#
+# The old parser picked the numbers out of whatever it was handed and threw the
+# rest away, so "je sais pas" (heard by a number-grammar recognizer as "quinze
+# seize [unk]") scored the card 16, and "quinze moins quatre" — the kid reading
+# the question aloud — scored it 4. Measured over a 68-clip French corpus, 19 of
+# the 30 non-number utterances came back as an answer.
+#
+# So the rule is now the other way round: an utterance is accepted only if
+# *every* token in it is a number word (or a digit, or the "et"/"and" that glues
+# a compound number together). One stray word — a filler, an operator, a
+# recognizer's "[unk]" — and the whole utterance is refused. That takes the same
+# corpus down to 3 of 30 (see the table further down). A refused utterance is not
+# an answer at all: the card stays up and the game keeps listening, which costs
+# the child nothing.
 
-_UNITS = {
-    "zero": 0, "un": 1, "une": 1, "deux": 2, "trois": 3, "quatre": 4, "cinq": 5,
-    "six": 6, "sept": 7, "huit": 8, "neuf": 9, "dix": 10, "onze": 11, "douze": 12,
-    "treize": 13, "quatorze": 14, "quinze": 15, "seize": 16,
-    "vingt": 20, "vingts": 20, "trente": 30, "quarante": 40, "cinquante": 50,
-    "soixante": 60,
-    # english
-    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six_en": 6, "seven": 7,
-    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
-    "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
-    "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
-    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+# 0..19 — the words that can only be the ones place of a number.
+_UNIT_WORDS = {
+    "fr": {"zero": 0, "un": 1, "une": 1, "deux": 2, "trois": 3, "quatre": 4,
+           "cinq": 5, "six": 6, "sept": 7, "huit": 8, "neuf": 9, "dix": 10,
+           "onze": 11, "douze": 12, "treize": 13, "quatorze": 14, "quinze": 15,
+           "seize": 16},
+    "en": {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+           "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+           "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+           "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19},
 }
-_HUNDRED = {"cent", "cents", "hundred"}
+# 20..90 — a tens word can carry a ones word after it ("vingt et un", "sixty two").
+_TEN_WORDS = {
+    "fr": {"vingt": 20, "vingts": 20, "trente": 30, "quarante": 40,
+           "cinquante": 50, "soixante": 60,
+           # Belgian / Swiss forms, said by plenty of French-speaking children
+           "septante": 70, "octante": 80, "huitante": 80, "nonante": 90},
+    "en": {"twenty": 20, "thirty": 30, "forty": 40, "fourty": 40, "fifty": 50,
+           "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90},
+}
+_SCALE_WORDS = {
+    "fr": {"cent": 100, "cents": 100, "mille": 1000},
+    "en": {"hundred": 100, "hundreds": 100, "thousand": 1000},
+}
+# The only non-number words allowed inside a number, and only between two of them.
+_GLUE_WORDS = {"fr": {"et"}, "en": {"and"}}
+
+# French builds 70/80/90 by arithmetic ("quatre-vingt-dix" is 4×20+10, not
+# 4+20+10). Rewriting those to digits up front keeps the parser a plain
+# left-to-right accumulator.
+_PRESUB = {
+    "fr": ((r"\bquatre\s+vingts?\s+dix\b", " 90 "),
+           (r"\bquatre\s+vingts?\b", " 80 ")),
+    "en": (),
+}
+
+# What a recognizer emits for "something I have no word for". Never an answer.
+_UNKNOWN_TOKENS = {"unk", "[unk]", "<unk>", "unknown"}
 
 
 def _strip_accents(s: str) -> str:
@@ -195,74 +238,116 @@ def _strip_accents(s: str) -> str:
                    if unicodedata.category(c) != "Mn")
 
 
-def numbers_in(text: str, lang: str = "fr") -> list[int]:
-    """Every number in a transcript, in the order it was said.
+def _lang_key(lang: str) -> str:
+    return "fr" if lang == "fr" else "en"
 
-    The caller needs all of them, not just one: a kid reading the question out
-    loud ("quinze moins quatre") says two numbers and has answered nothing,
-    which is only visible if both survive this far.
 
-    Primary path uses the multilingual ``text2num`` library (best for
-    FR/EN/ES/PT/DE...); a built-in FR/EN parser is the fallback. Trailing
-    punctuation from the recognizer (e.g. "huit.") is ignored either way.
+def _tokenize(text: str, lang: str) -> list[str]:
+    """A transcript, lowercased and accent-free, as a list of word/digit tokens.
+
+    Hyphens and apostrophes split ("dix-sept" -> dix, sept); sentence punctuation
+    the recognizer adds ("huit." / "Eight?") is dropped; anything else is kept as
+    a token so the caller can refuse it.
     """
-    if not text:
+    low = _strip_accents(text.lower())
+    low = re.sub(r"[.,;:!?…\"'`’\-–—/]+", " ", low)
+    # ...only then the rewrites, so they see "quatre vingt dix" whether it was
+    # written hyphenated or spaced.
+    for pattern, repl in _PRESUB[_lang_key(lang)]:
+        low = re.sub(pattern, repl, low)
+    return low.split()
+
+
+def strict_numbers(text: str, lang: str = "fr") -> Optional[list[int]]:
+    """The numbers in an utterance that is *only* numbers — else None.
+
+    ``None`` and ``[]`` mean different things and both mean "no answer":
+    ``None`` is "this was speech, but not a number" (refuse it), ``[]`` is
+    "nothing was said". Callers treat both the same; the distinction is kept
+    because it is what the debug log needs to explain a refusal.
+
+    >>> strict_numbers("huit", "fr")
+    [8]
+    >>> strict_numbers("vingt et un", "fr")
+    [21]
+    >>> strict_numbers("quinze moins quatre", "fr") is None
+    True
+    >>> strict_numbers("one hundred and five", "en")
+    [105]
+    >>> strict_numbers("i don't know", "en") is None
+    True
+    """
+    if not text or not text.strip():
         return []
-    try:
-        from text_to_num import alpha2digit
-        code = lang if lang in ("fr", "en", "es", "pt", "de", "ca", "nl") else "en"
-        digits = re.findall(r"-?\d+", alpha2digit(text, code))
-        if digits:
-            return [int(d) for d in digits]
-    except Exception:
-        pass
-    n = _fallback_parse_number(text)
-    return [] if n is None else [n]
+    key = _lang_key(lang)
+    units, tens = _UNIT_WORDS[key], _TEN_WORDS[key]
+    scales, glue = _SCALE_WORDS[key], _GLUE_WORDS[key]
+
+    tokens = _tokenize(text, lang)
+    if not tokens:
+        return []
+
+    out: list[int] = []
+    cur: Optional[int] = None
+    last = ""          # "unit" | "ten" | "scale" — what the previous token was
+    last_val = 0
+
+    def flush():
+        nonlocal cur, last
+        if cur is not None:
+            out.append(cur)
+        cur, last = None, ""
+
+    for tok in tokens:
+        if tok in _UNKNOWN_TOKENS:
+            return None
+        if tok in glue:
+            continue                    # "vingt ET un", "one hundred AND five"
+        if re.fullmatch(r"\d+", tok):
+            val, kind = int(tok), ("ten" if int(tok) >= 20 else "unit")
+        elif tok in scales:
+            cur = (cur or 1) * scales[tok]
+            last, last_val = "scale", scales[tok]
+            continue
+        elif tok in tens:
+            val, kind = tens[tok], "ten"
+        elif tok in units:
+            val, kind = units[tok], "unit"
+        else:
+            return None                 # a word that is not a number: refuse it all
+        # Where does this token go — on the number being built, or a new one?
+        if kind == "ten":
+            if last in ("unit", "ten"):
+                flush()                 # "vingt trente" is two numbers, not one
+            cur = (cur or 0) + val
+        else:                           # a ones word
+            # Two ones words in a row start a new number ("trois quatre"), except
+            # the French teens, which are literally "ten seven" / "ten eight".
+            if last == "unit" and not (last_val == 10 and val in (7, 8, 9)):
+                flush()
+            cur = (cur or 0) + val
+        last, last_val = kind, val
+    flush()
+    return out
+
+
+def numbers_in(text: str, lang: str = "fr") -> list[int]:
+    """Every number in a strictly-numeric transcript, in the order it was said.
+
+    An utterance that says anything besides numbers yields ``[]``: it is not an
+    answer, and the caller must keep listening rather than score the card.
+    """
+    nums = strict_numbers(text, lang)
+    return nums or []
 
 
 def parse_number(text: str, lang: str = "fr") -> Optional[int]:
-    """The single number a transcript states, or None.
+    """The single number a strictly-numeric transcript states, or None.
 
-    The LAST one wins, which handles self-correction ("trois... non, quatre").
+    The LAST one wins, which handles self-correction ("trois, quatre").
     """
     nums = numbers_in(text, lang)
     return nums[-1] if nums else None
-
-
-def _fallback_parse_number(text: str) -> Optional[int]:
-    """Built-in FR/EN word+digit parser, used when ``text2num`` is unavailable."""
-    if not text:
-        return None
-
-    low = _strip_accents(text.lower())
-
-    # 1) a plain digit run wins (e.g. "j'ai dit 8" -> 8, "20" -> 20)
-    digits = re.findall(r"-?\d+", low)
-    if digits:
-        return int(digits[0])
-
-    # 2) French irregular tens (quatre-vingt = 4*20, not 4+20) -> substitute numbers
-    low = low.replace("-", " ")
-    low = re.sub(r"\bquatre\s+vingt\s+dix\b", " 90 ", low)
-    low = re.sub(r"\bquatre\s+vingts?\b", " 80 ", low)
-    low = low.replace(" et ", " ").replace(" and ", " ")
-
-    tokens = re.findall(r"\d+|[a-z]+", low)
-    total = current = 0
-    seen = False
-    for tok in tokens:
-        if tok.isdigit():
-            current += int(tok)
-            seen = True
-        elif tok in _HUNDRED:
-            current = (current or 1) * 100
-            seen = True
-        elif tok in _UNITS:
-            current += _UNITS[tok]
-            seen = True
-        # everything else (filler words) is ignored
-    total += current
-    return total if seen else None
 
 
 # --------------------------------------------------------------------------- #
@@ -315,17 +400,52 @@ _DEFAULT_PARAKEET = "mlx-community/parakeet-tdt-0.6b-v3"
 
 _WARMUP = object()   # sentinel job: preload the model on the STT thread
 
-# Vosk number-only grammar (fallback). Constraining the vocabulary to number words
-# rescues cases the general model can't nail — notably the French "un" (heard as
-# "Mm"/"On" by parakeet). "[unk]" lets Vosk reject non-numbers instead of forcing one.
+# Vosk number-only grammar. Constraining the vocabulary to number words rescues
+# cases the general model can't nail — notably the French "un" (heard as "Mm"/"On"
+# by parakeet). "[unk]" is what lets Vosk say "that was speech, but not a number"
+# instead of being forced to pick a number word for every sound it hears.
 _VOSK_GRAMMAR = {
     "fr": ('["zéro un une deux trois quatre cinq six sept huit neuf dix onze douze '
-           'treize quatorze quinze seize vingt trente quarante cinquante soixante '
-           'cent et", "[unk]"]'),
+           'treize quatorze quinze seize dix-sept dix-huit dix-neuf vingt trente '
+           'quarante cinquante soixante quatre-vingt quatre-vingts septante nonante '
+           'cent cents et", "[unk]"]'),
     "en": ('["zero one two three four five six seven eight nine ten eleven twelve '
            'thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty '
-           'thirty forty fifty sixty seventy eighty ninety hundred", "[unk]"]'),
+           'thirty forty fifty sixty seventy eighty ninety hundred and", "[unk]"]'),
 }
+
+# --- how sure Vosk has to be that it heard numbers and only numbers ---------- #
+# With a number-only grammar Vosk always *can* map a sound onto number words, so
+# its N-best list is read the strict way: the winning hypothesis has to be one
+# that is entirely numbers, and it has to be within `_VOSK_ALT_GAP` of the
+# best-scoring hypothesis overall. Reading it the old way — "the first
+# alternative that contains a number anywhere" — is what let "attends euh" score
+# a card 7 (it was alternative #2, "sept [unk]", 0.6 behind "[unk]").
+#
+# Measured on a 68-clip French corpus (38 spoken numbers, 24 non-number
+# utterances, 6 noise clips), each padded with the room tone a real capture keeps
+# around an utterance, with the veto below switched on:
+#     gap         numbers accepted    non-numbers accepted
+#     old rule          37/38               19/30   <- the bug
+#     0.30              33/38                3/30
+#     0.50              33/38                3/30   <- default
+#     1.00              33/38                5/30
+#     1.50              34/38                5/30
+# Past 0.5 the gap only buys false accepts. What survives at 0.5 is "euh", "non"
+# and "oh non" — one-syllable French fillers that genuinely sound like "un" and
+# "neuf"; no threshold here separates them, and the cost is now one wrong answer
+# on a card rather than a card silently skipped.
+_VOSK_ALT_GAP = _envf("ALMATHUS_VOICE_ALT_GAP", 0.5)
+_VOSK_ALTS = 6             # how many hypotheses to ask Vosk for
+
+# Second opinion: the same audio decoded by the FULL model, with no grammar to
+# push it towards numbers. If that decode is a confident run of words and those
+# words are not numbers, the utterance was speech — just not an answer — and the
+# grammar decode is overruled. Two independent decoders must agree that this was
+# a number before a card is ever scored from it. Worth 1 fewer false accept and
+# 'tu peux répéter' at the default gap.
+_VETO_CONF = _envf("ALMATHUS_VOICE_VETO_CONF", 0.9)
+_VETO_WORDS = 2            # ...over at least this many words
 
 
 def _quiet_hf_hub(model_id: str) -> None:
@@ -412,17 +532,29 @@ class SpeechInput:
         """
         if self._stopped:
             return                       # app is quitting — never reopen the mic
+        # Before the busy check, not after: a recognizer thread that died left
+        # `_busy` stuck True, and checking first meant every later listen() was
+        # refused with nothing left alive to un-stick it.
+        self._ensure_stt_thread()
         if self._busy:
             _dbg("listen() ignored — already busy")
             return                       # one capture at a time
         _dbg("listen() -> starting capture")
         self._busy = True
         self._cancel.clear()
-        self._ensure_stt_thread()
         # Record on a throwaway thread (the mic is fine cross-thread); transcription
         # is handed to the single STT thread that owns the model.
         threading.Thread(target=self._capture, args=(on_result, on_state, pick),
                          daemon=True).start()
+
+    def listening(self) -> bool:
+        """Is a capture actually running right now?
+
+        The caller re-arms from the result callback, so a dropped or refused
+        callback would end the chain and leave the card deaf with no sign of it.
+        Its watchdog polls this instead of trusting the chain.
+        """
+        return self._busy and not self._cancel.is_set() and not self._stopped
 
     def cancel(self):
         """End the current listening session (the card is over): the mic closes,
@@ -451,7 +583,7 @@ class SpeechInput:
     def warmup(self):
         """Preload the recognizer on the STT thread so the first answer is instant."""
         self._ensure_stt_thread()
-        self._jobs.put((_WARMUP, None, None, None))
+        self._jobs.put((_WARMUP, None, None, None, None))
 
     def boost_input_volume(self, level: int = 80):
         """Raise the macOS mic input gain (moderate — max gain over-amplifies noise
@@ -483,13 +615,26 @@ class SpeechInput:
 
     # -- internals --------------------------------------------------------- #
     def _ensure_stt_thread(self):
-        if self._stt_thread is None:
-            self._stt_thread = threading.Thread(target=self._stt_loop, daemon=True)
-            self._stt_thread.start()
+        """Start the recognizer thread, and restart it if it ever went away.
+
+        It must not be possible for this thread to be missing while the game
+        thinks it is listening: ``_busy`` is cleared from it, so a dead one
+        leaves the flag stuck and every later listen() refused — the card would
+        stay up (which is right) but stone deaf (which is not).
+        """
+        t = self._stt_thread
+        if t is not None and t.is_alive():
+            return
+        if t is not None:
+            _dbg("STT thread had died — restarting it")
+            self._busy = False
+        self._stt_thread = threading.Thread(target=self._stt_loop, daemon=True)
+        self._stt_thread.start()
 
     def _capture(self, on_result, on_state, pick=None):
         try:
             self._silent = False
+            self._last_raw = None
             audio = self._record(on_state)
             # Two silent captures in a row before crying "no mic": the caller stops
             # re-arming on that signal, so one unlucky window (a stream hiccup, a
@@ -500,59 +645,90 @@ class SpeechInput:
                 on_state("no_mic")     # only silence -> no mic access / no usable device
             elif self._silent:
                 _dbg("capture SILENT (1st) -> keep listening")
-            self._jobs.put((audio, on_result, on_state, pick))
+            # The un-filtered audio travels *with* the job. Reading it off the
+            # instance at transcribe time meant a capture that returned nothing
+            # could leave the previous utterance's audio in place, and the same
+            # answer could be recognized twice.
+            self._jobs.put((audio, self._last_raw, on_result, on_state, pick))
         except Exception as e:
             _dbg("capture EXCEPTION:", repr(e))
-            self._jobs.put((None, on_result, on_state, pick))
+            self._jobs.put((None, None, on_result, on_state, pick))
 
     def _stt_loop(self):
         """The ONE thread that creates and runs the parakeet model — MLX streams
-        are thread-local, so the model must never cross threads."""
+        are thread-local, so the model must never cross threads.
+
+        Nothing raised in here may end this loop. It used to be possible: a job
+        tuple of the wrong shape killed the thread on the very first unpack, and
+        from then on every answer was recognized by nobody at all — silently,
+        because the exception went to a thread no one was watching.
+        """
         while True:
-            audio, on_result, on_state, pick = self._jobs.get()
-            if audio is _WARMUP:
-                try:
-                    self._load_vosk()                 # primary recognizer, fast (~1s)
-                except Exception as e:
-                    _dbg("vosk warmup failed:", repr(e))
-                if os.environ.get("ALMATHUS_PARAKEET") and self._backend == "mlx":
-                    try:
-                        self._ensure_model()          # optional backup, slow (~60s)
-                    except Exception as e:
-                        _dbg("parakeet warmup failed:", repr(e))
-                continue
             try:
-                if audio is None or self._cancel.is_set():
-                    _dbg("no audio (timeout/cancel) -> None")
-                    self._busy = False       # before the callback: it re-arms from here
-                    on_result(None)
-                    continue
-                if on_state:
-                    on_state("thinking")
-                # Vosk FIRST: fast (~100ms), number-grammar, and the accurate one for
-                # isolated digits. Runs on the RAW audio (band-pass breaks Vosk).
-                _t0 = time.monotonic()
-                raw = self._last_raw if self._last_raw is not None else audio
-                nums = self._vosk_numbers(raw)
-                _dbg(f"vosk -> {nums} ({(time.monotonic() - _t0) * 1000:.0f}ms)")
-                # parakeet only as a backup, and only if it's already loaded (never
-                # block on its ~60s load — Vosk handles the common case).
-                if not nums and self._model is not None:
-                    text = self._transcribe(audio)
-                    nums = numbers_in(text, self.lang)
-                    _dbg(f"parakeet fallback transcript={text!r} -> {nums}")
-                parsed = pick(nums) if pick else (nums[-1] if nums else None)
-                _dbg(f"picked -> {parsed}")
-                self._busy = False           # a callback that re-arms must not be refused
-                on_result(parsed)
+                job = self._jobs.get()
+            except Exception as e:                    # queue itself is broken
+                _dbg("STT queue EXCEPTION, thread ending:", repr(e))
+                return
+            try:
+                self._run_job(job)
             except Exception as e:
-                _dbg("transcribe EXCEPTION:", repr(e))
-                try:
-                    on_result(None)
-                except Exception:
-                    pass
-            finally:
+                _dbg("STT job EXCEPTION (thread survives):", repr(e))
                 self._busy = False
+
+    def _run_job(self, job):
+        audio, raw, on_result, on_state, pick = job
+        if audio is _WARMUP:
+            try:
+                self._load_vosk()                 # primary recognizer, fast (~1s)
+            except Exception as e:
+                _dbg("vosk warmup failed:", repr(e))
+            # Parakeet is the recognizer of last resort: slow to load (~60s),
+            # so it is only warmed when asked for, or when there is no Vosk
+            # model for this language and it is the only one left. Without
+            # that second case English had no recognizer at all — Vosk found
+            # no model and parakeet was never loaded, so every spoken answer
+            # in English was silently dropped.
+            want_parakeet = (os.environ.get("ALMATHUS_PARAKEET")
+                             or self._vosk_model is None)
+            if want_parakeet and self._backend == "mlx":
+                try:
+                    self._ensure_model()
+                except Exception as e:
+                    _dbg("parakeet warmup failed:", repr(e))
+            return
+        try:
+            if audio is None or self._cancel.is_set():
+                _dbg("no audio (timeout/cancel) -> None")
+                self._busy = False       # before the callback: it re-arms from here
+                on_result(None)
+                return
+            if on_state:
+                on_state("thinking")
+            # Vosk FIRST: fast (~100ms), number-grammar, and the accurate one for
+            # isolated digits. Runs on the RAW audio (band-pass breaks Vosk).
+            _t0 = time.monotonic()
+            nums = self._vosk_numbers(raw if raw is not None else audio)
+            _dbg(f"vosk -> {nums} ({(time.monotonic() - _t0) * 1000:.0f}ms)")
+            # parakeet only as a backup, and only if it's already loaded (never
+            # block on its ~60s load — Vosk handles the common case).
+            if not nums and self._model is not None:
+                text = self._transcribe(audio)
+                # Same strict rule as everywhere else: a transcript that says
+                # anything other than numbers is not an answer.
+                nums = strict_numbers(text, self.lang) or []
+                _dbg(f"parakeet fallback transcript={text!r} -> {nums}")
+            parsed = pick(nums) if pick else (nums[-1] if nums else None)
+            _dbg(f"picked -> {parsed}")
+            self._busy = False           # a callback that re-arms must not be refused
+            on_result(parsed)
+        except Exception as e:
+            _dbg("transcribe EXCEPTION:", repr(e))
+            try:
+                on_result(None)
+            except Exception:
+                pass
+        finally:
+            self._busy = False
 
     def _pick_stream_params(self):
         """Pick a samplerate the current input device supports (devices change:
@@ -773,7 +949,7 @@ class SpeechInput:
         preroll = deque(maxlen=max(1, pre))   # rolling window of the last blocks
         frames = []                           # the utterance, once it has started
         onset = voiced_end = 0
-        started = done = False
+        started = done = accepted = False
         waited = starved = 0
         verdict = ""                          # the accepted utterance's metrics
         while not self._cancel.is_set():
@@ -826,6 +1002,7 @@ class SpeechInput:
             ok, verdict = self._judge(frames[onset:voiced_end + 1], sr, st["peak"],
                                       st["efloor"], voiced_end - onset + 1, min_voiced)
             if ok:
+                accepted = True
                 break                                   # a real utterance -> transcribe it
             # A cough, a chair, a door, a gurgle, a whisper: not an answer. Drop it
             # and keep listening on the same stream — bouncing back through the
@@ -840,9 +1017,14 @@ class SpeechInput:
 
         peak = st["peak"]
         voiced = voiced_end - onset + 1 if started else 0
-        if not started or voiced < min_voiced:
+        # Only audio that came out of the `break` above — i.e. that _judge passed —
+        # is ever returned. Leaving the loop any other way means the card was
+        # cancelled mid-utterance, and that half-captured sound was never judged
+        # to be a voice at all; it must not reach the recognizer.
+        if not accepted or not started or voiced < min_voiced:
             self._silent = peak < 3.0
-            _dbg(f"record: cancelled (started={started}, voiced={voiced}, peak={peak:.0f})")
+            _dbg(f"record: cancelled (accepted={accepted}, started={started}, "
+                 f"voiced={voiced}, peak={peak:.0f})")
             return None
         seg = frames[:voiced_end + post + 1]
         _dbg(f"record: captured {len(seg)} blocks (~{len(seg)*block_secs:.1f}s), {verdict}")
@@ -930,9 +1112,8 @@ class SpeechInput:
             _dbg("vosk load failed:", repr(e))
             return False
 
-    def _vosk_numbers(self, audio):
-        """Recognize the numbers in an utterance via Vosk's number-only grammar
-        (+N-best). Runs on the STT thread. Returns a list of ints, in order.
+    def _vosk_decode(self, audio, grammar=None, words=False, alts=0):
+        """Decode one utterance and return its list of result dicts.
 
         Fed in chunks, and every *segment* is collected: Vosk closes a segment on
         its own when it hears a pause (``AcceptWaveform`` -> True), and that
@@ -941,39 +1122,103 @@ class SpeechInput:
         trailing noise ends the segment, so "quinze" landed in ``Result()`` and
         the game heard nothing at all.
         """
+        import json as _json
+        from vosk import KaldiRecognizer
+        rec = (KaldiRecognizer(self._vosk_model, float(self._rec_sr), grammar)
+               if grammar else KaldiRecognizer(self._vosk_model, float(self._rec_sr)))
+        if alts:
+            rec.SetMaxAlternatives(alts)
+        if words:
+            rec.SetWords(True)
+        data = self._normalize(audio).tobytes()        # gain-only (raw audio)
+        step = max(2, int(self._rec_sr * 0.25) * 2)    # 0.25s chunks, int16-aligned
+        out = []
+        for i in range(0, len(data), step):
+            if rec.AcceptWaveform(data[i:i + step]):
+                out.append(_json.loads(rec.Result()))
+        out.append(_json.loads(rec.FinalResult()))
+        return out
+
+    def _vosk_numbers(self, audio):
+        """The numbers in an utterance, if it was numbers and nothing else.
+
+        Two decodes of the same audio have to agree that this was a number:
+
+        * the number-only grammar, read strictly — the winning hypothesis must be
+          made of number words alone and must score within ``_VOSK_ALT_GAP`` of
+          the best hypothesis overall;
+        * the full model with no grammar, used only to veto — if it confidently
+          hears a run of words that are not numbers, the utterance was speech but
+          not an answer, whatever the grammar decode made of it.
+
+        Runs on the STT thread. Returns a list of ints, in order; empty means
+        "not an answer, keep listening".
+        """
         if not self._load_vosk():
             return []
         try:
-            from vosk import KaldiRecognizer
             grammar = _VOSK_GRAMMAR.get(self.lang, _VOSK_GRAMMAR["fr"])
-            rec = KaldiRecognizer(self._vosk_model, float(self._rec_sr), grammar)
-            rec.SetMaxAlternatives(6)          # N-best: the number is often just behind [unk]
-            data = self._normalize(audio).tobytes()   # gain-only (raw audio)
-            step = max(2, int(self._rec_sr * 0.25) * 2)   # 0.25s chunks, int16-aligned
             nums = []
-            for i in range(0, len(data), step):
-                if rec.AcceptWaveform(data[i:i + step]):
-                    nums += self._vosk_best(rec.Result())
-            nums += self._vosk_best(rec.FinalResult())
+            for res in self._vosk_decode(audio, grammar=grammar, alts=_VOSK_ALTS):
+                nums += self._vosk_best(res)
+            if not nums:
+                return []
+            if self._vosk_vetoes(audio):
+                return []
             return nums
         except Exception as e:
             _dbg("vosk error:", repr(e))
             return []
 
-    def _vosk_best(self, result_json: str) -> list[int]:
-        """Numbers from the best-scoring alternative of one Vosk result that has
-        any (the top alternative is often "[unk]", with the number just behind)."""
-        import json as _json
-        res = _json.loads(result_json)
-        texts = ([a.get("text", "") for a in res["alternatives"]]
-                 if res.get("alternatives") else [res.get("text", "")])
-        if any(t for t in texts):
-            _dbg(f"vosk alts={texts[:4]}")
-        for t in texts:
-            nums = numbers_in(t, self.lang)
-            if nums:
-                return nums
+    def _vosk_best(self, res: dict) -> list[int]:
+        """The numbers of the best all-number hypothesis in one Vosk result.
+
+        Nothing is returned unless some hypothesis is numbers *only* and scores
+        close enough to the top one — see ``_VOSK_ALT_GAP``.
+        """
+        alts = res.get("alternatives")
+        if not alts:                                   # no N-best: the plain text
+            return strict_numbers(res.get("text", ""), self.lang) or []
+        top = alts[0].get("confidence", 0.0)
+        if any(a.get("text", "").strip() for a in alts):
+            _dbg("vosk alts=" + str([(round(a.get("confidence", 0.0), 2), a.get("text", ""))
+                                     for a in alts[:4]]))
+        for a in alts:
+            text = a.get("text", "").strip()
+            if not text:
+                continue
+            nums = strict_numbers(text, self.lang)
+            if not nums:                               # None (not a number) or []
+                continue
+            gap = top - a.get("confidence", 0.0)
+            if gap > _VOSK_ALT_GAP:
+                _dbg(f"vosk: refused {text!r} — {gap:.2f} behind the top hypothesis")
+                return []                              # numbers, but not convincingly
+            return nums
         return []
+
+    def _vosk_vetoes(self, audio) -> bool:
+        """Did the un-constrained model clearly hear words that are not numbers?
+
+        Only a confident run of at least ``_VETO_WORDS`` words counts: a single
+        low-confidence word out of the general model is a coin toss, and vetoing
+        on it would throw away real answers.
+        """
+        try:
+            heard = [w for res in self._vosk_decode(audio, words=True)
+                     for w in (res.get("result") or [])]
+        except Exception as e:
+            _dbg("vosk veto decode failed:", repr(e))
+            return False
+        if len(heard) < _VETO_WORDS:
+            return False
+        if any(w.get("conf", 0.0) < _VETO_CONF for w in heard):
+            return False
+        text = " ".join(w.get("word", "") for w in heard)
+        if strict_numbers(text, self.lang):
+            return False                               # it heard numbers too — agree
+        _dbg(f"vosk: vetoed — the full model confidently heard {text!r}")
+        return True
 
     def _ensure_model(self):
         """Load the parakeet model. MUST be called on the STT thread only."""

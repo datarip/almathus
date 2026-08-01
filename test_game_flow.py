@@ -169,8 +169,8 @@ def test_voice_flow():
 def test_spoken_answer():
     """Which number of an utterance is the answer — and which is the card.
 
-    No window and no mic: this is the last filter in front of scoring, and the
-    one that decides whether saying a number does anything at all.
+    No window and no mic: this only picks a number out of an utterance. Whether
+    that number is trusted enough to take the card away is test_voice_confirm.
     """
     card = M.Card(9, 4, "subtraction", 5)       # a "− 4" session: 4 is on every card
 
@@ -178,34 +178,99 @@ def test_spoken_answer():
     assert M.spoken_answer([7], card) == 7, "a wrong answer was not taken"
     assert M.spoken_answer([9, 4, 5], card) == 5, "the question read back, then answered"
     assert M.spoken_answer([], card) is None
+    assert M.spoken_answer([9, 4], card) is None, "the question read back was scored"
+    assert M.spoken_answer([3, 7], card) == 7, "self-correction: the last number wins"
 
-    # A lone operand: the question read aloud the first time, an answer the
-    # second. Without this a whole session's number could never be said —
-    # "quatre" on a "− 4" card was refused for as long as the child repeated it.
-    said: set[int] = set()
-    assert M.spoken_answer([4], card, said) is None, "the card read aloud was scored"
-    assert M.spoken_answer([4], card, said) == 4, "a repeated answer was still refused"
-    assert M.spoken_answer([9], card, said) is None, "the other operand, first time"
-    assert M.spoken_answer([9], card, said) == 9, "the other operand, repeated"
+    # A lone operand is a perfectly ordinary wrong answer — a whole session is
+    # built on one number ("− 4"), so refusing it here made that number unsayable
+    # on every card of the session. It is picked; confirming it is the gate's job.
+    assert M.spoken_answer([4], card) == 4, "a lone operand was refused outright"
 
-    # ...and the state is per card: a fresh card refuses it once again.
-    assert M.spoken_answer([4], card, set()) is None, "a new card did not start clean"
-
-    # An operand that IS the answer is always taken — it was never in doubt.
+    # An operand that IS the answer was never in doubt.
     exact = M.Card(8, 4, "subtraction", 4)
-    assert M.spoken_answer([4], exact, set()) == 4, "the right answer was refused"
+    assert M.spoken_answer([4], exact) == 4, "the right answer was refused"
+
+
+def test_voice_confirm():
+    """A wrong number takes the card only when it is said twice.
+
+    This is the bug that outlived three patches. Each capture is an independent
+    chance for the recognizer to be fooled, and the mic re-arms every second or
+    two, so a child who thought for a while eventually had a slip — a filler, an
+    operand read back, a gurgle — answer for them and take the question away. It
+    read as "the card times out"; it was really "the card is up long enough to be
+    stolen". Nothing but the same number, twice, may score it.
+    """
+    app = start(voice=True)
+    card = app.current
+    wrong = card.answer + 1
+    try:
+        # Twenty slips, all different, spread over a long think: not one of them
+        # may move the card, however long the child takes.
+        for i in range(20):
+            app.stt.deliver(wrong + i)
+            pump(app, 0.05)
+            assert app.current is card, f"a single unconfirmed number skipped the card ({i})"
+            assert not app._card_done, f"a single unconfirmed number scored the card ({i})"
+
+        # The same number twice, but not in a row: the second one is a fresh
+        # offer, not a confirmation of the first.
+        app.stt.deliver(wrong)
+        pump(app)
+        app.stt.deliver(wrong + 99)
+        pump(app)
+        app.stt.deliver(wrong)
+        pump(app)
+        assert app.current is card, "two hearings with another number between them scored"
+
+        # ...and now the repeat that means it.
+        app.stt.deliver(wrong)
+        assert wait_for(app, lambda: app.current is not card, 5), \
+            "a number said twice did not answer the card"
+        assert card.correct_first_try is False and card.attempts == 1, \
+            "the confirmed answer was not scored once, as wrong"
+
+        # The right answer is taken as it is said — no repeat, no lost time.
+        nxt = app.current
+        app.stt.deliver(nxt.answer)
+        assert wait_for(app, lambda: app.current is not nxt, 5), \
+            "the right answer had to be repeated"
+    finally:
+        app._shutdown()
+        app.destroy()
+
+
+def test_confirm_window():
+    """A repeat that comes too late is a fresh offer, not a confirmation."""
+    app = start(voice=True)
+    card = app.current
+    wrong = card.answer + 1
+    try:
+        app.stt.deliver(wrong)
+        pump(app)
+        assert app._pending and app._pending[0] == wrong, "the number was not offered"
+        # Age the offer past the window without waiting out the clock.
+        app._pending = (wrong, app._pending[1] - M.VOICE_CONFIRM_WINDOW - 1)
+        app.stt.deliver(wrong)
+        pump(app)
+        assert app.current is card, "a stale offer was confirmed by a much later slip"
+        assert app._pending and app._pending[0] == wrong, "the late hearing did not re-offer"
+    finally:
+        app._shutdown()
+        app.destroy()
 
 
 def main() -> int:
     failures = []
-    for test in (test_spoken_answer, test_keypad_flow, test_voice_flow):
+    for test in (test_spoken_answer, test_keypad_flow, test_voice_flow,
+                 test_voice_confirm, test_confirm_window):
         try:
             test()
             print(f"ok   {test.__name__}")
         except Exception as e:            # noqa: BLE001 — a failure report, not a handler
             failures.append(f"FAIL {test.__name__}: {e}")
             print(failures[-1])
-    print(f"{3 - len(failures)}/3 passed")
+    print(f"{5 - len(failures)}/5 passed")
     return 1 if failures else 0
 
 

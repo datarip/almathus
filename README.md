@@ -173,8 +173,8 @@ then the app keeps listening and re-arming until the card changes. A spoken numb
 is auto-filled and auto-submitted; the keypad stays fully usable the whole time.
 
 ```
-mic audio ──▶ [VAD record] ──▶ [is it a voice?] ──▶ Vosk ──▶ [numbers only?] ──▶ auto-submit
-              (voice.py)        level + pitch       ↘ parakeet ↗   strict rule
+mic audio ─▶ [VAD record] ─▶ [is it a voice?] ─▶ Vosk ─▶ [numbers only?] ─▶ [sure?] ─▶ submit
+             (voice.py)       level + pitch     ↘ parakeet ↗  strict rule    confirm
 ```
 
 Each stage can only ever say "not an answer", in which case the card stays up and
@@ -198,14 +198,29 @@ the app keeps listening. **Nothing takes a card off the screen but an answer.**
    strict way: its winning hypothesis must be made of number words alone *and*
    score within `ALMATHUS_VOICE_ALT_GAP` of its best hypothesis overall, and a
    second decode by the full un-constrained model can veto it.
+5. **Sure about that?** The right answer scores the card the moment it is said.
+   **Any other number is only offered**: it appears in the answer box, the hint
+   line reads *“🎤 7 ? Redis-le pour valider”*, and the card stays up until the
+   same number is heard again within `VOICE_CONFIRM_WINDOW` (6 s) — or ✓/Enter is
+   pressed, which commits whatever is in the box.
+
+   This is the stage that finally killed *“the card skips itself if I think too
+   long”*. Every stage above can be fooled, and the mic re-arms every second or
+   two, so each extra second of thinking was another chance for a filler, a
+   gurgle or an operand read back to answer for the child and take the question
+   away — which is why it looked like a timeout and why tightening thresholds
+   never fixed it. Slips are individually plausible; what they don't do is repeat
+   themselves on the same number, six seconds apart. A child who knows the answer
+   still says it once, so the per-card times the game charts stay honest.
 
 This is the part that was wrong before. The parser used to pick the numbers out of
 whatever it was handed and drop the rest, so a kid reading the question aloud
 ("quinze moins quatre") answered `4`, and "je sais pas" — which a number-grammar
 recognizer hears as "quinze seize [unk]" — answered `16`. Measured over a 68-clip
 French corpus, **19 of the 30 non-number utterances were scored as an answer**;
-under the strict rule, 3 are (the one-syllable fillers "euh", "non", "oh non"),
-while 33 of 38 spoken numbers are still recognized. English, through parakeet,
+under the strict rule, 3 are (the one-syllable fillers "euh", "non", "oh non") —
+and those 3 now have to say themselves twice before they score anything, which is
+what step 5 is for. 33 of 38 spoken numbers are still recognized. English, through parakeet,
 scores 33/33 numbers with no false accepts.
 
 **Vosk models** live in `./models`. French:
@@ -280,7 +295,10 @@ uv run python test_voice.py       # what counts as a spoken answer (no mic, no m
 uv run python test_game_flow.py   # a card leaves the screen only when answered
 ```
 
-`test_game_flow.py` opens a Tk window briefly and stubs the microphone out.
+`test_game_flow.py` opens a Tk window briefly and stubs the microphone out. Its
+`test_voice_confirm` is the regression test for the skipping card: twenty
+different numbers arrive from the recognizer over a long think and not one of
+them may move the card — only the same number, said twice.
 
 Nothing outside `voice.py` reads the variable — the keypad, timing, and results
 log behave identically whether it is set or not.

@@ -64,7 +64,11 @@ a game. It reads `results/results.csv` and shows:
   average. The curve is a monotone cubic through the points: soft, but it never
   dips below a value the kid actually scored. Days that recorded a score also
   carry a small **note tag** over their dot — `18/20`, right answers over cards
-  asked — which steps up out of the way when two tags would collide;
+  asked — which steps up out of the way when two tags would collide. Like the
+  point it sits on, the tag **averages** the day rather than totalling it: three
+  sessions of 20 cards read `16/20`, not `47/60`. Mixed decks average their
+  ratios and are written over the deck played most that day (the smaller one on
+  a tie), so a 20- and a 30-card session still read out of 20;
 - the **table** of every session, newest first, with a *note* column (`18/20`)
   and a *temps moyen / carte* column;
 - a **📄 PDF** button in the top-right corner (hover it for the *Exporter en PDF*

@@ -55,7 +55,9 @@ Hand-editing rules
   bare number (`15`), because the denominator is the `cartes` cell next to it;
   the screen, the chart and the PDF all show it as `15/20`. A hand-written
   `15/20` is read too — only the numerator is kept. Empty on the old paper rows,
-  and on any row with no card count there is nothing to show.
+  and on any row with no card count there is nothing to show. A day played in
+  several sessions is graded on the *average* of them, not their total — see
+  `grade`.
 * **temps_moyen_par_carte** — normally left to the app, in plain seconds. If
   empty it is computed as `temps / cartes`; fill it in by hand for the old paper
   rows, where `cartes` is unknown.
@@ -79,6 +81,7 @@ from __future__ import annotations
 import csv
 import io
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date as _date
 from datetime import datetime
@@ -275,17 +278,35 @@ class Session:
 
 
 def grade(sessions) -> tuple[int, int] | None:
-    """The grade over a group of rows: right answers over cards asked.
+    """The grade over a group of rows: an *average*, over one deck.
 
-    Rows that recorded neither are simply not part of the fraction, so a day
-    that mixes a played session with a hand-typed paper row is graded on the
-    session alone. None when nothing in the group carries a score.
+    A single row grades itself. Several rows — three tries in an afternoon —
+    average their scores instead of adding them up: three sessions of 20 cards
+    read `16/20`, not `47/60`. A grade only says something if it is out of the
+    same thing every day, and `47/60` says "played a lot" rather than "did
+    well".
+
+    The deck it is written over is the one played most that day, the smaller on
+    a tie — so a 20-card session followed by a 30-card one is still shown out of
+    20, the shape the child actually sat in front of. Mixed decks are averaged
+    as *ratios*, so a short session weighs exactly as much as a long one.
+
+    Rows that recorded neither a score nor a card count are simply not part of
+    the average, so a day that mixes a played session with a hand-typed paper
+    row is graded on the session alone. None when nothing in the group carries
+    a score.
     """
     scored = [(s.correct, s.cards) for s in sessions
               if s.correct is not None and s.cards]
     if not scored:
         return None
-    return sum(c for c, _ in scored), sum(n for _, n in scored)
+    if len(scored) == 1:
+        return scored[0]
+    counts = Counter(n for _, n in scored)
+    asked = min(counts, key=lambda n: (-counts[n], n))
+    mean = sum(c / n for c, n in scored) / len(scored)
+    # round half up, and never past the deck: a rounded 20/20 has to mean 20/20.
+    return max(0, min(asked, int(mean * asked + 0.5))), asked
 
 
 def fmt_note(note: tuple[int, int] | None) -> str:

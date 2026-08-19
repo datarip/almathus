@@ -180,8 +180,8 @@ class TTS:
             eng.setProperty("rate", self.rate)
             eng.say(text)
             eng.runAndWait()
-        except Exception:
-            pass
+        except Exception as e:
+            _dbg("pyttsx3 speak failed:", repr(e))
         finally:
             if on_done:
                 on_done()
@@ -717,8 +717,8 @@ class SpeechInput:
                 self.restore_input_volume
             )  # covers X, Quit, Ctrl-C, crash-exit
             _dbg(f"boosted macOS input volume to {level}")
-        except Exception:
-            pass
+        except Exception as e:
+            _dbg("input volume boost failed:", repr(e))
 
     def restore_input_volume(self, level: int = 50):
         """Put the mic input gain back to a neutral 50% on exit — only if we raised
@@ -734,8 +734,8 @@ class SpeechInput:
                 check=False,  # a refused volume change is not worth an exception
             )
             _dbg(f"restored macOS input volume to {level}")
-        except Exception:
-            pass
+        except Exception as e:
+            _dbg("input volume restore failed:", repr(e))
 
     # -- internals --------------------------------------------------------- #
     def _ensure_stt_thread(self):
@@ -875,11 +875,12 @@ class SpeechInput:
         for sr in (16000, 48000, 32000, 8000, dev_sr, 44100, 22050):
             try:
                 sd.check_input_settings(samplerate=sr, channels=1, dtype="int16")
-                # exactly 20 ms frames (WebRTC VAD needs 10/20/30)
-                self._stream_params = (sr, int(sr * 0.02))
-                return self._stream_params
-            except Exception:
+            except Exception as e:
+                _dbg(f"rate {sr} unusable:", repr(e))
                 continue
+            # exactly 20 ms frames (WebRTC VAD needs 10/20/30)
+            self._stream_params = (sr, int(sr * 0.02))
+            return self._stream_params
         return None, 0
 
     def _judge(self, span, sr, peak, floor, voiced_blocks, min_voiced):
@@ -972,9 +973,10 @@ class SpeechInput:
 
             hi = min(_VOICE_BAND[1], sr / 2 - 100)  # stay under Nyquist
             sos = butter(4, [_VOICE_BAND[0], hi], btype="band", fs=sr, output="sos")
-            return sos, sosfilt, sosfilt_zi
         except Exception:
             return None, None, None
+        else:
+            return sos, sosfilt, sosfilt_zi
 
     def _ensure_stream(self):
         """Open the mic stream if it isn't already, and keep it open for the whole
@@ -1072,8 +1074,8 @@ class SpeechInput:
             if wvad is not None and len(block) == blk:
                 try:
                     return bool(wvad.is_speech(block.tobytes(), sr))
-                except Exception:
-                    pass
+                except Exception as e:
+                    _dbg("webrtc vad rejected a block:", repr(e))
             return False
 
         if on_state:
@@ -1267,13 +1269,14 @@ class SpeechInput:
                 _dbg("vosk model not found -> disabled")
                 return False
             self._vosk_model = Model(d)
-            self._vosk_ok = True
-            _dbg(f"vosk model loaded from {d}")
-            return True
         except Exception as e:
             self._vosk_ok = False
             _dbg("vosk load failed:", repr(e))
             return False
+        else:
+            self._vosk_ok = True
+            _dbg(f"vosk model loaded from {d}")
+            return True
 
     def _vosk_decode(self, audio, grammar=None, words=False, alts=0):
         """Decode one utterance and return its list of result dicts.
@@ -1333,10 +1336,11 @@ class SpeechInput:
                 return []
             if self._vosk_vetoes(audio):
                 return []
-            return nums
         except Exception as e:
             _dbg("vosk error:", repr(e))
             return []
+        else:
+            return nums
 
     def _vosk_best(self, res: dict) -> list[int]:
         """The numbers of the best all-number hypothesis in one Vosk result.

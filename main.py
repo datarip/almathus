@@ -40,7 +40,7 @@ import sfx
 
 try:
     import voice as voicemod
-except Exception:  # keep the game usable even if voice.py is absent/broken
+except Exception:  # noqa: BLE001 - keep the game usable if voice.py is absent/broken
     voicemod = None
 
 # --------------------------------------------------------------------------- #

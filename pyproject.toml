@@ -83,6 +83,13 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tkinter binds callbacks as `lambda e: ...`; the event is part of the contract.
 "main.py" = ["ARG005"]
+# voice.py wraps four optional native stacks — PortAudio, WebRTC VAD, Vosk and
+# MLX — each of which raises whatever its C layer feels like. Catching Exception
+# and falling back to the keypad *is* this module's contract (see CLAUDE.md:
+# "the game stays fully playable ... if voice deps/models are absent"), so the
+# rule is off here rather than waived 25 times. Every such handler logs through
+# _dbg(); a silent one is still a bug, and S110/S112 still catch those.
+"voice.py" = ["BLE001"]
 
 [tool.ruff.lint.pep8-naming]
 # T() is the translation shorthand, used once per user-visible string.

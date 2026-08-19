@@ -508,11 +508,11 @@ MARGIN = 40.0
 CHART_H = 200.0
 ROW_H = 17.0
 FS_TITLE, FS_META, FS_AXIS, FS_ROW, FS_FOOT, FS_NOTE = 20, 9.5, 8, 9, 7.5, 6
-# A note tag on the chart, and its clearance. Deliberately smaller than the axis
-# beside it — the tags sit inside the plot, one per day, and at the axis' size a
-# fortnight of daily sessions buried the curve they annotate. Kept in step with
-# the screen's own tag face, so paper and screen stay the same picture.
-NOTE_H, NOTE_GAP = 9.5, 5.0
+# A note tag on the chart, and the clearances around its lane. Deliberately
+# smaller than the axis beside it — the tags share one row under the plot, and
+# at the axis' size barely a third of a fortnight's grades fit in it. Kept in
+# step with the screen's own tag face, so paper and screen stay the same picture.
+NOTE_H, LANE_GAP, TAG_GAP = 9.5, 4.0, 5.0
 
 # Same weights as the on-screen table, so the columns line up with the app.
 COLUMNS = (
@@ -695,8 +695,10 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
     y_labels = [resultslog.fmt_duration(v, 0) for v in _frange(0, top, step)]
     pad_l = max(measure(t, FS_AXIS) for t in y_labels) + 12
     has_notes = any(resultslog.grade(g) for _, _, g in days)
-    pad_r, pad_b = 10.0, FS_AXIS + 12
-    pad_t = (NOTE_H + NOTE_GAP + 4) if has_notes else 10.0  # headroom for a tag
+    # The grades are a lane below the plot, so the bottom band carries them as
+    # well as the dates; nothing is reserved above the curve for a tag.
+    pad_r, pad_t = 10.0, 10.0
+    pad_b = FS_AXIS + 12 + (NOTE_H + LANE_GAP if has_notes else 0.0)
     x0, x1 = x + pad_l, x + w - pad_r
     y0, y1 = y + pad_b, y + h - pad_t  # y0 is the zero baseline, y1 the top
 
@@ -731,7 +733,8 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
     for px, py, _ in pts:
         pdf.circle(px, py, 2.6, palette["ACCENT"], outline=palette["BG"], width=1.2)
     # Held inside the plot, give or take a hair, so a tag cannot land on a y label.
-    _draw_notes(pdf, pts, x0 - 4, x1 + 4, y + h - NOTE_H - 2, palette)
+    lane_y = y0 - LANE_GAP - NOTE_H  # the lane's floor, under the zero line
+    _draw_notes(pdf, pts, x0 - 4, x1 + 4, lane_y, palette)
 
     # Date labels thinned by pixel distance, like the widget: the axis is
     # calendar time, so neighbouring days are not neighbouring columns.
@@ -750,7 +753,7 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
     for d, xd in kept:
         pdf.text(
             xd,
-            y0 - FS_AXIS - 4,
+            (lane_y if has_notes else y0) - FS_AXIS - 4,
             d.strftime("%d/%m"),
             FS_AXIS,
             palette["MUTED"],
@@ -758,42 +761,56 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
         )
 
 
-def _draw_notes(pdf: Pdf, pts, x_min, x_max, y_max, palette) -> None:
-    """The screen's note tags, on paper: `15/20` over the dot it grades.
+def _draw_notes(pdf: Pdf, pts, x_min, x_max, lane_y, palette) -> None:
+    """The screen's note lane, on paper: `15/20` in a row under the curve.
 
-    Same rules as the widget — centred over the dot, stepping up out of the way
-    of a tag already placed, tail traded for a stem once it has moved.
+    Same rules as the widget — every mark on one baseline, tags kept left to
+    right while they still fit beside each other, a dot for a day squeezed out,
+    and the newest grade always printed.
     """
-    placed: list[tuple[float, float, float]] = []
-    for px, py, (_, _, group) in pts:
-        text = resultslog.fmt_note(resultslog.grade(group))
-        if not text:
-            continue
-        bw = measure(text, FS_NOTE) + 7
-        bx = min(max(px - bw / 2, x_min), max(x_min, x_max - bw))
-        home = py + NOTE_GAP
-        by = home
-        while (
-            any(
-                bx < ox + ow and ox < bx + bw and abs(by - oy) < NOTE_H + 2
-                for ox, oy, ow in placed
-            )
-            and by + NOTE_H + 2 <= y_max
-        ):
-            by += NOTE_H + 2
-        by = min(by, y_max)
-        placed.append((bx, by, bw))
+    tagged = [
+        (px, text, measure(text, FS_NOTE) + 7)
+        for px, _, (_, _, group) in pts
+        if (text := resultslog.fmt_note(resultslog.grade(group)))
+    ]
+    if not tagged:
+        return
 
-        if by == home and abs(bx + bw / 2 - px) < 0.5:
-            pdf.polygon([px - 3, by + 1, px + 3, by + 1, px, py + 4], palette["ACCENT"])
-        else:
-            pdf.line(bx + bw / 2, by, px, py + 4, palette["ACCENT"], 0.8)
+    def left(px: float, bw: float) -> float:
+        return min(max(px - bw / 2, x_min), max(x_min, x_max - bw))
+
+    kept: list[tuple[int, float]] = []  # index into `tagged`, left edge
+    for i, (px, _, bw) in enumerate(tagged):
+        bx = left(px, bw)
+        if kept and bx < kept[-1][1] + tagged[kept[-1][0]][2] + TAG_GAP:
+            continue
+        kept.append((i, bx))
+    if kept[-1][0] != len(tagged) - 1:
+        px, _, bw = tagged[-1]
+        bx = left(px, bw)
+        while kept and bx < kept[-1][1] + tagged[kept[-1][0]][2] + TAG_GAP:
+            kept.pop()
+        kept.append((len(tagged) - 1, bx))
+
+    labelled = {i for i, _ in kept}
+    for i, (px, _, _) in enumerate(tagged):
+        if i not in labelled:
+            pdf.circle(px, lane_y + NOTE_H / 2, 1.5, palette["ACCENT"])
+    for i, bx in kept:
+        _, text, bw = tagged[i]
         pdf.round_rect(
-            bx, by, bw, NOTE_H, 2.8, palette["ACCENT"], outline=palette["BG"], width=0.8
+            bx,
+            lane_y,
+            bw,
+            NOTE_H,
+            2.8,
+            palette["ACCENT"],
+            outline=palette["BG"],
+            width=0.8,
         )
         pdf.text(
             bx + bw / 2,
-            by + (NOTE_H - FS_NOTE) / 2 + 1.5,
+            lane_y + (NOTE_H - FS_NOTE) / 2 + 1.5,
             text,
             FS_NOTE,
             palette["BG"],

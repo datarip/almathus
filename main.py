@@ -1058,7 +1058,8 @@ class Dropdown(Btn):
 class TimeChart(tk.Canvas):
     PAD_L, PAD_R, PAD_T, PAD_B = 66, 24, 16, 30
     HIT = 32  # px: how close the pointer must be to a dot
-    NOTE_GAP = 8  # px: clearance between a note tag and its dot
+    LANE_GAP = 6  # px: clearance between the plot floor and the note lane
+    TAG_GAP = 6  # px: clearance between two tags sharing the lane
     # Round y steps a parent reads at a glance: 5 s up to 15 min.
     STEPS = (5, 10, 15, 20, 30, 60, 90, 120, 180, 300, 600, 900)
 
@@ -1076,18 +1077,19 @@ class TimeChart(tk.Canvas):
             for d, g in sorted(by_day.items())
         ]
         self.font = font
-        # The tags get their own, smaller face. They sit *inside* the plot, one per
-        # day, so at the axis' size a fortnight of daily sessions covered its own
-        # curve and the tags ran into each other; small and bold they still read.
+        # The tags get their own, smaller face. They share one lane under the
+        # plot, so at the axis' size a fortnight of daily sessions left room for
+        # barely a third of them; small and bold, most of them fit and still read.
         self.note_font = note_font or font
         self.NOTE_H = self.note_font.metrics("linespace") + 4
-        # A note tag sits above its dot, so the plot needs headroom for one —
-        # otherwise the best day's tag is clipped by the top of the canvas.
-        if any(resultslog.grade(g) for _, _, g in self.days):
-            self.PAD_T = self.NOTE_H + self.NOTE_GAP + 6
+        self.has_notes = any(resultslog.grade(g) for _, _, g in self.days)
         # Reserve the bottom band from the real font metrics — the fonts scale
         # with the screen, so a fixed 30 px clipped the date labels on a tall one.
+        # The note lane is part of that band: grades sit below the curve, so a
+        # long span can never bury the line they annotate.
         self.PAD_B = font.metrics("linespace") + 16
+        if self.has_notes:
+            self.PAD_B += self.NOTE_H + self.LANE_GAP
         self.pts: list[tuple[float, float, tuple]] = []
         self.bind("<Configure>", lambda e: self.redraw())
         self.bind("<Motion>", self._hover)
@@ -1197,7 +1199,9 @@ class TimeChart(tk.Canvas):
                 x - 4, y - 4, x + 4, y + 4, fill=ACCENT, outline=BG, width=2
             )
         self.pts = pts
-        self._draw_notes(pts, x0, x1)
+        lane_y = y1 + self.LANE_GAP  # top of the note lane
+        self._draw_notes(pts, x0, x1, lane_y)
+        label_y = lane_y + self.NOTE_H + 4 if self.has_notes else y1 + 10
 
         # x labels: distinct days, thinned by *pixel* distance — the axis is
         # calendar time, so evenly spaced days are not evenly spaced columns
@@ -1217,7 +1221,7 @@ class TimeChart(tk.Canvas):
         for d, xd in kept:
             self.create_text(
                 xd,
-                y1 + 10,
+                label_y,
                 text=d.strftime("%d/%m"),
                 anchor="n",
                 font=self.font,
@@ -1271,60 +1275,58 @@ class TimeChart(tk.Canvas):
             **kw,
         )
 
-    def _draw_notes(self, pts, x_min, x_max):
-        """The day's note as a small tag over its dot — `15/20`, the number the
-        sheet is really about. Days that never recorded one (the old paper rows)
-        simply get no tag.
+    def _draw_notes(self, pts, x_min, x_max, lane_y):
+        """The day's grades as a row of their own, under the plot — `15/20`, the
+        number the sheet is really about. Days that never recorded one (the old
+        paper rows) simply get no mark.
 
-        Tags are placed left to right; one that would land on a tag already
-        placed climbs above it and trades its speech-bubble tail for a thin
-        stem, so it still says which dot it belongs to. They are kept within the
-        plot (give or take a few pixels), so the leftmost one cannot sit on top
-        of the y-axis labels the way it did when the canvas edge was the limit.
+        Every mark sits on the same baseline, so a tag can cover neither the
+        curve nor another tag. Tags are kept left to right only while the next
+        one still fits beside the last; a day squeezed out keeps a dot in the
+        lane, so the grade is visibly there and the hover tooltip reads it out.
+        The newest day always keeps its number — it is the one being looked at.
         """
-        placed: list[tuple[float, float, float, float]] = []
         bh = self.NOTE_H
+        tagged = [
+            (x, text, self.note_font.measure(text) + 8)
+            for x, _, (_, _, group) in pts
+            if (text := resultslog.fmt_note(resultslog.grade(group)))
+        ]
+        if not tagged:
+            return
+        # 6 px of slack on either side: enough for the first and last tags to
+        # stay centred on their dots, not enough to reach an axis label.
+        lo, hi = x_min - 6, x_max + 6
 
-        def free(bx, by, bw):
-            return not any(
-                bx < px + pw and px < bx + bw and by < py + ph and py < by + bh
-                for px, py, pw, ph in placed
-            )
+        def left(x: float, bw: float) -> float:
+            return min(max(x - bw / 2, lo), max(lo, hi - bw))
 
-        for x, y, (_, _, group) in pts:
-            text = resultslog.fmt_note(resultslog.grade(group))
-            if not text:
+        kept: list[tuple[int, float]] = []  # index into `tagged`, left edge
+        for i, (x, _, bw) in enumerate(tagged):
+            bx = left(x, bw)
+            if kept and bx < kept[-1][1] + tagged[kept[-1][0]][2] + self.TAG_GAP:
                 continue
-            bw = self.note_font.measure(text) + 8
-            # 6 px of slack on either side: enough for the first and last tags to
-            # stay centred on their dots, not enough to reach an axis label.
-            lo, hi = x_min - 6, x_max + 6
-            bx = min(max(x - bw / 2, lo), max(lo, hi - bw))
-            home = y - self.NOTE_GAP - bh  # where it would sit undisturbed
-            by = home
-            while not free(bx, by, bw) and by - (bh + 2) >= 2:
-                by -= bh + 2
-            by = max(by, 2)
-            placed.append((bx, by, bw, bh))
+            kept.append((i, bx))
+        if kept[-1][0] != len(tagged) - 1:
+            x, _, bw = tagged[-1]
+            bx = left(x, bw)
+            while kept and bx < kept[-1][1] + tagged[kept[-1][0]][2] + self.TAG_GAP:
+                kept.pop()
+            kept.append((len(tagged) - 1, bx))
 
-            if by == home and abs(bx + bw / 2 - x) < 0.5:
-                # right above its own dot: a speech-bubble tail down to it
-                self.create_polygon(
-                    x - 4,
-                    by + bh - 1,
-                    x + 4,
-                    by + bh - 1,
-                    x,
-                    y - 5,
-                    fill=ACCENT,
-                    outline=ACCENT,
-                )
-            else:
-                self.create_line(bx + bw / 2, by + bh, x, y - 5, fill=ACCENT, width=1)
-            self._round_rect(bx, by, bx + bw, by + bh, 4, fill=ACCENT, outline=BG)
+        labelled = {i for i, _ in kept}
+        cy = lane_y + bh / 2
+        for i, (x, _, _) in enumerate(tagged):
+            if i not in labelled:
+                self.create_oval(x - 2, cy - 2, x + 2, cy + 2, fill=ACCENT, outline="")
+        for i, bx in kept:
+            _, text, bw = tagged[i]
+            self._round_rect(
+                bx, lane_y, bx + bw, lane_y + bh, 4, fill=ACCENT, outline=BG
+            )
             self.create_text(
                 bx + bw / 2,
-                by + bh / 2,
+                cy,
                 text=text,
                 font=self.note_font,
                 fill=BG,
@@ -1354,6 +1356,11 @@ class TimeChart(tk.Canvas):
         per_card = [s.avg for s in group if s.avg is not None]
         if per_card:
             lines.append(f"{T('col_avg')} : {sum(per_card) / len(per_card):.1f} s")
+        # The lane only prints the grades that fit side by side; the rest are
+        # a dot until you point at them, so the tooltip always spells it out.
+        note = resultslog.fmt_note(resultslog.grade(group))
+        if note:
+            lines.append(f"{T('col_note')} : {note}")
 
         lh = self.font.metrics("linespace") + 2
         bw = max(self.font.measure(t) for t in lines) + 20

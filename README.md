@@ -63,14 +63,19 @@ a game. It reads `results/results.csv` and shows:
   plateaus are visible. Hover a dot for its date, families, session count and
   average. The curve is a monotone cubic through the points: soft, but it never
   dips below a value the kid actually scored. Days that recorded a score also
-  carry a small **note tag** over their dot — `18/20`, right answers over cards
-  asked — which steps up out of the way when two tags would collide. Like the
-  point it sits on, the tag **averages** the day rather than totalling it: three
-  sessions of 20 cards read `16/20`, not `47/60`. Mixed decks average their
+  get a small **note tag** — `18/20`, right answers over cards asked — in a
+  **lane of its own under the plot**, all on one baseline: stacked over their
+  dots they used to climb out of each other's way until the headroom ran out and
+  a long span became a ladder of numbers across the curve. Tags are kept left to
+  right while they still fit side by side; a day squeezed out keeps a dot in the
+  lane and gives its grade to the tooltip, and the newest day always keeps its
+  number. Like the point it grades, the tag **averages** the day rather than
+  totalling it: three sessions of 20 cards read `16/20`, not `47/60`. Mixed decks average their
   ratios and are written over the deck played most that day (the smaller one on
   a tie), so a 20- and a 30-card session still read out of 20;
-- the **table** of every session, newest first, with a *note* column (`18/20`)
-  and a *temps moyen / carte* column;
+- the **table** of every session, newest first, with a *note* column (`18/20`),
+  a *temps moyen / carte* column and a *Difficultés* column — the five cards
+  that session fought with;
 - a **📄 PDF** button in the top-right corner (hover it for the *Exporter en PDF*
   bubble). It asks where to save, then writes an **A4** report — the same chart,
   redrawn as vectors, and the whole table flowing over as many pages as it
@@ -92,15 +97,15 @@ grows when a column it knows about is missing from your file (see below).
 Canonical French header (written when `LANG = "fr"`):
 
 ```csv
-date,famille,temps,cartes,note,temps_moyen_par_carte
-2026-06-16,-1,0:31,,,
-2026-07-28,-2 et -3,1:35.4,20,18,4.8
+date,famille,temps,cartes,note,temps_moyen_par_carte,difficultes
+2026-06-16,-1,0:31,,,,
+2026-07-28,-2 et -3,1:35.4,20,18,4.8,"17 - 4, 13 - 4, 9 - 4, 6 - 4, 20 - 4"
 ```
 
 Canonical English header (written when `LANG = "en"`):
 
 ```csv
-date,family,time,cards,grade,average_time_per_card
+date,family,time,cards,grade,average_time_per_card,difficulty
 ```
 
 | field | 🇫🇷 header | 🇬🇧 header | meaning |
@@ -111,6 +116,7 @@ date,family,time,cards,grade,average_time_per_card
 | cartes | `cartes` | `cards` | how many cards were asked |
 | note | `note` | `grade` | cards answered right on the first try |
 | temps moyen | `temps_moyen_par_carte` | `average_time_per_card` | `temps / cartes` |
+| difficultés | `difficultes` | `difficulty` | the five cards that session fought with |
 
 **Either language is read**, in any column order. Header matching ignores case,
 accents, spaces and underscores (`Temps`, `temps`, `Temps moyen par carte` and
@@ -131,8 +137,32 @@ keeps its cells.
 | **cartes** | an integer, or empty when unknown (the old paper rows). |
 | **note** | how many cards were right on the first try, as a bare number (`15`) — the denominator is the `cartes` cell beside it. A hand-written `15/20` is read too, keeping only the numerator. Screen, chart and PDF all show it as `15/20`. |
 | **temps moyen** | plain seconds. Leave it empty and it's computed as `temps / cartes`; fill it in for rows where `cartes` is unknown. |
+| **difficultés** | the session's hardest cards, hardest first, comma separated: `18 - 4, 11 - 4, 13 - 4`. Same ASCII signs as `famille`. **The next session reads this cell back**, so writing a card in by hand is a way to say *drill this tomorrow*. |
 
 Rows that can't be read at all are skipped, never rewritten.
+
+### Difficulties, and the revision they drive
+
+Two different things make a card hard, and the *Difficultés* column records both:
+getting it **wrong**, and **labouring** over it. A finished session ranks its
+cards — wrong ones first, then the slowest — and writes down the top five.
+
+The clock behind that ranking counts **both sittings**. A card missed on the
+first pass comes back in the reinforcement round at the end of the session, and
+the time it really cost is the two goes added together — otherwise a card fumbled
+in half a second would read as the fastest answer of the round.
+
+The next session then **deals each of those cards twice**, so a fact that fought
+back is met again before it is forgotten. It reads the difficulties of the **last
+day that was played**, all of that day's sessions together, and only takes what
+the round can actually ask — same operation, and a number that is switched on. So
+switching from *−4* to *×2* leaves the *−4* revision waiting for the day you come
+back to it, rather than dealing a card that doesn't belong.
+
+Revision never takes more than **half the round** (five carried-over cards need a
+deck of twenty), and the shuffle keeps the two copies of a card apart — asked
+back to back it would only test the memory of the last answer, which is the
+opposite of the point.
 
 > The *temps moyen / carte* here is **not** the average on the recap screen. The
 > recap averages the time spent thinking on each card; this column divides the

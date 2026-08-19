@@ -26,7 +26,7 @@ from typing import Callable, Optional
 # Players in order of preference, each with the flags that make it play one file
 # and get out of the way: no window, no console output, exit at the end.
 PLAYERS = (
-    ("afplay", []),                                              # macOS, built in
+    ("afplay", []),  # macOS, built in
     ("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet"]),
     ("mpg123", ["-q"]),
     ("mpv", ["--no-video", "--really-quiet"]),
@@ -73,17 +73,20 @@ class Sound:
                 then()
             return
         try:
-            self._proc = subprocess.Popen(self.player + [str(path)],
-                                          stdout=subprocess.DEVNULL,
-                                          stderr=subprocess.DEVNULL)
+            self._proc = subprocess.Popen(
+                self.player + [str(path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         except OSError:
             self._proc = None
             if then:
                 then()
             return
         if then:
-            threading.Thread(target=self._wait_then, args=(self._proc, self._gen, then),
-                             daemon=True).start()
+            threading.Thread(
+                target=self._wait_then, args=(self._proc, self._gen, then), daemon=True
+            ).start()
 
     def _wait_then(self, proc, gen, then):
         try:

@@ -40,7 +40,7 @@ class FakeSTT:
 
     def __init__(self):
         self.arm_count = 0
-        self.break_chain = False      # swallow the result, like a dropped callback
+        self.break_chain = False  # swallow the result, like a dropped callback
         self._listening = False
         self._on_result = None
 
@@ -52,7 +52,7 @@ class FakeSTT:
 
     def listen(self, on_result, on_state=None, pick=None):
         if self._listening:
-            return                    # one capture at a time, like the real thing
+            return  # one capture at a time, like the real thing
         self.arm_count += 1
         self._listening = True
         self._on_result = on_result
@@ -82,7 +82,7 @@ class FakeSTT:
 
 def start(voice: bool):
     app = M.Almathus()
-    app.tts = None                    # no speech: the mic arms immediately
+    app.tts = None  # no speech: the mic arms immediately
     # A test that plays a deck to the end reaches the recap, which logs a session
     # to results/ — the real file the progress screen reads. Nothing here is a
     # game anyone played, so none of it is written down.
@@ -106,13 +106,13 @@ def test_keypad_flow():
         # slipped-through advance re-renders *this* question and silently resets
         # the time it took — the same card, but the child's think time lost.
         started = app.card_start
-        for _ in range(5):            # the advance timer firing on its own
+        for _ in range(5):  # the advance timer firing on its own
             app._advance()
             app.update()
         assert app.current is card, "an unanswered card was skipped"
         assert app.card_start == started, "an unanswered card was re-rendered"
 
-        pump(app, 3.0)                # a child thinking for a while
+        pump(app, 3.0)  # a child thinking for a while
         assert app.current is card, "the card timed out and skipped itself"
         assert app.card_start == started, "the card restarted itself"
 
@@ -124,14 +124,16 @@ def test_keypad_flow():
 
         app.answer_var.set(str(card.answer))
         app.submit()
-        assert wait_for(app, lambda: app.current is not card, 5), \
+        assert wait_for(app, lambda: app.current is not card, 5), (
             "a correct answer did not advance"
+        )
 
         wrong = app.current
         app.answer_var.set(str(wrong.answer + 1))
         app.submit()
-        assert wait_for(app, lambda: app.current is not wrong, 5), \
+        assert wait_for(app, lambda: app.current is not wrong, 5), (
             "a wrong answer did not advance"
+        )
         assert wrong in app.retry_queue, "a failed card was not queued for retry"
     finally:
         app._shutdown()
@@ -145,7 +147,7 @@ def test_voice_flow():
     try:
         assert app.stt.arm_count >= 1, "the mic was never armed"
 
-        for i in range(10):           # noise, chatter, fillers: "not an answer"
+        for i in range(10):  # noise, chatter, fillers: "not an answer"
             assert app.stt.listening(), f"the mic was not armed for round {i}"
             app.stt.deliver(None)
             pump(app)
@@ -157,14 +159,16 @@ def test_voice_flow():
         app.stt.deliver(None)
         app.update()
         assert not app.stt.listening(), "test setup: the mic should be idle here"
-        assert wait_for(app, app.stt.listening, 3), \
+        assert wait_for(app, app.stt.listening, 3), (
             "the card went deaf — the watchdog did not re-arm the mic"
+        )
         assert app.current is card, "the card moved while nothing was answered"
 
         app.stt.break_chain = False
         app.stt.deliver(card.answer)
-        assert wait_for(app, lambda: app.current is not card, 5), \
+        assert wait_for(app, lambda: app.current is not card, 5), (
             "a spoken number did not answer the card"
+        )
     finally:
         app._shutdown()
         app.destroy()
@@ -177,11 +181,13 @@ def test_spoken_answer():
     the sound behind it was a voice at all is decided upstream, by the acoustic
     gate in voice.SpeechInput._judge.
     """
-    card = M.Card(9, 4, "subtraction", 5)       # a "− 4" session: 4 is on every card
+    card = M.Card(9, 4, "subtraction", 5)  # a "− 4" session: 4 is on every card
 
     assert M.spoken_answer([5], card) == 5, "the right answer was not taken"
     assert M.spoken_answer([7], card) == 7, "a wrong answer was not taken"
-    assert M.spoken_answer([9, 4, 5], card) == 5, "the question read back, then answered"
+    assert M.spoken_answer([9, 4, 5], card) == 5, (
+        "the question read back, then answered"
+    )
     assert M.spoken_answer([], card) is None
     assert M.spoken_answer([9, 4], card) is None, "the question read back was scored"
     assert M.spoken_answer([3, 7], card) == 7, "self-correction: the last number wins"
@@ -209,10 +215,12 @@ def test_voice_wrong_answer():
         card = app.current
         assert wait_for(app, app.stt.listening, 5), "the mic was never armed"
         app.stt.deliver(card.answer + 1)
-        assert wait_for(app, lambda: app.current is not card, 5), \
+        assert wait_for(app, lambda: app.current is not card, 5), (
             "a wrong spoken number did not answer the card"
-        assert card.attempts == 1 and card.correct_first_try is False, \
+        )
+        assert card.attempts == 1 and card.correct_first_try is False, (
             "the wrong answer was not scored once, as wrong"
+        )
         assert card in app.retry_queue, "the failed card was not queued for the end"
 
         # The rest of the deck, answered right: nothing else may join the queue.
@@ -220,14 +228,18 @@ def test_voice_wrong_answer():
             cur = app.current
             assert wait_for(app, app.stt.listening, 5), "the mic went deaf mid-deck"
             app.stt.deliver(cur.answer)
-            assert wait_for(app, lambda: app.current is not cur, 5), \
+            assert wait_for(app, lambda: app.current is not cur, 5), (
                 "a correct spoken answer did not advance"
+            )
 
         assert app.current is card, "the failed card was not asked again at the end"
-        assert wait_for(app, app.stt.listening, 5), "the mic was not armed for the retry"
+        assert wait_for(app, app.stt.listening, 5), (
+            "the mic was not armed for the retry"
+        )
         app.stt.deliver(card.answer + 1)
-        assert wait_for(app, lambda: card.attempts == 2, 5), \
+        assert wait_for(app, lambda: card.attempts == 2, 5), (
             "the retry was not answered by a spoken number"
+        )
         pump(app, 2.0)
         assert not app.retry_queue, "a failed retry was queued to be asked yet again"
     finally:
@@ -237,12 +249,16 @@ def test_voice_wrong_answer():
 
 def main() -> int:
     failures = []
-    for test in (test_spoken_answer, test_keypad_flow, test_voice_flow,
-                 test_voice_wrong_answer):
+    for test in (
+        test_spoken_answer,
+        test_keypad_flow,
+        test_voice_flow,
+        test_voice_wrong_answer,
+    ):
         try:
             test()
             print(f"ok   {test.__name__}")
-        except Exception as e:            # noqa: BLE001 — a failure report, not a handler
+        except Exception as e:  # noqa: BLE001 — a failure report, not a handler
             failures.append(f"FAIL {test.__name__}: {e}")
             print(failures[-1])
     print(f"{5 - len(failures)}/5 passed")

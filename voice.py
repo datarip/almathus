@@ -47,6 +47,7 @@ def _dbg(*a):
     if _DEBUG:
         print("[voice]", *a, file=sys.stderr, flush=True)
 
+
 # --------------------------------------------------------------------------- #
 # Text-to-speech
 # --------------------------------------------------------------------------- #
@@ -54,8 +55,20 @@ def _dbg(*a):
 # Feminine voice name hints per language, used to pick a nice macOS `say` voice.
 _FEMALE_HINTS = {
     "fr": ["amelie", "audrey", "aurelie", "marie", "chantal", "virginie", "julie"],
-    "en": ["samantha", "karen", "moira", "tessa", "fiona", "allison", "ava",
-           "susan", "zoe", "serena", "kate", "victoria"],
+    "en": [
+        "samantha",
+        "karen",
+        "moira",
+        "tessa",
+        "fiona",
+        "allison",
+        "ava",
+        "susan",
+        "zoe",
+        "serena",
+        "kate",
+        "victoria",
+    ],
 }
 
 
@@ -66,7 +79,9 @@ def _list_say_voices() -> list[tuple[str, str]]:
                 or:   "Amélie (French (Canada)) fr_CA    # Bonjour!"
     We anchor on the locale token (xx_XX / xx-XX) and take everything before it.
     """
-    out = subprocess.run(["say", "-v", "?"], capture_output=True, text=True, timeout=5).stdout
+    out = subprocess.run(
+        ["say", "-v", "?"], capture_output=True, text=True, timeout=5
+    ).stdout
     voices = []
     for line in out.splitlines():
         m = re.match(r"^(.+?)\s+([A-Za-z]{2}[-_][A-Za-z]{2})\b", line)
@@ -86,6 +101,7 @@ class TTS:
         if not self._say:
             try:
                 import pyttsx3  # noqa: F401
+
                 self._pyttsx = True
             except Exception:
                 self._pyttsx = False
@@ -134,11 +150,13 @@ class TTS:
             except Exception:
                 return
             if on_done:
-                threading.Thread(target=self._wait_then, args=(self._proc, on_done),
-                                 daemon=True).start()
+                threading.Thread(
+                    target=self._wait_then, args=(self._proc, on_done), daemon=True
+                ).start()
         elif self._pyttsx:
-            threading.Thread(target=self._pyttsx_speak, args=(text, on_done),
-                             daemon=True).start()
+            threading.Thread(
+                target=self._pyttsx_speak, args=(text, on_done), daemon=True
+            ).start()
         elif on_done:
             on_done()
 
@@ -151,6 +169,7 @@ class TTS:
     def _pyttsx_speak(self, text, on_done):
         try:
             import pyttsx3
+
             eng = pyttsx3.init()
             eng.setProperty("rate", self.rate)
             eng.say(text)
@@ -195,23 +214,75 @@ class TTS:
 
 # 0..19 — the words that can only be the ones place of a number.
 _UNIT_WORDS = {
-    "fr": {"zero": 0, "un": 1, "une": 1, "deux": 2, "trois": 3, "quatre": 4,
-           "cinq": 5, "six": 6, "sept": 7, "huit": 8, "neuf": 9, "dix": 10,
-           "onze": 11, "douze": 12, "treize": 13, "quatorze": 14, "quinze": 15,
-           "seize": 16},
-    "en": {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-           "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
-           "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
-           "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19},
+    "fr": {
+        "zero": 0,
+        "un": 1,
+        "une": 1,
+        "deux": 2,
+        "trois": 3,
+        "quatre": 4,
+        "cinq": 5,
+        "six": 6,
+        "sept": 7,
+        "huit": 8,
+        "neuf": 9,
+        "dix": 10,
+        "onze": 11,
+        "douze": 12,
+        "treize": 13,
+        "quatorze": 14,
+        "quinze": 15,
+        "seize": 16,
+    },
+    "en": {
+        "zero": 0,
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+        "eleven": 11,
+        "twelve": 12,
+        "thirteen": 13,
+        "fourteen": 14,
+        "fifteen": 15,
+        "sixteen": 16,
+        "seventeen": 17,
+        "eighteen": 18,
+        "nineteen": 19,
+    },
 }
 # 20..90 — a tens word can carry a ones word after it ("vingt et un", "sixty two").
 _TEN_WORDS = {
-    "fr": {"vingt": 20, "vingts": 20, "trente": 30, "quarante": 40,
-           "cinquante": 50, "soixante": 60,
-           # Belgian / Swiss forms, said by plenty of French-speaking children
-           "septante": 70, "octante": 80, "huitante": 80, "nonante": 90},
-    "en": {"twenty": 20, "thirty": 30, "forty": 40, "fourty": 40, "fifty": 50,
-           "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90},
+    "fr": {
+        "vingt": 20,
+        "vingts": 20,
+        "trente": 30,
+        "quarante": 40,
+        "cinquante": 50,
+        "soixante": 60,
+        # Belgian / Swiss forms, said by plenty of French-speaking children
+        "septante": 70,
+        "octante": 80,
+        "huitante": 80,
+        "nonante": 90,
+    },
+    "en": {
+        "twenty": 20,
+        "thirty": 30,
+        "forty": 40,
+        "fourty": 40,
+        "fifty": 50,
+        "sixty": 60,
+        "seventy": 70,
+        "eighty": 80,
+        "ninety": 90,
+    },
 }
 _SCALE_WORDS = {
     "fr": {"cent": 100, "cents": 100, "mille": 1000},
@@ -224,8 +295,7 @@ _GLUE_WORDS = {"fr": {"et"}, "en": {"and"}}
 # 4+20+10). Rewriting those to digits up front keeps the parser a plain
 # left-to-right accumulator.
 _PRESUB = {
-    "fr": ((r"\bquatre\s+vingts?\s+dix\b", " 90 "),
-           (r"\bquatre\s+vingts?\b", " 80 ")),
+    "fr": ((r"\bquatre\s+vingts?\s+dix\b", " 90 "), (r"\bquatre\s+vingts?\b", " 80 ")),
     "en": (),
 }
 
@@ -234,8 +304,9 @@ _UNKNOWN_TOKENS = {"unk", "[unk]", "<unk>", "unknown"}
 
 
 def _strip_accents(s: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFD", s)
-                   if unicodedata.category(c) != "Mn")
+    return "".join(
+        c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn"
+    )
 
 
 def _lang_key(lang: str) -> str:
@@ -289,7 +360,7 @@ def strict_numbers(text: str, lang: str = "fr") -> Optional[list[int]]:
 
     out: list[int] = []
     cur: Optional[int] = None
-    last = ""          # "unit" | "ten" | "scale" — what the previous token was
+    last = ""  # "unit" | "ten" | "scale" — what the previous token was
     last_val = 0
 
     def flush():
@@ -302,7 +373,7 @@ def strict_numbers(text: str, lang: str = "fr") -> Optional[list[int]]:
         if tok in _UNKNOWN_TOKENS:
             return None
         if tok in glue:
-            continue                    # "vingt ET un", "one hundred AND five"
+            continue  # "vingt ET un", "one hundred AND five"
         if re.fullmatch(r"\d+", tok):
             val, kind = int(tok), ("ten" if int(tok) >= 20 else "unit")
         elif tok in scales:
@@ -314,13 +385,13 @@ def strict_numbers(text: str, lang: str = "fr") -> Optional[list[int]]:
         elif tok in units:
             val, kind = units[tok], "unit"
         else:
-            return None                 # a word that is not a number: refuse it all
+            return None  # a word that is not a number: refuse it all
         # Where does this token go — on the number being built, or a new one?
         if kind == "ten":
             if last in ("unit", "ten"):
-                flush()                 # "vingt trente" is two numbers, not one
+                flush()  # "vingt trente" is two numbers, not one
             cur = (cur or 0) + val
-        else:                           # a ones word
+        else:  # a ones word
             # Two ones words in a row start a new number ("trois quatre"), except
             # the French teens, which are literally "ten seven" / "ten eight".
             if last == "unit" and not (last_val == 10 and val in (7, 8, 9)):
@@ -355,11 +426,11 @@ def parse_number(text: str, lang: str = "fr") -> Optional[int]:
 # --------------------------------------------------------------------------- #
 
 _SAMPLE_RATE = 16000
-_BLOCK = 320               # 20 ms blocks
-_PRE_TIMEOUT = 5.0         # mic health check: this much silence, and *nothing* heard
-_SILENCE_HANG = 0.35       # stop this long after speech ends (snappy response)
-_MAX_DURATION = 6.0        # hard cap on a single utterance, from its onset
-_VOICE_BAND = (300.0, 3400.0)   # Hz — speech band; cuts low rumble & high hiss
+_BLOCK = 320  # 20 ms blocks
+_PRE_TIMEOUT = 5.0  # mic health check: this much silence, and *nothing* heard
+_SILENCE_HANG = 0.35  # stop this long after speech ends (snappy response)
+_MAX_DURATION = 6.0  # hard cap on a single utterance, from its onset
+_VOICE_BAND = (300.0, 3400.0)  # Hz — speech band; cuts low rumble & high hiss
 
 
 def _envf(name: str, default: float) -> float:
@@ -380,56 +451,60 @@ def _envf(name: str, default: float) -> float:
 # from measured speech-vs-noise separation; see the constants' comments):
 # Each is overridable from the environment, so a room can be tuned without an edit.
 _MIN_SNR = _envf("ALMATHUS_VOICE_MIN_SNR", 5.0)
-                      # peak must clear the room's own noise floor by this factor
+# peak must clear the room's own noise floor by this factor
 _MIN_LEVEL = _envf("ALMATHUS_VOICE_MIN_LEVEL", 220.0)
-                      # ...and this absolute band RMS. Room tone measured 41-100;
-                      # the quietest real answer of that same session, 295.
-                      #
-                      # These two are the whisper gate, and they are deliberately
-                      # set to "said out loud". A whisper must never answer a card:
-                      # murmuring at the mic is how a child hedges a guess, and a
-                      # hedge that scores is worse than one that is not heard —
-                      # they lose the card without having decided to answer. The
-                      # voicing test below is what refuses an unvoiced whisper, but
-                      # a *soft voiced* murmur is a real voice by every acoustic
-                      # measure there is, so nothing but loudness separates it from
-                      # an answer. 220 sits between the room (41-100) and the
-                      # quietest answer actually measured (295), nearer the answer.
-                      # Being refused is not silent: the child is told to speak up.
-                      #
-                      # Both are absolute band RMS and so depend on mic gain and
-                      # distance. `uv run python mic_check.py` prints what a real
-                      # answer and a real whisper measure on THIS mic, in THIS
-                      # room, and the two environment variables above retune it
-                      # without touching the code.
+# ...and this absolute band RMS. Room tone measured 41-100;
+# the quietest real answer of that same session, 295.
+#
+# These two are the whisper gate, and they are deliberately
+# set to "said out loud". A whisper must never answer a card:
+# murmuring at the mic is how a child hedges a guess, and a
+# hedge that scores is worse than one that is not heard —
+# they lose the card without having decided to answer. The
+# voicing test below is what refuses an unvoiced whisper, but
+# a *soft voiced* murmur is a real voice by every acoustic
+# measure there is, so nothing but loudness separates it from
+# an answer. 220 sits between the room (41-100) and the
+# quietest answer actually measured (295), nearer the answer.
+# Being refused is not silent: the child is told to speak up.
+#
+# Both are absolute band RMS and so depend on mic gain and
+# distance. `uv run python mic_check.py` prints what a real
+# answer and a real whisper measure on THIS mic, in THIS
+# room, and the two environment variables above retune it
+# without touching the code.
 _MIN_VOICED = _envf("ALMATHUS_VOICE_MIN_VOICED", 0.25)
-                      # fraction of energetic frames that must be *voiced* — i.e.
-                      # show vocal-fold pitch. This is the one that matters: over
-                      # TTS speech (adult and child pitch, clean and at 24 dB SNR)
-                      # it measured 0.45-1.00, over noise at every level 0.00.
-                      # A whisper has no vocal-fold vibration, so it lands with
-                      # the noise; that is exactly why whispers must not count.
+# fraction of energetic frames that must be *voiced* — i.e.
+# show vocal-fold pitch. This is the one that matters: over
+# TTS speech (adult and child pitch, clean and at 24 dB SNR)
+# it measured 0.45-1.00, over noise at every level 0.00.
+# A whisper has no vocal-fold vibration, so it lands with
+# the noise; that is exactly why whispers must not count.
 _NACF_MIN = _envf("ALMATHUS_VOICE_NACF", 0.40)
-                      # per-frame normalised autocorrelation peak that is "voiced"
-_F0_BAND = (100.0, 600.0)   # Hz — pitch search range, low man to shouting child
+# per-frame normalised autocorrelation peak that is "voiced"
+_F0_BAND = (100.0, 600.0)  # Hz — pitch search range, low man to shouting child
 
 # v3 is multilingual (incl. French); v2 is English-only.
 _DEFAULT_PARAKEET = "mlx-community/parakeet-tdt-0.6b-v3"
 
-_WARMUP = object()   # sentinel job: preload the model on the STT thread
+_WARMUP = object()  # sentinel job: preload the model on the STT thread
 
 # Vosk number-only grammar. Constraining the vocabulary to number words rescues
 # cases the general model can't nail — notably the French "un" (heard as "Mm"/"On"
 # by parakeet). "[unk]" is what lets Vosk say "that was speech, but not a number"
 # instead of being forced to pick a number word for every sound it hears.
 _VOSK_GRAMMAR = {
-    "fr": ('["zéro un une deux trois quatre cinq six sept huit neuf dix onze douze '
-           'treize quatorze quinze seize dix-sept dix-huit dix-neuf vingt trente '
-           'quarante cinquante soixante quatre-vingt quatre-vingts septante nonante '
-           'cent cents et", "[unk]"]'),
-    "en": ('["zero one two three four five six seven eight nine ten eleven twelve '
-           'thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty '
-           'thirty forty fifty sixty seventy eighty ninety hundred and", "[unk]"]'),
+    "fr": (
+        '["zéro un une deux trois quatre cinq six sept huit neuf dix onze douze '
+        "treize quatorze quinze seize dix-sept dix-huit dix-neuf vingt trente "
+        "quarante cinquante soixante quatre-vingt quatre-vingts septante nonante "
+        'cent cents et", "[unk]"]'
+    ),
+    "en": (
+        '["zero one two three four five six seven eight nine ten eleven twelve '
+        "thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty "
+        'thirty forty fifty sixty seventy eighty ninety hundred and", "[unk]"]'
+    ),
 }
 
 # --- how sure Vosk has to be that it heard numbers and only numbers ---------- #
@@ -454,7 +529,7 @@ _VOSK_GRAMMAR = {
 # "neuf"; no threshold here separates them, and the cost is now one wrong answer
 # on a card rather than a card silently skipped.
 _VOSK_ALT_GAP = _envf("ALMATHUS_VOICE_ALT_GAP", 0.5)
-_VOSK_ALTS = 6             # how many hypotheses to ask Vosk for
+_VOSK_ALTS = 6  # how many hypotheses to ask Vosk for
 
 # Second opinion: the same audio decoded by the FULL model, with no grammar to
 # push it towards numbers. If that decode is a confident run of words and those
@@ -463,7 +538,7 @@ _VOSK_ALTS = 6             # how many hypotheses to ask Vosk for
 # a number before a card is ever scored from it. Worth 1 fewer false accept and
 # 'tu peux répéter' at the default gap.
 _VETO_CONF = _envf("ALMATHUS_VOICE_VETO_CONF", 0.9)
-_VETO_WORDS = 2            # ...over at least this many words
+_VETO_WORDS = 2  # ...over at least this many words
 
 
 def _quiet_hf_hub(model_id: str) -> None:
@@ -476,7 +551,9 @@ def _quiet_hf_hub(model_id: str) -> None:
     from pathlib import Path
 
     logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
-    hub = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
+    hub = (
+        Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
+    )
     if (hub / ("models--" + model_id.replace("/", "--"))).is_dir():
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
@@ -489,22 +566,28 @@ class SpeechInput:
         self._reason = ""
         self._sd = None
         self._np = None
-        self._silent = False   # set True when the last capture was pure silence (no mic access)
-        self._silent_streak = 0  # consecutive silent captures (2 in a row = really no mic)
-        self._busy = False     # guard against overlapping listen() calls
+        self._silent = (
+            False  # set True when the last capture was pure silence (no mic access)
+        )
+        self._silent_streak = (
+            0  # consecutive silent captures (2 in a row = really no mic)
+        )
+        self._busy = False  # guard against overlapping listen() calls
         self._rec_sr = _SAMPLE_RATE
-        self._jobs: queue.Queue = queue.Queue()   # audio -> the one STT thread
-        self._stt_thread = None                   # owns & runs the model (MLX is thread-affine)
+        self._jobs: queue.Queue = queue.Queue()  # audio -> the one STT thread
+        self._stt_thread = None  # owns & runs the model (MLX is thread-affine)
         self._vosk_model = None
-        self._vosk_ok = None                      # None=unknown, False=unavailable
-        self._noise_floor = None                  # persists across listens (no re-calibration)
-        self._audio_q: queue.Queue = queue.Queue()   # mic blocks, filled while the stream is open
-        self._stream_params = None                # cached (samplerate, blocksize)
+        self._vosk_ok = None  # None=unknown, False=unavailable
+        self._noise_floor = None  # persists across listens (no re-calibration)
+        self._audio_q: queue.Queue = (
+            queue.Queue()
+        )  # mic blocks, filled while the stream is open
+        self._stream_params = None  # cached (samplerate, blocksize)
         self._blk = int(_SAMPLE_RATE * 0.02)
-        self._boosted = False                     # did we raise the OS mic input gain?
-        self._last_raw = None                     # last capture, un-band-passed (for Vosk)
-        self._active_stream = None                # the open mic stream, so we can close it on quit
-        self._stopped = False                     # latched on quit: no more captures
+        self._boosted = False  # did we raise the OS mic input gain?
+        self._last_raw = None  # last capture, un-band-passed (for Vosk)
+        self._active_stream = None  # the open mic stream, so we can close it on quit
+        self._stopped = False  # latched on quit: no more captures
         self._probe()
 
     # -- capability probing ------------------------------------------------ #
@@ -512,6 +595,7 @@ class SpeechInput:
         try:
             import sounddevice as sd
             import numpy as np
+
             self._sd, self._np = sd, np
         except Exception:
             self._reason = "audio libs manquantes (pip: sounddevice numpy)"
@@ -521,24 +605,32 @@ class SpeechInput:
             return
         try:
             import parakeet_mlx  # noqa: F401
+
             self._backend = "mlx"
         except Exception:
             self._backend = None
-            self._reason = "parakeet introuvable (pip: parakeet-mlx, ou ALMATHUS_PARAKEET_CMD)"
+            self._reason = (
+                "parakeet introuvable (pip: parakeet-mlx, ou ALMATHUS_PARAKEET_CMD)"
+            )
 
     def available(self) -> bool:
         if not (self._sd and self._np):
             return False
         # usable with either a parakeet backend OR a Vosk model (Vosk is primary now)
-        return bool(getattr(self, "_backend", None)) or self._vosk_model_dir() is not None
+        return (
+            bool(getattr(self, "_backend", None)) or self._vosk_model_dir() is not None
+        )
 
     def reason(self) -> str:
         return self._reason
 
     # -- public API -------------------------------------------------------- #
-    def listen(self, on_result: Callable[[Optional[int]], None],
-               on_state: Optional[Callable[[str], None]] = None,
-               pick: Optional[Callable[[list], Optional[int]]] = None):
+    def listen(
+        self,
+        on_result: Callable[[Optional[int]], None],
+        on_state: Optional[Callable[[str], None]] = None,
+        pick: Optional[Callable[[list], Optional[int]]] = None,
+    ):
         """Record one utterance in a background thread, then call on_result(int|None).
 
         ``pick`` turns the numbers heard into the one answer to report (None =
@@ -550,21 +642,22 @@ class SpeechInput:
         thread — marshal to Tk with widget.after(0, ...).
         """
         if self._stopped:
-            return                       # app is quitting — never reopen the mic
+            return  # app is quitting — never reopen the mic
         # Before the busy check, not after: a recognizer thread that died left
         # `_busy` stuck True, and checking first meant every later listen() was
         # refused with nothing left alive to un-stick it.
         self._ensure_stt_thread()
         if self._busy:
             _dbg("listen() ignored — already busy")
-            return                       # one capture at a time
+            return  # one capture at a time
         _dbg("listen() -> starting capture")
         self._busy = True
         self._cancel.clear()
         # Record on a throwaway thread (the mic is fine cross-thread); transcription
         # is handed to the single STT thread that owns the model.
-        threading.Thread(target=self._capture, args=(on_result, on_state, pick),
-                         daemon=True).start()
+        threading.Thread(
+            target=self._capture, args=(on_result, on_state, pick), daemon=True
+        ).start()
 
     def listening(self) -> bool:
         """Is a capture actually running right now?
@@ -584,7 +677,7 @@ class SpeechInput:
     def stop(self):
         """Stop any in-progress capture and release the microphone right away
         (so the OS mic-in-use indicator turns off when the app quits)."""
-        self._stopped = True             # prevent the continuous loop from reopening it
+        self._stopped = True  # prevent the continuous loop from reopening it
         self._cancel.set()
         self._close_stream()
 
@@ -610,11 +703,17 @@ class SpeechInput:
         if sys.platform != "darwin" or self._boosted:
             return
         try:
-            subprocess.run(["osascript", "-e", f"set volume input volume {int(level)}"],
-                           timeout=3, capture_output=True)
+            subprocess.run(
+                ["osascript", "-e", f"set volume input volume {int(level)}"],
+                timeout=3,
+                capture_output=True,
+            )
             self._boosted = True
             import atexit
-            atexit.register(self.restore_input_volume)   # covers X, Quit, Ctrl-C, crash-exit
+
+            atexit.register(
+                self.restore_input_volume
+            )  # covers X, Quit, Ctrl-C, crash-exit
             _dbg(f"boosted macOS input volume to {level}")
         except Exception:
             pass
@@ -626,8 +725,11 @@ class SpeechInput:
             return
         self._boosted = False
         try:
-            subprocess.run(["osascript", "-e", f"set volume input volume {int(level)}"],
-                           timeout=3, capture_output=True)
+            subprocess.run(
+                ["osascript", "-e", f"set volume input volume {int(level)}"],
+                timeout=3,
+                capture_output=True,
+            )
             _dbg(f"restored macOS input volume to {level}")
         except Exception:
             pass
@@ -661,7 +763,7 @@ class SpeechInput:
             self._silent_streak = self._silent_streak + 1 if self._silent else 0
             if self._silent_streak >= 2 and on_state:
                 _dbg(f"capture SILENT x{self._silent_streak} -> no_mic")
-                on_state("no_mic")     # only silence -> no mic access / no usable device
+                on_state("no_mic")  # only silence -> no mic access / no usable device
             elif self._silent:
                 _dbg("capture SILENT (1st) -> keep listening")
             # The un-filtered audio travels *with* the job. Reading it off the
@@ -685,7 +787,7 @@ class SpeechInput:
         while True:
             try:
                 job = self._jobs.get()
-            except Exception as e:                    # queue itself is broken
+            except Exception as e:  # queue itself is broken
                 _dbg("STT queue EXCEPTION, thread ending:", repr(e))
                 return
             try:
@@ -698,7 +800,7 @@ class SpeechInput:
         audio, raw, on_result, on_state, pick = job
         if audio is _WARMUP:
             try:
-                self._load_vosk()                 # primary recognizer, fast (~1s)
+                self._load_vosk()  # primary recognizer, fast (~1s)
             except Exception as e:
                 _dbg("vosk warmup failed:", repr(e))
             # Parakeet is the recognizer of last resort: slow to load (~60s),
@@ -707,8 +809,9 @@ class SpeechInput:
             # that second case English had no recognizer at all — Vosk found
             # no model and parakeet was never loaded, so every spoken answer
             # in English was silently dropped.
-            want_parakeet = (os.environ.get("ALMATHUS_PARAKEET")
-                             or self._vosk_model is None)
+            want_parakeet = (
+                os.environ.get("ALMATHUS_PARAKEET") or self._vosk_model is None
+            )
             if want_parakeet and self._backend == "mlx":
                 try:
                     self._ensure_model()
@@ -718,7 +821,7 @@ class SpeechInput:
         try:
             if audio is None or self._cancel.is_set():
                 _dbg("no audio (timeout/cancel) -> None")
-                self._busy = False       # before the callback: it re-arms from here
+                self._busy = False  # before the callback: it re-arms from here
                 on_result(None)
                 return
             if on_state:
@@ -738,7 +841,7 @@ class SpeechInput:
                 _dbg(f"parakeet fallback transcript={text!r} -> {nums}")
             parsed = pick(nums) if pick else (nums[-1] if nums else None)
             _dbg(f"picked -> {parsed}")
-            self._busy = False           # a callback that re-arms must not be refused
+            self._busy = False  # a callback that re-arms must not be refused
             on_result(parsed)
         except Exception as e:
             _dbg("transcribe EXCEPTION:", repr(e))
@@ -762,7 +865,9 @@ class SpeechInput:
             return self._stream_params
         sd = self._sd
         try:
-            dev_sr = int(sd.query_devices(kind="input").get("default_samplerate") or 16000)
+            dev_sr = int(
+                sd.query_devices(kind="input").get("default_samplerate") or 16000
+            )
         except Exception:
             dev_sr = 16000
         # Prefer rates WebRTC VAD supports (8/16/32/48 kHz) so the VAD can run.
@@ -826,7 +931,7 @@ class SpeechInput:
         x = self._highpass(x, sr)
         lo, hi = int(sr / _F0_BAND[1]), int(sr / _F0_BAND[0])
         starts = range(0, len(x) - win + 1, hop)
-        frames = np.stack([x[i:i + win] for i in starts])
+        frames = np.stack([x[i : i + win] for i in starts])
         frames -= frames.mean(axis=1, keepdims=True)
         energy = np.sqrt((frames * frames).mean(axis=1)) + 1e-9
         # Only frames carrying the utterance itself: the pre/post-roll silence
@@ -838,9 +943,11 @@ class SpeechInput:
         # Autocorrelation via FFT (zero-padded so it stays linear, not circular).
         n = 1 << int(2 * win - 1).bit_length()
         spec = np.fft.rfft(frames, n=n, axis=1)
-        ac = np.fft.irfft(spec * np.conj(spec), n=n, axis=1)[:, :hi + 1]
+        ac = np.fft.irfft(spec * np.conj(spec), n=n, axis=1)[:, : hi + 1]
         zero = ac[:, 0]
-        nacf = np.where(zero > 0, ac[:, lo:hi + 1].max(axis=1) / np.where(zero > 0, zero, 1), 0.0)
+        nacf = np.where(
+            zero > 0, ac[:, lo : hi + 1].max(axis=1) / np.where(zero > 0, zero, 1), 0.0
+        )
         return float(np.mean(nacf > _NACF_MIN))
 
     def _highpass(self, x, sr):
@@ -848,19 +955,21 @@ class SpeechInput:
         np = self._np
         try:
             from scipy.signal import butter, sosfilt
+
             return sosfilt(butter(2, 90.0, btype="high", fs=sr, output="sos"), x)
         except Exception:
             # No scipy: subtract a moving average, which is the same thing crudely.
             k = max(3, int(sr / 90.0)) | 1
             pad = np.pad(x, k // 2, mode="edge")
-            return x - np.convolve(pad, np.ones(k) / k, mode="valid")[:len(x)]
+            return x - np.convolve(pad, np.ones(k) / k, mode="valid")[: len(x)]
 
     def _make_bandpass(self, sr):
         """Butterworth band-pass over the speech band. Returns (sos, sosfilt,
         sosfilt_zi) or (None, ...) if scipy is unavailable (then VAD uses raw RMS)."""
         try:
             from scipy.signal import butter, sosfilt, sosfilt_zi
-            hi = min(_VOICE_BAND[1], sr / 2 - 100)   # stay under Nyquist
+
+            hi = min(_VOICE_BAND[1], sr / 2 - 100)  # stay under Nyquist
             sos = butter(4, [_VOICE_BAND[0], hi], btype="band", fs=sr, output="sos")
             return sos, sosfilt, sosfilt_zi
         except Exception:
@@ -883,12 +992,13 @@ class SpeechInput:
             self._audio_q.put(indata[:, 0].copy())
 
         try:
-            stream = self._sd.InputStream(samplerate=sr, channels=1, dtype="int16",
-                                          blocksize=blk, callback=cb)
+            stream = self._sd.InputStream(
+                samplerate=sr, channels=1, dtype="int16", blocksize=blk, callback=cb
+            )
             stream.start()
         except Exception as e:
             _dbg("stream open failed:", repr(e))
-            self._stream_params = None    # re-probe next time (device may have changed)
+            self._stream_params = None  # re-probe next time (device may have changed)
             return None, 0
         actual = int(getattr(stream, "samplerate", sr) or sr)
         if actual != sr:
@@ -909,17 +1019,17 @@ class SpeechInput:
         np = self._np
         sr, blk = self._ensure_stream()
         if sr is None:
-            self._silent = True          # no usable input device
+            self._silent = True  # no usable input device
             return None
-        if self._cancel.is_set():        # cancel() raced with the open
+        if self._cancel.is_set():  # cancel() raced with the open
             self._close_stream()
             return None
         block_secs = blk / sr
-        pre = int(0.25 / block_secs)      # keep a little before the onset
-        post = int(0.25 / block_secs)     # ...and a little after the tail
-        min_voiced = max(4, int(0.16 / block_secs))   # need ≥0.16s of real speech —
-                                                      # shorter than any spoken digit,
-                                                      # longer than a click or a tap
+        pre = int(0.25 / block_secs)  # keep a little before the onset
+        post = int(0.25 / block_secs)  # ...and a little after the tail
+        min_voiced = max(4, int(0.16 / block_secs))  # need ≥0.16s of real speech —
+        # shorter than any spoken digit,
+        # longer than a click or a tap
 
         sos, sosfilt, sosfilt_zi = self._make_bandpass(sr)
         zi = {"z": sosfilt_zi(sos) * 0.0 if sos is not None else None}
@@ -932,7 +1042,8 @@ class SpeechInput:
         if sr in (8000, 16000, 32000, 48000):
             try:
                 import webrtcvad
-                wvad = webrtcvad.Vad(0)     # 0 = most sensitive
+
+                wvad = webrtcvad.Vad(0)  # 0 = most sensitive
             except Exception:
                 wvad = None
         _dbg(f"record: detector={'webrtcvad' if wvad else 'energy'} sr={sr}")
@@ -972,18 +1083,19 @@ class SpeechInput:
         # silence for twenty seconds and then answers is still heard. The timeout
         # below is only a mic health check — nothing but digital silence trips it.
         from collections import deque
-        preroll = deque(maxlen=max(1, pre))   # rolling window of the last blocks
-        frames = []                           # the utterance, once it has started
+
+        preroll = deque(maxlen=max(1, pre))  # rolling window of the last blocks
+        frames = []  # the utterance, once it has started
         onset = voiced_end = 0
         started = done = accepted = False
         waited = starved = 0
-        verdict = ""                          # the accepted utterance's metrics
+        verdict = ""  # the accepted utterance's metrics
         while not self._cancel.is_set():
             try:
                 block = self._audio_q.get(timeout=0.2)
             except queue.Empty:
                 starved += 1
-                if starved * 0.2 > 2.0:       # stream died (device unplugged?)
+                if starved * 0.2 > 2.0:  # stream died (device unplugged?)
                     _dbg("record: mic stream starved -> reopening next time")
                     self._close_stream()
                     self._silent = True
@@ -993,11 +1105,11 @@ class SpeechInput:
             r = band_rms(block)
             if r > st["peak"]:
                 st["peak"] = r
-            preroll.append(block)             # always: a false start keeps its lead-in
+            preroll.append(block)  # always: a false start keeps its lead-in
             if not started:
                 if is_speech(block, r):
                     st["run"] += 1
-                    if st["run"] >= 2:                  # ~40 ms of speech -> go
+                    if st["run"] >= 2:  # ~40 ms of speech -> go
                         started = True
                         frames = list(preroll)
                         onset = voiced_end = len(frames) - 1
@@ -1006,11 +1118,13 @@ class SpeechInput:
                 waited += 1
                 if waited * block_secs > _PRE_TIMEOUT:
                     waited = 0
-                    if st["peak"] < 3.0:                # not even room tone -> no mic
-                        _dbg(f"record: silence for {_PRE_TIMEOUT}s (peak={st['peak']:.0f})")
+                    if st["peak"] < 3.0:  # not even room tone -> no mic
+                        _dbg(
+                            f"record: silence for {_PRE_TIMEOUT}s (peak={st['peak']:.0f})"
+                        )
                         self._silent = True
                         return None
-                    st["peak"] = 0.0        # forget a stale bang; keep waiting for speech
+                    st["peak"] = 0.0  # forget a stale bang; keep waiting for speech
                 continue
             frames.append(block)
             i = len(frames) - 1
@@ -1020,16 +1134,22 @@ class SpeechInput:
             if r > max(st["peak"] * 0.12, (st["efloor"] or 0.0) * 1.5, 40.0):
                 voiced_end = i
             if (i - voiced_end) * block_secs > _SILENCE_HANG:
-                done = True                             # speaker went quiet -> done
+                done = True  # speaker went quiet -> done
             elif (i - onset) * block_secs > _MAX_DURATION:
-                done = True                             # hard cap on one utterance
+                done = True  # hard cap on one utterance
             if not done:
                 continue
-            ok, why, verdict = self._judge(frames[onset:voiced_end + 1], sr, st["peak"],
-                                           st["efloor"], voiced_end - onset + 1, min_voiced)
+            ok, why, verdict = self._judge(
+                frames[onset : voiced_end + 1],
+                sr,
+                st["peak"],
+                st["efloor"],
+                voiced_end - onset + 1,
+                min_voiced,
+            )
             if ok:
                 accepted = True
-                break                                   # a real utterance -> transcribe it
+                break  # a real utterance -> transcribe it
             if why == "faint" and on_state:
                 # Someone spoke and was not loud enough. Say so: a whisper that is
                 # merely dropped looks exactly like a mic that is not working, and
@@ -1054,16 +1174,20 @@ class SpeechInput:
         # to be a voice at all; it must not reach the recognizer.
         if not accepted or not started or voiced < min_voiced:
             self._silent = peak < 3.0
-            _dbg(f"record: cancelled (accepted={accepted}, started={started}, "
-                 f"voiced={voiced}, peak={peak:.0f})")
+            _dbg(
+                f"record: cancelled (accepted={accepted}, started={started}, "
+                f"voiced={voiced}, peak={peak:.0f})"
+            )
             return None
-        seg = frames[:voiced_end + post + 1]
-        _dbg(f"record: captured {len(seg)} blocks (~{len(seg)*block_secs:.1f}s), {verdict}")
+        seg = frames[: voiced_end + post + 1]
+        _dbg(
+            f"record: captured {len(seg)} blocks (~{len(seg) * block_secs:.1f}s), {verdict}"
+        )
         if not seg:
             return None
         raw = np.concatenate(seg).astype(np.float32)
-        self._last_raw = raw              # keep un-filtered audio for the Vosk fallback
-        audio = sosfilt(sos, raw) if sos is not None else raw   # band-pass for parakeet
+        self._last_raw = raw  # keep un-filtered audio for the Vosk fallback
+        audio = sosfilt(sos, raw) if sos is not None else raw  # band-pass for parakeet
         return self._normalize(audio)
 
     def _normalize(self, audio):
@@ -1074,7 +1198,7 @@ class SpeechInput:
         peak = float(np.abs(audio).max())
         if peak < 1:
             return audio.astype(np.int16)
-        gain = min((0.7 * 32767) / peak, 120.0)   # allow more gain for quiet mics
+        gain = min((0.7 * 32767) / peak, 120.0)  # allow more gain for quiet mics
         return (audio * gain).clip(-32768, 32767).astype(np.int16)
 
     def _transcribe(self, audio) -> str:
@@ -1085,18 +1209,21 @@ class SpeechInput:
             with wave.open(path, "wb") as w:
                 w.setnchannels(1)
                 w.setsampwidth(2)
-                w.setframerate(self._rec_sr)   # actual capture rate; parakeet resamples
+                w.setframerate(self._rec_sr)  # actual capture rate; parakeet resamples
                 w.writeframes(audio.astype(np.int16).tobytes())
             if _DEBUG:
                 shutil.copy(path, "/tmp/almathus_capture.wav")
-                _dbg(f"saved capture -> /tmp/almathus_capture.wav "
-                     f"(sr={self._rec_sr}, {len(audio)} samples, "
-                     f"{len(audio)/self._rec_sr:.1f}s)")
+                _dbg(
+                    f"saved capture -> /tmp/almathus_capture.wav "
+                    f"(sr={self._rec_sr}, {len(audio)} samples, "
+                    f"{len(audio) / self._rec_sr:.1f}s)"
+                )
             if self._backend == "cli":
                 tmpl = os.environ["ALMATHUS_PARAKEET_CMD"]
                 cmd = tmpl.format(wav=path)
-                out = subprocess.run(cmd, shell=True, capture_output=True,
-                                     text=True, timeout=30)
+                out = subprocess.run(
+                    cmd, shell=True, capture_output=True, text=True, timeout=30
+                )
                 return out.stdout.strip()
             return self._transcribe_mlx(path)
         except Exception:
@@ -1112,6 +1239,7 @@ class SpeechInput:
         if env:
             return env
         from pathlib import Path
+
         base = Path(__file__).resolve().parent / "models"
         key = "fr" if self.lang == "fr" else "en"
         if base.is_dir():
@@ -1128,6 +1256,7 @@ class SpeechInput:
             return False
         try:
             from vosk import Model, SetLogLevel
+
             SetLogLevel(-1)
             d = self._vosk_model_dir()
             if not d:
@@ -1155,17 +1284,21 @@ class SpeechInput:
         """
         import json as _json
         from vosk import KaldiRecognizer
-        rec = (KaldiRecognizer(self._vosk_model, float(self._rec_sr), grammar)
-               if grammar else KaldiRecognizer(self._vosk_model, float(self._rec_sr)))
+
+        rec = (
+            KaldiRecognizer(self._vosk_model, float(self._rec_sr), grammar)
+            if grammar
+            else KaldiRecognizer(self._vosk_model, float(self._rec_sr))
+        )
         if alts:
             rec.SetMaxAlternatives(alts)
         if words:
             rec.SetWords(True)
-        data = self._normalize(audio).tobytes()        # gain-only (raw audio)
-        step = max(2, int(self._rec_sr * 0.25) * 2)    # 0.25s chunks, int16-aligned
+        data = self._normalize(audio).tobytes()  # gain-only (raw audio)
+        step = max(2, int(self._rec_sr * 0.25) * 2)  # 0.25s chunks, int16-aligned
         out = []
         for i in range(0, len(data), step):
-            if rec.AcceptWaveform(data[i:i + step]):
+            if rec.AcceptWaveform(data[i : i + step]):
                 out.append(_json.loads(rec.Result()))
         out.append(_json.loads(rec.FinalResult()))
         return out
@@ -1208,23 +1341,30 @@ class SpeechInput:
         close enough to the top one — see ``_VOSK_ALT_GAP``.
         """
         alts = res.get("alternatives")
-        if not alts:                                   # no N-best: the plain text
+        if not alts:  # no N-best: the plain text
             return strict_numbers(res.get("text", ""), self.lang) or []
         top = alts[0].get("confidence", 0.0)
         if any(a.get("text", "").strip() for a in alts):
-            _dbg("vosk alts=" + str([(round(a.get("confidence", 0.0), 2), a.get("text", ""))
-                                     for a in alts[:4]]))
+            _dbg(
+                "vosk alts="
+                + str(
+                    [
+                        (round(a.get("confidence", 0.0), 2), a.get("text", ""))
+                        for a in alts[:4]
+                    ]
+                )
+            )
         for a in alts:
             text = a.get("text", "").strip()
             if not text:
                 continue
             nums = strict_numbers(text, self.lang)
-            if not nums:                               # None (not a number) or []
+            if not nums:  # None (not a number) or []
                 continue
             gap = top - a.get("confidence", 0.0)
             if gap > _VOSK_ALT_GAP:
                 _dbg(f"vosk: refused {text!r} — {gap:.2f} behind the top hypothesis")
-                return []                              # numbers, but not convincingly
+                return []  # numbers, but not convincingly
             return nums
         return []
 
@@ -1236,8 +1376,11 @@ class SpeechInput:
         on it would throw away real answers.
         """
         try:
-            heard = [w for res in self._vosk_decode(audio, words=True)
-                     for w in (res.get("result") or [])]
+            heard = [
+                w
+                for res in self._vosk_decode(audio, words=True)
+                for w in (res.get("result") or [])
+            ]
         except Exception as e:
             _dbg("vosk veto decode failed:", repr(e))
             return False
@@ -1247,7 +1390,7 @@ class SpeechInput:
             return False
         text = " ".join(w.get("word", "") for w in heard)
         if strict_numbers(text, self.lang):
-            return False                               # it heard numbers too — agree
+            return False  # it heard numbers too — agree
         _dbg(f"vosk: vetoed — the full model confidently heard {text!r}")
         return True
 
@@ -1258,6 +1401,7 @@ class SpeechInput:
             _quiet_hf_hub(model_id)
             _dbg("loading parakeet model (first time can take ~60s)...")
             from parakeet_mlx import from_pretrained
+
             self._model = from_pretrained(model_id)
             _dbg("parakeet model loaded")
 

@@ -118,13 +118,38 @@ ALIASES = {
     "date": ("date", "jour", "day"),
     "famille": ("famille", "family", "familles", "families"),
     "temps": ("temps", "time", "duree", "duration", "temps_total", "total_time"),
-    "cartes": ("cartes", "cards", "nb_cartes", "n_cartes", "n_cards", "card_count",
-               "nombre_de_cartes"),
-    "note": ("note", "notes", "grade", "grades", "score", "reussites", "reussies",
-             "bonnes_reponses", "correct", "correct_answers"),
-    "temps_moyen": ("temps_moyen_par_carte", "temps_moyen", "temps_moyen_carte",
-                    "moyenne", "average_time_per_card", "average_time", "avg_time",
-                    "avg_time_per_card", "average"),
+    "cartes": (
+        "cartes",
+        "cards",
+        "nb_cartes",
+        "n_cartes",
+        "n_cards",
+        "card_count",
+        "nombre_de_cartes",
+    ),
+    "note": (
+        "note",
+        "notes",
+        "grade",
+        "grades",
+        "score",
+        "reussites",
+        "reussies",
+        "bonnes_reponses",
+        "correct",
+        "correct_answers",
+    ),
+    "temps_moyen": (
+        "temps_moyen_par_carte",
+        "temps_moyen",
+        "temps_moyen_carte",
+        "moyenne",
+        "average_time_per_card",
+        "average_time",
+        "avg_time",
+        "avg_time_per_card",
+        "average",
+    ),
 }
 
 # ASCII operator signs, so the `famille` column stays typeable on any keyboard.
@@ -155,7 +180,7 @@ def parse_duration(text: str) -> float | None:
     (`1:23.4`), plain seconds (`83.4`) and the comma forms (`1,29`, `2,01,95`).
     """
     s = (text or "").strip().replace("″", '"').replace("’", "'").replace("′", "'")
-    s = s.rstrip(" s\t")                 # a trailing seconds letter carries no value
+    s = s.rstrip(" s\t")  # a trailing seconds letter carries no value
     if not s:
         return None
 
@@ -220,10 +245,14 @@ def parse_date(text: str) -> _date | None:
         except ValueError:
             continue
         today = _date.today()
-        year = today.year if (d.month, d.day) <= (today.month, today.day) else today.year - 1
+        year = (
+            today.year
+            if (d.month, d.day) <= (today.month, today.day)
+            else today.year - 1
+        )
         try:
             return d.replace(year=year)
-        except ValueError:                     # 29/02 on a non-leap year
+        except ValueError:  # 29/02 on a non-leap year
             return d.replace(year=year, day=28)
     return None
 
@@ -296,8 +325,9 @@ def grade(sessions) -> tuple[int, int] | None:
     row is graded on the session alone. None when nothing in the group carries
     a score.
     """
-    scored = [(s.correct, s.cards) for s in sessions
-              if s.correct is not None and s.cards]
+    scored = [
+        (s.correct, s.cards) for s in sessions if s.correct is not None and s.cards
+    ]
     if not scored:
         return None
     if len(scored) == 1:
@@ -359,7 +389,7 @@ def load_sessions(path: Path | None = None) -> list[Session]:
 
     cols = _header_map(rows[0])
     body = rows[1:] if cols else rows
-    if not cols:                              # headerless file: assume canonical order
+    if not cols:  # headerless file: assume canonical order
         cols = {f: i for i, f in enumerate(FIELDS)}
 
     def cell(row: list[str], field: str) -> str:
@@ -376,7 +406,7 @@ def load_sessions(path: Path | None = None) -> list[Session]:
         raw_time = cell(row, "temps")
         seconds = parse_duration(raw_time)
         if seconds is None and not cell(row, "famille"):
-            continue                          # nothing usable on this line
+            continue  # nothing usable on this line
         sessions.append(
             Session(
                 day=day,
@@ -421,8 +451,10 @@ def _header_names(header: list[str], default: dict[str, str]) -> dict[str, str]:
     same in both, so a tie falls back to the app's own setting.
     """
     keys = {_key(c) for c in header}
-    scores = {lang: sum(1 for n in names.values() if _key(n) in keys)
-              for lang, names in HEADERS.items()}
+    scores = {
+        lang: sum(1 for n in names.values() if _key(n) in keys)
+        for lang, names in HEADERS.items()
+    }
     ranked = sorted(scores, key=lambda lang: -scores[lang])
     top, runner_up = ranked[0], ranked[1:]
     if runner_up and scores[top] == scores[runner_up[0]]:
@@ -452,15 +484,21 @@ def _extend_header(path: Path, header: list[str], extra: list[str]) -> list[str]
     csv.writer(line, lineterminator="").writerow(grown)
     try:
         with path.open("w", newline="", encoding="utf-8") as fh:
-            fh.write(line.getvalue() + first[len(first.rstrip("\r")):] + sep + rest)
+            fh.write(line.getvalue() + first[len(first.rstrip("\r")) :] + sep + rest)
     except OSError:
         return header
     return grown
 
 
-def append_session(day: _date, famille: str, seconds: float, cards: int,
-                   correct: int | None = None,
-                   lang: str = "fr", path: Path | None = None) -> None:
+def append_session(
+    day: _date,
+    famille: str,
+    seconds: float,
+    cards: int,
+    correct: int | None = None,
+    lang: str = "fr",
+    path: Path | None = None,
+) -> None:
     """Add one line at the bottom, matching whatever header the file already has.
 
     The file wins: if it was hand-edited into English, or its columns reordered,
@@ -477,7 +515,7 @@ def append_session(day: _date, famille: str, seconds: float, cards: int,
             first = fh.readline()
         if first.strip():
             header = next(csv.reader([first]))
-        with path.open("rb") as fh:                # keep our row on its own line
+        with path.open("rb") as fh:  # keep our row on its own line
             fh.seek(0, 2)
             if fh.tell():
                 fh.seek(-1, 2)

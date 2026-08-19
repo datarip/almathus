@@ -28,20 +28,20 @@ SECS = 4
 def show_judge(s, audio, sr):
     """Les mesures sur lesquelles le jeu décide « c'est une réponse » ou non."""
     sos, sosfilt, _ = s._make_bandpass(sr)
-    blk = int(sr * 0.02)                       # mêmes blocs de 20 ms que la capture
+    blk = int(sr * 0.02)  # mêmes blocs de 20 ms que la capture
     nb = len(audio) // blk
     if nb < 2:
         return
-    blocks = audio[:nb * blk].reshape(nb, blk).astype(np.float32)
+    blocks = audio[: nb * blk].reshape(nb, blk).astype(np.float32)
     if sos is not None:
         blocks = sosfilt(sos, blocks, axis=1)
     rms = np.sqrt((blocks * blocks).mean(axis=1)) + 1e-9
     peak = float(rms.max())
-    floor = float(np.percentile(rms, 10))       # le bruit de la pièce, hors parole
+    floor = float(np.percentile(rms, 10))  # le bruit de la pièce, hors parole
     snr = peak / max(floor, 1.0)
     # La voix seule, sans le silence autour : c'est ce que le jeu mesure.
     loud = rms > max(peak * 0.12, floor * 1.5, 40.0)
-    span = audio[:nb * blk].reshape(nb, blk)[loud].reshape(-1) if loud.any() else audio
+    span = audio[: nb * blk].reshape(nb, blk)[loud].reshape(-1) if loud.any() else audio
     voiced = s._voiced_fraction(span.astype(np.float32), sr)
 
     print("\nJuge acoustique (ce que le jeu mesure) :")
@@ -50,10 +50,16 @@ def show_judge(s, audio, sr):
         ("rapport S/B  ", snr, voice._MIN_SNR),
         ("voisement    ", voiced, voice._MIN_VOICED),
     ):
-        print(f"  {label} : {got:8.2f}   (minimum {mini:g})  "
-              f"{'✅' if got >= mini else '❌'}")
+        print(
+            f"  {label} : {got:8.2f}   (minimum {mini:g})  "
+            f"{'✅' if got >= mini else '❌'}"
+        )
     print(f"  bruit pièce   : {floor:8.2f}")
-    if peak >= voice._MIN_LEVEL and snr >= voice._MIN_SNR and voiced >= voice._MIN_VOICED:
+    if (
+        peak >= voice._MIN_LEVEL
+        and snr >= voice._MIN_SNR
+        and voiced >= voice._MIN_VOICED
+    ):
         print("  -> accepté : le jeu aurait écouté cet énoncé.")
     elif voiced < voice._MIN_VOICED:
         print("  -> refusé : pas une voix (bruit, choc, ou chuchotement non voisé).")
@@ -93,7 +99,7 @@ def main():
     peak = int(np.abs(audio).max())
     step = int(0.25 * sr)
     timeline = [
-        int(np.sqrt((audio[i:i + step].astype("float32") ** 2).mean() + 1))
+        int(np.sqrt((audio[i : i + step].astype("float32") ** 2).mean() + 1))
         for i in range(0, len(audio), step)
     ]
     print(f"Amplitude max : {peak}   (une voix normale dépasse ~2000–15000)")

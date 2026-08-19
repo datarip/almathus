@@ -40,6 +40,7 @@ import unicodedata
 import wave
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 # Set ALMATHUS_VOICE_DEBUG=1 to trace the whole voice path on stderr.
 _DEBUG = os.environ.get("ALMATHUS_VOICE_DEBUG") not in (None, "", "0")
@@ -565,10 +566,11 @@ class SpeechInput:
     def __init__(self, lang: str = "fr"):
         self.lang = lang
         self._cancel = threading.Event()
-        self._model = None
+        self._model: Any = None  # the parakeet model, once loaded
+        self._backend: str | None = None  # "mlx" | "cli", or None for neither
         self._reason = ""
-        self._sd = None
-        self._np = None
+        self._sd: Any = None  # the sounddevice module, if it imported
+        self._np: Any = None  # the numpy module, if it imported
         self._silent = (
             False  # set True when the last capture was pure silence (no mic access)
         )
@@ -578,18 +580,21 @@ class SpeechInput:
         self._busy = False  # guard against overlapping listen() calls
         self._rec_sr = _SAMPLE_RATE
         self._jobs: queue.Queue = queue.Queue()  # audio -> the one STT thread
-        self._stt_thread = None  # owns & runs the model (MLX is thread-affine)
-        self._vosk_model = None
-        self._vosk_ok = None  # None=unknown, False=unavailable
-        self._noise_floor = None  # persists across listens (no re-calibration)
+        # owns & runs the model (MLX is thread-affine)
+        self._stt_thread: threading.Thread | None = None
+        self._vosk_model: Any = None
+        self._vosk_ok: bool | None = None  # None=unknown, False=unavailable
+        # persists across listens (no re-calibration)
+        self._noise_floor: float | None = None
         self._audio_q: queue.Queue = (
             queue.Queue()
         )  # mic blocks, filled while the stream is open
-        self._stream_params = None  # cached (samplerate, blocksize)
+        self._stream_params: tuple[int, int] | None = None  # cached
         self._blk = int(_SAMPLE_RATE * 0.02)
         self._boosted = False  # did we raise the OS mic input gain?
-        self._last_raw = None  # last capture, un-band-passed (for Vosk)
-        self._active_stream = None  # the open mic stream, so we can close it on quit
+        self._last_raw: Any = None  # last capture, un-band-passed (for Vosk)
+        # the open mic stream, so we can close it on quit
+        self._active_stream: Any = None
         self._stopped = False  # latched on quit: no more captures
         self._probe()
 
@@ -620,9 +625,7 @@ class SpeechInput:
         if not (self._sd and self._np):
             return False
         # usable with either a parakeet backend OR a Vosk model (Vosk is primary now)
-        return (
-            bool(getattr(self, "_backend", None)) or self._vosk_model_dir() is not None
-        )
+        return bool(self._backend) or self._vosk_model_dir() is not None
 
     def reason(self) -> str:
         return self._reason
@@ -1054,7 +1057,9 @@ class SpeechInput:
         # The noise floor carries over between captures: it is a property of the
         # room, not of one utterance, and re-learning it from scratch each time
         # left the very first blocks of a capture with no reference at all.
-        st = {"peak": 0.0, "run": 0, "efloor": self._noise_floor}
+        peak = 0.0  # loudest block of the utterance so far
+        run = 0  # consecutive speech-like blocks, for the onset
+        efloor: float | None = self._noise_floor
 
         def band_rms(block):
             b = block.astype(np.float32)
@@ -1066,10 +1071,11 @@ class SpeechInput:
             # Track the noise floor (drop fast, rise slow). Trigger on a clear energy
             # jump OR on WebRTC VAD — the energy path is the robust backup for when
             # WebRTC misfires (e.g. it did nothing at very high input gain).
-            f = st["efloor"]
-            st["efloor"] = r if f is None else (r if r < f else f * 0.98 + r * 0.02)
-            self._noise_floor = st["efloor"]
-            if r > max(st["efloor"] * 4.0, 60.0):
+            nonlocal efloor
+            f = efloor
+            efloor = r if f is None else (r if r < f else f * 0.98 + r * 0.02)
+            self._noise_floor = efloor
+            if r > max(efloor * 4.0, 60.0):
                 return True
             if wvad is not None and len(block) == blk:
                 try:
@@ -1087,7 +1093,7 @@ class SpeechInput:
         # below is only a mic health check — nothing but digital silence trips it.
         from collections import deque
 
-        preroll = deque(maxlen=max(1, pre))  # rolling window of the last blocks
+        preroll: deque[Any] = deque(maxlen=max(1, pre))  # rolling window of blocks
         frames = []  # the utterance, once it has started
         onset = voiced_end = 0
         started = done = accepted = False
@@ -1106,34 +1112,32 @@ class SpeechInput:
                 continue
             starved = 0
             r = band_rms(block)
-            st["peak"] = max(st["peak"], r)
+            peak = max(peak, r)
             preroll.append(block)  # always: a false start keeps its lead-in
             if not started:
                 if is_speech(block, r):
-                    st["run"] += 1
-                    if st["run"] >= 2:  # ~40 ms of speech -> go
+                    run += 1
+                    if run >= 2:  # ~40 ms of speech -> go
                         started = True
                         frames = list(preroll)
                         onset = voiced_end = len(frames) - 1
                 else:
-                    st["run"] = 0
+                    run = 0
                 waited += 1
                 if waited * block_secs > _PRE_TIMEOUT:
                     waited = 0
-                    if st["peak"] < 3.0:  # not even room tone -> no mic
-                        _dbg(
-                            f"record: silence for {_PRE_TIMEOUT}s (peak={st['peak']:.0f})"
-                        )
+                    if peak < 3.0:  # not even room tone -> no mic
+                        _dbg(f"record: silence for {_PRE_TIMEOUT}s (peak={peak:.0f})")
                         self._silent = True
                         return None
-                    st["peak"] = 0.0  # forget a stale bang; keep waiting for speech
+                    peak = 0.0  # forget a stale bang; keep waiting for speech
                 continue
             frames.append(block)
             i = len(frames) - 1
             # Still speaking? Energy has to stand above both this utterance's own
             # peak and the room — the flat 40 floor alone meant that in a quiet
             # room every block of silence counted as speech.
-            if r > max(st["peak"] * 0.12, (st["efloor"] or 0.0) * 1.5, 40.0):
+            if r > max(peak * 0.12, (efloor or 0.0) * 1.5, 40.0):
                 voiced_end = i
             if (i - voiced_end) * block_secs > _SILENCE_HANG:
                 done = True  # speaker went quiet -> done
@@ -1144,8 +1148,8 @@ class SpeechInput:
             ok, why, verdict = self._judge(
                 frames[onset : voiced_end + 1],
                 sr,
-                st["peak"],
-                st["efloor"],
+                peak,
+                efloor,
                 voiced_end - onset + 1,
                 min_voiced,
             )
@@ -1164,11 +1168,10 @@ class SpeechInput:
             # hundred ms.
             _dbg(f"record: not an answer — {verdict}, still listening")
             started = done = False
-            st["run"] = 0
-            st["peak"] = 0.0
+            run = 0
+            peak = 0.0
             frames = []
 
-        peak = st["peak"]
         voiced = voiced_end - onset + 1 if started else 0
         # Only audio that came out of the `break` above — i.e. that _judge passed —
         # is ever returned. Leaving the loop any other way means the card was

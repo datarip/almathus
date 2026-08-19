@@ -112,5 +112,13 @@ warn_unused_configs = true
 
 # Optional voice extras ship no type stubs.
 [[tool.mypy.overrides]]
-module = ["sounddevice", "numpy", "vosk", "parakeet_mlx", "webrtcvad"]
+module = [
+    "sounddevice",
+    "numpy",
+    "vosk",
+    "parakeet_mlx",
+    "webrtcvad",
+    "pyttsx3",
+    "scipy.*",
+]
 ignore_missing_imports = true

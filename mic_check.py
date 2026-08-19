@@ -15,7 +15,9 @@ chuchotant, et compare les niveaux crête. Le seuil ALMATHUS_VOICE_MIN_LEVEL doi
 tomber entre les deux — plus près du niveau parlé que du chuchotement.
 """
 
+import tempfile
 import wave
+from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
@@ -113,12 +115,13 @@ def main():
     norm = s._normalize(audio)
     print(f"Après normalisation, amplitude max : {int(np.abs(norm).max())}")
 
-    with wave.open("/tmp/almathus_mic.wav", "wb") as w:
+    dump = Path(tempfile.gettempdir()) / "almathus_mic.wav"
+    with wave.open(str(dump), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(sr)
         w.writeframes(norm.tobytes())
-    print("Fichier enregistré : /tmp/almathus_mic.wav")
+    print(f"Fichier enregistré : {dump}")
 
     # Vosk d'abord : c'est le reconnaisseur principal en français (~100 ms).
     print("\nReconnaissance Vosk (grammaire de nombres)…")

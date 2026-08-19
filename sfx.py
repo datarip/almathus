@@ -74,7 +74,7 @@ class Sound:
                 then()
             return
         try:
-            self._proc = subprocess.Popen(
+            self._proc = subprocess.Popen(  # noqa: S603 - argv list, no shell
                 [*self.player, str(path)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,

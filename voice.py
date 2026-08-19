@@ -39,6 +39,7 @@ import time
 import unicodedata
 import wave
 from collections.abc import Callable
+from pathlib import Path
 
 # Set ALMATHUS_VOICE_DEBUG=1 to trace the whole voice path on stderr.
 _DEBUG = os.environ.get("ALMATHUS_VOICE_DEBUG") not in (None, "", "0")
@@ -81,7 +82,11 @@ def _list_say_voices() -> list[tuple[str, str]]:
     We anchor on the locale token (xx_XX / xx-XX) and take everything before it.
     """
     out = subprocess.run(
-        ["say", "-v", "?"], capture_output=True, text=True, timeout=5
+        ["say", "-v", "?"],  # noqa: S607 - a macOS system binary, resolved on PATH
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,  # `say` exits non-zero when no voices are installed
     ).stdout
     voices = []
     for line in out.splitlines():
@@ -147,7 +152,7 @@ class TTS:
                 cmd += ["-v", self._voice]
             cmd.append(text)
             try:
-                self._proc = subprocess.Popen(cmd)
+                self._proc = subprocess.Popen(cmd)  # noqa: S603 - argv list, no shell
             except Exception:
                 return
             if on_done:
@@ -547,7 +552,6 @@ def _quiet_hf_hub(model_id: str) -> None:
     parakeet (which imports huggingface_hub) so HF_HUB_OFFLINE takes effect.
     """
     import logging
-    from pathlib import Path
 
     logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
     hub = (
@@ -700,10 +704,11 @@ class SpeechInput:
         if sys.platform != "darwin" or self._boosted:
             return
         try:
-            subprocess.run(
-                ["osascript", "-e", f"set volume input volume {int(level)}"],
+            subprocess.run(  # noqa: S603 - argv list; level is coerced to int
+                ["osascript", "-e", f"set volume input volume {int(level)}"],  # noqa: S607
                 timeout=3,
                 capture_output=True,
+                check=False,  # a refused volume change is not worth an exception
             )
             self._boosted = True
             import atexit
@@ -722,10 +727,11 @@ class SpeechInput:
             return
         self._boosted = False
         try:
-            subprocess.run(
-                ["osascript", "-e", f"set volume input volume {int(level)}"],
+            subprocess.run(  # noqa: S603 - argv list; level is coerced to int
+                ["osascript", "-e", f"set volume input volume {int(level)}"],  # noqa: S607
                 timeout=3,
                 capture_output=True,
+                check=False,  # a refused volume change is not worth an exception
             )
             _dbg(f"restored macOS input volume to {level}")
         except Exception:
@@ -1206,17 +1212,24 @@ class SpeechInput:
                 w.setframerate(self._rec_sr)  # actual capture rate; parakeet resamples
                 w.writeframes(audio.astype(np.int16).tobytes())
             if _DEBUG:
-                shutil.copy(path, "/tmp/almathus_capture.wav")
+                kept = Path(tempfile.gettempdir()) / "almathus_capture.wav"
+                shutil.copy(path, kept)
                 _dbg(
-                    f"saved capture -> /tmp/almathus_capture.wav "
+                    f"saved capture -> {kept} "
                     f"(sr={self._rec_sr}, {len(audio)} samples, "
                     f"{len(audio) / self._rec_sr:.1f}s)"
                 )
             if self._backend == "cli":
                 tmpl = os.environ["ALMATHUS_PARAKEET_CMD"]
                 cmd = tmpl.format(wav=path)
-                out = subprocess.run(
-                    cmd, shell=True, capture_output=True, text=True, timeout=30
+                out = subprocess.run(  # noqa: S602 - ALMATHUS_PARAKEET_CMD is the
+                    # user's own command template; a shell is what it is written for
+                    cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
                 )
                 return out.stdout.strip()
             return self._transcribe_mlx(path)
@@ -1224,14 +1237,12 @@ class SpeechInput:
             return ""
         finally:
             with contextlib.suppress(OSError):
-                os.unlink(path)
+                Path(path).unlink()
 
     def _vosk_model_dir(self):
         env = os.environ.get("ALMATHUS_VOSK_MODEL")
         if env:
             return env
-        from pathlib import Path
-
         base = Path(__file__).resolve().parent / "models"
         key = "fr" if self.lang == "fr" else "en"
         if base.is_dir():

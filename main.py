@@ -1269,8 +1269,13 @@ class Almathus(tk.Tk):
         self.retry_seen: set[tuple] = set()  # operations already queued for retry
         self.idx = 0
         self.current: Card | None = None
-        self.card_start = 0.0
+        # None while the question is being read aloud: the card's clock starts
+        # when the reading ends, so what it measures is the child, not the app.
+        self.card_start: float | None = None
         self.game_start = 0.0
+        self._read_time = 0.0  # seconds this game has spent reading questions out
+        self._speech_start: float | None = None  # when the reading on air began
+        self._speech_id = 0  # which reading that is; see _speak_operation()
         self._tick_job = None
         self._advance_job = None  # the single pending "move to the next card" timer
         self._voice_job = None  # the watchdog that keeps this card's mic armed
@@ -1426,6 +1431,7 @@ class Almathus(tk.Tk):
             self.stt.cancel()
         if self.tts:
             self.tts.stop()
+            self._close_reading()  # a sentence cut off still took the time it took
         for w in self.container.winfo_children():
             w.destroy()
 
@@ -1760,6 +1766,9 @@ class Almathus(tk.Tk):
         # not "leaving an unanswered card" — see _advance().
         self.current = None
         self._card_done = False
+        self._read_time = 0.0
+        self._speech_start = None
+        self._speech_id += 1  # nothing said for the last game may report now
         # preload the STT model + raise mic gain so the first spoken answer is instant
         if self.voice_enabled.get() and self.stt and self.stt.available():
             self.stt.warmup()
@@ -1958,14 +1967,66 @@ class Almathus(tk.Tk):
             kp.grid(row=3, column=0)
 
     def _speak_operation(self, card: Card, then=None):
+        """Read the question aloud, holding both clocks until it is over.
+
+        What the times are meant to measure is a child thinking, not a machine
+        talking: a card read out at the speed of the system voice would
+        otherwise cost two and a half seconds more than the same card only
+        shown, and the progress chart would plot that as the child.
+        """
         if not (self.tts and self.tts.available()):
             if then:
                 then()
             return
         word = OP_SPOKEN[LANG][card.mode]
         phrase = f"{card.a} {word} {card.b}"
+        # Each reading is numbered, because stopping a sentence reports through
+        # the same callback as finishing one: without this, the tail of the
+        # question the child just answered over lands on the next card and
+        # starts *its* clock.
+        self._speech_id += 1
+        token = self._speech_id
+        self._speech_start = time.perf_counter()
+        self.card_start = None  # this card's clock starts when the reading ends
+
+        def done() -> None:
+            if self._close_reading(token):
+                self.card_start = time.perf_counter()
+            if then:
+                then()
+
         # marshal the done-callback back onto the Tk thread via the pump
-        self.tts.speak(phrase, on_done=(lambda: self._post(then)) if then else None)
+        self.tts.speak(phrase, on_done=lambda: self._post(done))
+
+    def _close_reading(self, token: int | None = None) -> bool:
+        """Bank the time the reading on air has taken, so no clock counts it.
+
+        Returns whether this call is the one that closed it — a late callback
+        from a sentence that was cut off must not touch the card up now.
+        """
+        if self._speech_start is None:
+            return False
+        if token is not None and token != self._speech_id:
+            return False
+        self._read_time += time.perf_counter() - self._speech_start
+        self._speech_start = None
+        return True
+
+    def _elapsed(self) -> float:
+        """Seconds of play so far, with every question read aloud taken out."""
+        now = time.perf_counter() if self._speech_start is None else self._speech_start
+        return max(0.0, now - self.game_start - self._read_time)
+
+    def _card_elapsed(self) -> float:
+        """Seconds this card has been the child's — 0 while it is still being read.
+
+        Clamped at zero because the keypad and the ↩ key stay live through the
+        reading (only the mic is held back), so a card can be answered before
+        its clock has started.
+        """
+        if self.card_start is None:
+            return 0.0
+        return max(0.0, time.perf_counter() - self.card_start)
 
     def _voice_arm(self, target: Card) -> None:
         """Listen for one spoken answer; re-arms itself until the card changes."""
@@ -2082,12 +2143,11 @@ class Almathus(tk.Tk):
                 ).grid(row=r, column=c, padx=6, pady=4)
 
     def _tick(self):
-        now = time.perf_counter()
         self.total_time_lbl.config(
-            text=f"{T('timer_total')}  {self._fmt(now - self.game_start)}"
+            text=f"{T('timer_total')}  {self._fmt(self._elapsed())}"
         )
         self.card_time_lbl.config(
-            text=f"{T('timer_card')}  {now - self.card_start:4.1f}s"
+            text=f"{T('timer_card')}  {self._card_elapsed():4.1f}s"
         )
         self._tick_job = self.after(100, self._tick)
 
@@ -2119,7 +2179,7 @@ class Almathus(tk.Tk):
 
         # record time + outcome only on the very first attempt of a card
         if card.correct_first_try is None:
-            card.time_taken = time.perf_counter() - self.card_start
+            card.time_taken = self._card_elapsed()
             card.correct_first_try = is_correct
             self.results.append(card)
             if self.idx < len(self.deck):
@@ -2154,7 +2214,7 @@ class Almathus(tk.Tk):
     # ------------------------------------------------------------------ #
     def show_recap(self):
         self._clear()
-        total_time = time.perf_counter() - self.game_start
+        total_time = self._elapsed()
         cards = self.results
         n = len(cards)
         correct = sum(1 for c in cards if c.correct_first_try)

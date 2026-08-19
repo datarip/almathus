@@ -232,12 +232,31 @@ def test_dictation_modes():
         card = app.current
         assert app.tts.said, "the question was never read aloud"
         assert not app.stt.listening(), "the mic opened over the question being read"
-        assert app.card_start > 0, "the clock did not start with the card"
+        assert app.card_start is None, "the card's clock started under the reading"
+        held = app._elapsed()
+        pump(app, 0.4)
+        assert abs(app._elapsed() - held) < 0.05, (
+            "the total ran on while the question was being read"
+        )
+        assert app._card_elapsed() == 0.0, "the card's clock ran under the reading"
+
         app.tts.finish()
         assert wait_for(app, app.stt.listening, 5), (
             "the mic never opened after the reading"
         )
+        assert app.card_start is not None, "the clock never started after the reading"
+        pump(app, 0.3)
+        assert app._elapsed() > held, "the total never resumed after the reading"
+        assert app._card_elapsed() > 0, "the card's clock never started"
         assert app.current is card, "the card moved while nothing was answered"
+
+        # Answered on the keypad over the reading — the only way to spend less
+        # than no time on a card. It is worth zero, never a negative.
+        app.tts.speak("read the next one", None)
+        app.card_start = None
+        assert app._card_elapsed() == 0.0, (
+            "a card answered under the reading went below zero"
+        )
     finally:
         app._shutdown()
         app.destroy()
@@ -246,7 +265,10 @@ def test_dictation_modes():
     try:
         assert app.tts.said == [], "the card was read aloud with dictation off"
         assert app.stt.listening(), "the mic did not open with the card"
-        assert app.card_start > 0, "the clock did not start with the card"
+        assert app.card_start is not None, "the clock did not start with the card"
+        ran = app._elapsed()
+        pump(app, 0.3)
+        assert app._elapsed() > ran, "the total did not run with dictation off"
     finally:
         app._shutdown()
         app.destroy()

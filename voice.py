@@ -887,6 +887,13 @@ class SpeechInput:
                 _dbg("calibrate: mic held by a capture, skipped")
                 return
             try:
+                # Same clearing listen() does before a capture: `_cancel` belongs
+                # to whatever capture last ran, and every screen change sets it.
+                # Nothing is in flight here (the busy check and the lock above
+                # say so), so a flag left standing from the last card must not
+                # end this measurement before it has read a single block —
+                # which is exactly what it did.
+                self._cancel.clear()
                 sr, blk = self._ensure_stream()
                 if sr is None:
                     _dbg("calibrate: no usable input device")
@@ -910,7 +917,12 @@ class SpeechInput:
         want = int(seconds / block_secs)
         skip = int(_CALIB_SETTLE / block_secs)
         blocks: list[Any] = []
-        while len(blocks) < want + skip and not self._cancel.is_set():
+        while len(blocks) < want + skip:
+            if self._stopped or self._cancel.is_set():
+                # A card started, or the app is quitting: the room is measured
+                # again next time, and between answers in any case.
+                _dbg("calibrate: interrupted, the room keeps its old measurement")
+                return None
             try:
                 blocks.append(self._audio_q.get(timeout=0.5))
             except queue.Empty:

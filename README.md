@@ -198,26 +198,59 @@ changes. A spoken number is auto-filled and auto-submitted; the keypad stays ful
 usable the whole time.
 
 ```
-mic audio ─▶ [VAD record] ─▶ [is it a voice?] ─▶ Vosk ─▶ [numbers only?] ─▶ [sure?] ─▶ submit
-             (voice.py)       level + pitch     ↘ parakeet ↗  strict rule    confirm
+                    ┌── the room, measured ──┐
+                    ▼                        ▼
+mic audio ─▶ [VAD record] ─▶ [is it a voice?] ─▶ [subtract the room] ─▶ Vosk ─▶ [numbers only?] ─▶ submit
+             (voice.py)       level + pitch       spectral subtraction  ↘ parakeet ↗  strict rule
 ```
 
 Each stage can only ever say "not an answer", in which case the card stays up and
 the app keeps listening. **Nothing takes a card off the screen but an answer.**
 
+0. **Listen to the room first.** A few hundred milliseconds after the app opens,
+   before there is anything on screen to answer, it opens the mic for about two
+   seconds and measures the noise around it — then closes it again. Nothing is
+   shown and nothing is asked; it happens on its own thread and the menu does not
+   wait for it. It is repeated when a game starts, in case the app has been open
+   since this morning, and the measurement is kept current between answers from
+   the seconds of silence that sit either side of them.
+
+   This is what the next two steps are measured against. **Where you play changes
+   what a spoken answer looks like**: at night in a bedroom the room reads near
+   nothing, at noon on a terrace with a road behind it the same mic reads twenty
+   times that, and a fixed threshold cannot be right for both — set for the quiet
+   room it triggers on traffic, set for the terrace it goes deaf indoors. The
+   thresholds are a *factor over the room*, so they move with it by themselves.
+   It also fixes the distance problem: loudness at the mic falls with the square
+   of the distance, so a child sat two metres back arrives ~15 dB down on the
+   same child at arm's length, and a bar set from a close recording simply
+   refuses them. Measured against a quiet room, that same voice stands well
+   clear.
 1. **Record.** Voice-activity detection records from first speech until ~0.35 s of
    silence (or a ~6 s cap), so you don't press anything. Waiting for speech has no
    deadline — think for as long as you like.
 2. **Was that a voice, said out loud?** The captured audio is judged on *voicing*
    — the vocal-fold pitch that speech has and noise, taps and unvoiced whispers do
-   not — and then on level and signal-to-noise. The first keeps a chair or a cough
-   out of the recognizer; the second two are the **whisper gate**. A murmured guess
-   is a real voice by every acoustic measure there is, so only loudness separates
-   it from an answer, and a whisper must never score a card: the child would lose
-   the question without having decided to answer it. A voice that was heard but
-   was too quiet is told so — *“🔊 Plus fort !”* — rather than silently dropped.
-   Calibrate the two thresholds for your own mic and room with
-   `uv run python mic_check.py`, which prints these measurements and the verdict.
+   not — and then on level and signal-to-noise, both measured against the room
+   from step 0. The first keeps a chair or a cough out of the recognizer; the
+   second two are the **whisper gate**. A murmured guess is a real voice by every
+   acoustic measure there is, so only loudness separates it from an answer, and a
+   whisper must never score a card: the child would lose the question without
+   having decided to answer it. What "said out loud" means is *clearly above this
+   room* — a murmur does not stand three times over the room at any distance,
+   while a normal voice two metres away does. A voice that was heard but was too
+   quiet is told so — *“🔊 Plus fort !”* — rather than silently dropped. See what
+   your own mic and room measure with `uv run python mic_check.py`, which prints
+   the room, the threshold it implies, and the verdict.
+2b. **Take the room back out.** The room's average spectrum, measured in the
+   silence just before the child spoke, is subtracted from the utterance bin by
+   bin before it reaches the recognizer. A fan, a road or a café does not make
+   speech quieter — it fills the gaps between the formants, which is what wrecks
+   recognition and what a band-pass cannot touch. Deliberately mild (no bin is
+   taken down more than ~18 dB) because over-subtracting leaves warbling
+   artefacts that cost more than the noise did, and nothing is staked on it: if
+   the cleaned audio says nothing, the untouched capture gets its own decode. In
+   a room already quiet enough, it is skipped entirely.
 3. **Recognize.** **Vosk** with a vocabulary restricted to number words is the
    primary recognizer (~100 ms, and the accurate one for isolated digits like the
    French "un"). **parakeet** (`parakeet-mlx`, default model
@@ -263,9 +296,14 @@ Tuning, if a room needs it — all optional, all with measured defaults:
 |---|---|---|
 | `ALMATHUS_VOICE_ALT_GAP` | `0.5` | how far behind the top hypothesis an all-numbers one may score. Higher = more numbers recognized, more noise accepted |
 | `ALMATHUS_VOICE_VETO_CONF` | `0.9` | how sure the un-constrained model must be before it overrules the number grammar |
-| `ALMATHUS_VOICE_MIN_LEVEL` | `220` | absolute loudness floor for "said out loud" — the whisper gate |
-| `ALMATHUS_VOICE_MIN_SNR` | `5.0` | how far a voice must stand above the room — the whisper gate |
+| `ALMATHUS_VOICE_MIN_SNR` | `3.0` | how far a voice must stand above the room — the whisper gate |
 | `ALMATHUS_VOICE_MIN_VOICED` | `0.25` | fraction of frames that must carry vocal-fold pitch |
+| `ALMATHUS_VOICE_LEVEL_OVER_ROOM` | `3.0` | how far over the *measured* room "said out loud" is. The whisper gate proper — raise it if noise scores cards, lower it if a voice from across the room is refused |
+| `ALMATHUS_VOICE_MIN_LEVEL_FLOOR` | `45` | ...but never ask for less than this, so a near-silent room cannot leave the gate at nothing |
+| `ALMATHUS_VOICE_MIN_LEVEL` | *(unset)* | a hard, absolute gate. Set it and nothing is measured — the escape hatch for a room where the automatic one reads wrong |
+| `ALMATHUS_VOICE_CALIB_SECS` | `1.5` | how long the startup listen to the room lasts |
+| `ALMATHUS_VOICE_DENOISE` | `auto` | `1` always subtract the room, `0` never, `auto` only when there is measurable noise to subtract |
+| `ALMATHUS_VOICE_DENOISE_ALPHA` | `1.5` | how hard to subtract it. Higher removes more noise and risks warbling artefacts |
 
 Enable it:
 
@@ -316,8 +354,14 @@ to exactly what the recognizer heard.
 
 ```bash
 uv run python test_voice.py       # what counts as a spoken answer (no mic, no model)
+uv run python test_room.py        # the acoustic gates, against a synthesised room
 uv run python test_game_flow.py   # a card leaves the screen only when answered
 ```
+
+`test_room.py` covers the acoustic gates with a synthesised room and a
+synthesised voice (no microphone): the bar has to move with the noise, a voice two
+metres out in a quiet room has to be accepted, and noise, silence and an unvoiced
+whisper still have to be refused.
 
 `test_game_flow.py` opens a Tk window briefly and stubs the microphone out. Its
 `test_voice_flow` is the regression test for the skipping card: refused

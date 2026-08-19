@@ -26,6 +26,7 @@ import random
 import signal
 import time
 import tkinter as tk
+import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -260,10 +261,8 @@ def bind_wheel(widget, scroll) -> None:
     `yview_scroll` is one pixel.
     """
     widget.bind("<MouseWheel>", lambda e: scroll(wheel_pixels(e)))
-    try:
+    with contextlib.suppress(tk.TclError):  # Tk 8 has no such event: wheel only
         widget.bind("<TouchpadScroll>", lambda e: scroll(touchpad_pixels(e)))
-    except tk.TclError:  # Tk 8 has no such event: wheel only
-        pass
     if widget.tk.call("tk", "windowingsystem") == "x11":
         widget.bind("<Button-4>", lambda e: scroll(wheel_pixels(e)))
         widget.bind("<Button-5>", lambda e: scroll(wheel_pixels(e)))
@@ -480,10 +479,9 @@ def read_prefs() -> dict:
 def write_prefs(**updates) -> None:
     """Merge and write. Writing the whole file from one caller's value would
     drop every other preference, so each key is folded into what is on disk."""
-    try:
+    # A read-only install must never break the game.
+    with contextlib.suppress(OSError):
         PREFS_FILE.write_text(json.dumps(read_prefs() | updates), encoding="utf-8")
-    except OSError:
-        pass  # a read-only install must never break the game
 
 
 def load_allowed() -> set[int]:
@@ -982,14 +980,14 @@ class TimeChart(tk.Canvas):
         y0, y1 = self.PAD_T, h - self.PAD_B
         step, top = self._y_scale(max(mean for _, mean, _ in self.days))
 
-        def Y(v):
+        def to_y(v):
             return y1 - (v / top) * (y1 - y0)
 
         # grid + y labels (a zero baseline: these are durations, so the height
         # of a point has to mean its whole magnitude)
         v = 0.0
         while v <= top + 1e-9:
-            y = Y(v)
+            y = to_y(v)
             self.create_line(x0, y, x1, y, fill=BORDER)
             self.create_text(
                 x0 - 10,
@@ -1005,13 +1003,13 @@ class TimeChart(tk.Canvas):
         ords = [d.toordinal() for d, _, _ in self.days]
         lo, span = min(ords), max(ords) - min(ords)
 
-        def X(o):
+        def to_x(o):
             return (x0 + x1) / 2 if not span else x0 + (o - lo) / span * (x1 - x0)
 
         pts = []
         for entry in self.days:
             day, mean, _ = entry
-            pts.append((X(day.toordinal()), Y(mean), entry))
+            pts.append((to_x(day.toordinal()), to_y(mean), entry))
         if len(pts) > 1:
             self.create_line(
                 self._curve(pts),
@@ -1034,12 +1032,12 @@ class TimeChart(tk.Canvas):
         gap = self.font.measure("00/00") + 22
         kept: list[tuple[object, float]] = []
         for d, _, _ in self.days:
-            xd = X(d.toordinal())
+            xd = to_x(d.toordinal())
             if not kept or xd - kept[-1][1] >= gap:
                 kept.append((d, xd))
         last = self.days[-1][0]
         if kept and kept[-1][0] != last:  # the newest date always gets a label
-            xd = X(last.toordinal())
+            xd = to_x(last.toordinal())
             while kept and xd - kept[-1][1] < gap:
                 kept.pop()
             kept.append((last, xd))
@@ -1282,19 +1280,14 @@ class Almathus(tk.Tk):
     # ------------------------------------------------------------------ #
     def _install_exit_handlers(self):
         self.protocol("WM_DELETE_WINDOW", self._on_quit)  # window close box
-        try:
-            self.createcommand(
-                "tk::mac::Quit", self._on_quit
-            )  # macOS Cmd+Q / Quit menu
-        except tk.TclError:
-            pass
+        with contextlib.suppress(tk.TclError):  # absent off macOS
+            self.createcommand("tk::mac::Quit", self._on_quit)
         self.bind_all("<Command-q>", lambda e: self._on_quit())
         self.bind_all("<Control-c>", lambda e: self._on_quit())
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-            try:
+            # ValueError off the main thread, OSError where the signal is absent.
+            with contextlib.suppress(OSError, ValueError):
                 signal.signal(sig, self._on_signal)  # terminal kill / close
-            except (OSError, ValueError):
-                pass
 
     def _shutdown(self):
         # Timers first: a pending callback that runs after the window is gone
@@ -1335,13 +1328,15 @@ class Almathus(tk.Tk):
     def _pump(self):
         if self._stopping:
             return  # the window is going away; stop rescheduling
-        try:
-            while True:
-                self._ui_queue.get_nowait()()
-        except queue.Empty:
-            pass
-        except Exception:
-            pass
+        while True:
+            try:
+                fn = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                fn()
+            except Exception:  # noqa: BLE001 - one bad callback must not stop the pump
+                traceback.print_exc()
         self._pump_job = self.after(40, self._pump)
 
     def _post(self, fn):
@@ -1354,23 +1349,23 @@ class Almathus(tk.Tk):
         # (and stays readable) on a short laptop display.
         s = min(1.0, self.winfo_screenheight() / 900)
 
-        def F(size, weight="normal"):
+        def scaled(size, weight="normal"):
             return tkfont.Font(
                 family="Helvetica", size=max(11, round(size * s)), weight=weight
             )
 
-        self.f_giant = F(120, "bold")
-        self.f_huge = F(90, "bold")
-        self.f_big = F(48, "bold")
-        self.f_mode = F(30, "bold")
-        self.f_title = F(28, "bold")
-        self.f_body = F(20)
-        self.f_small = F(15)
-        self.f_tile = F(24, "bold")
-        self.f_chip = F(14, "bold")
-        self.f_num = F(20, "bold")
-        self.f_hint = F(14)
-        # The chart's note tags, below the 11 px floor F() keeps for everything
+        self.f_giant = scaled(120, "bold")
+        self.f_huge = scaled(90, "bold")
+        self.f_big = scaled(48, "bold")
+        self.f_mode = scaled(30, "bold")
+        self.f_title = scaled(28, "bold")
+        self.f_body = scaled(20)
+        self.f_small = scaled(15)
+        self.f_tile = scaled(24, "bold")
+        self.f_chip = scaled(14, "bold")
+        self.f_num = scaled(20, "bold")
+        self.f_hint = scaled(14)
+        # The chart's note tags, below the 11 px floor scaled() keeps for everything
         # else: a tag is one short number on a coloured pill inside the plot, not
         # a line of text to read, and at any larger size a fortnight of them
         # covers the curve they annotate. Bold, so small still reads.
@@ -1899,9 +1894,15 @@ class Almathus(tk.Tk):
         if self.current is not target or self._card_done:
             return  # this card is over; stop watching it
         talking = bool(self.tts and self.tts.speaking())
-        if not talking and not self._voice_mic_bad and self.voice_enabled.get():
-            if self.stt and self.stt.available() and not self.stt.listening():
-                self._voice_arm(target)
+        if (
+            not talking
+            and not self._voice_mic_bad
+            and self.voice_enabled.get()
+            and self.stt
+            and self.stt.available()
+            and not self.stt.listening()
+        ):
+            self._voice_arm(target)
         self._voice_job = self.after(1000, lambda: self._voice_watch(target))
 
     def _voice_status(self, state):
@@ -2240,7 +2241,7 @@ class Almathus(tk.Tk):
         # "Tous les mois" stays at the top: it is the whole history, the view
         # this screen had before there was anything to filter.
         logged = resultslog.months(sessions)
-        now = datetime.now()
+        now = datetime.now().astimezone()
         current = (now.year, now.month)
         listed = logged if current in logged else [current, *logged]
         # Open on this month, or — if nothing has been played in it yet — on the
@@ -2318,7 +2319,7 @@ class Almathus(tk.Tk):
         if not self._sessions:  # an empty month has nothing to print
             self._flash_pdf_status(T("no_month_results"), MUTED)
             return
-        stamp = datetime.now()
+        stamp = datetime.now().astimezone()
         path = filedialog.asksaveasfilename(
             parent=self,
             title=T("pdf_dialog"),
@@ -2479,7 +2480,7 @@ class Almathus(tk.Tk):
             w.bindtags((*w.bindtags(), str(canvas)))
 
     def _save_session(self, cards, total_time, correct):
-        stamp = datetime.now()
+        stamp = datetime.now().astimezone()
 
         # One summary line in the CSV log — the file the progress screen reads
         # and the parent can edit by hand. `famille` records what was drilled:

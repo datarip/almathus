@@ -271,7 +271,8 @@ def _fold(text: str) -> str:
                 bare.encode("cp1252")
             except UnicodeEncodeError:
                 continue
-            ch = bare
+            out.append(bare)
+            continue
         out.append(ch)
     # Stripped, so a screen title whose emoji was just dropped ("📈 Mes progrès")
     # does not print with a hole where the icon used to be.
@@ -533,7 +534,7 @@ def default_filename(
     """`almathus-progres-2026-07-28.pdf`, or `almathus-progres-2026-07.pdf` for a
     single month: a monthly report is named by the month it covers, not by the
     day it happened to be printed on."""
-    when = when or datetime.now()
+    when = when or datetime.now().astimezone()
     stem = "progres" if lang == "fr" else "progress"
     if month:
         return f"almathus-{stem}-{month[0]:04d}-{month[1]:02d}.pdf"
@@ -551,7 +552,7 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
     printed on every page — leave it out (or empty) for the whole history.
     """
     path = Path(path)
-    when = when or datetime.now()
+    when = when or datetime.now().astimezone()
     pdf = Pdf()
     inner = pdf.w - 2 * MARGIN
 
@@ -651,14 +652,14 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
         for (text, color), (x0, width), (_, align, _w) in zip(
             cells, edges, COLUMNS, strict=True
         ):
-            color = palette["MUTED"] if text == "—" else color  # a blank is not a value
+            ink = palette["MUTED"] if text == "—" else color  # a blank is not a value
             tx = x0 + pad if align == "w" else x0 + width - pad
             pdf.clip_text(
                 tx,
                 baseline,
                 text,
                 FS_ROW,
-                color,
+                ink,
                 width - 2 * pad,
                 anchor="w" if align == "w" else "e",
             )
@@ -694,11 +695,11 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
     x0, x1 = x + pad_l, x + w - pad_r
     y0, y1 = y + pad_b, y + h - pad_t  # y0 is the zero baseline, y1 the top
 
-    def Y(v):
+    def to_y(v):
         return y0 + (v / top) * (y1 - y0)
 
     for v in _frange(0, top, step):
-        gy = Y(v)
+        gy = to_y(v)
         pdf.line(x0, gy, x1, gy, palette["BORDER"], 0.5)
         pdf.text(
             x0 - 8,
@@ -712,11 +713,11 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
     ords = [d.toordinal() for d, _, _ in days]
     lo, span = min(ords), max(ords) - min(ords)
 
-    def X(o):
+    def to_x(o):
         return (x0 + x1) / 2 if not span else x0 + (o - lo) / span * (x1 - x0)
 
     pts = [
-        (X(day.toordinal()), Y(mean), entry)
+        (to_x(day.toordinal()), to_y(mean), entry)
         for entry in days
         for day, mean, _ in (entry,)
     ]
@@ -732,12 +733,12 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
     gap = measure("00/00", FS_AXIS) + 16
     kept: list[tuple[object, float]] = []
     for d, _, _ in days:
-        xd = X(d.toordinal())
+        xd = to_x(d.toordinal())
         if not kept or xd - kept[-1][1] >= gap:
             kept.append((d, xd))
     last = days[-1][0]
     if kept and kept[-1][0] != last:  # the newest date always gets a label
-        xd = X(last.toordinal())
+        xd = to_x(last.toordinal())
         while kept and xd - kept[-1][1] < gap:
             kept.pop()
         kept.append((last, xd))

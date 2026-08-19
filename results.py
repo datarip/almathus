@@ -196,9 +196,12 @@ def parse_duration(text: str) -> float | None:
             a, b = parts
             # `32,60` is 32.6 s (60 is not a legal seconds value) while `1,29`
             # is 1 min 29 s. Only a 2-digit value below 60 means "seconds".
-            if "," in s and not any(c in s for c in ":'\""):
-                if not (len(b) == 2 and b.isdigit() and int(b) < 60):
-                    return float(s.replace(",", "."))
+            if (
+                "," in s
+                and not any(c in s for c in ":'\"")
+                and not (len(b) == 2 and b.isdigit() and int(b) < 60)
+            ):
+                return float(s.replace(",", "."))
             return int(a or 0) * 60 + float(b)
         # three parts: minutes, seconds, hundredths — `2,01,95`
         m, sec, frac = parts[0], parts[1], parts[2]
@@ -235,16 +238,16 @@ def parse_date(text: str) -> _date | None:
         return None
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y", "%d-%m-%Y", "%d.%m.%Y", "%Y/%m/%d"):
         try:
-            return datetime.strptime(s, fmt).date()
+            return datetime.strptime(s, fmt).date()  # noqa: DTZ007 - a date, not a moment
         except ValueError:
             pass
     # Day/month only: pick the latest year that doesn't put the date in the future.
     for fmt in ("%d/%m", "%d-%m", "%d.%m"):
         try:
-            d = datetime.strptime(s, fmt).date()
+            d = datetime.strptime(s, fmt).date()  # noqa: DTZ007 - a date, not a moment
         except ValueError:
             continue
-        today = _date.today()
+        today = datetime.now().astimezone().date()
         year = (
             today.year
             if (d.month, d.day) <= (today.month, today.day)

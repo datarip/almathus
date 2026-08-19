@@ -95,6 +95,7 @@ STRINGS = {
         "listening": "🎧 à l'écoute…",
         "thinking": "🤔 …",
         "didnt_get": "Je n'ai pas compris, réessaie 🎤",
+        "too_quiet": "🔊 Plus fort ! Je t'entends à peine",
         "mic_denied": "Micro non autorisé — Réglages ▸ Confidentialité ▸ Microphone",
         "score_spoken": "Tu as eu {c} sur {n}.",
         "progress": "📈 Mes progrès",
@@ -150,6 +151,7 @@ STRINGS = {
         "listening": "🎧 listening…",
         "thinking": "🤔 …",
         "didnt_get": "I didn't catch that, try again 🎤",
+        "too_quiet": "🔊 Louder! I can barely hear you",
         "mic_denied": "Mic not allowed — Settings ▸ Privacy ▸ Microphone",
         "score_spoken": "You got {c} out of {n}.",
         "progress": "📈 My progress",
@@ -1611,6 +1613,12 @@ class Almathus(tk.Tk):
             return
         if state == "no_mic":
             lbl.config(text=T("mic_denied"), fg=BAD)
+        elif state == "too_quiet":
+            # Heard, understood to be a voice, and refused for being whisper-quiet.
+            # A whisper never answers a card, so the child has to know it landed on
+            # nothing — otherwise a hedged, murmured guess is indistinguishable
+            # from a dead microphone, and they murmur the next one too.
+            lbl.config(text=T("too_quiet"), fg=ACCENT)
         elif state == "listening":
             lbl.config(text=T("listening"), fg=MUTED)
         elif state == "thinking":

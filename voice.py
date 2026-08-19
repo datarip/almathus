@@ -379,11 +379,29 @@ def _envf(name: str, default: float) -> float:
 # So the utterance is judged AFTER the fact, on three measurements (thresholds
 # from measured speech-vs-noise separation; see the constants' comments):
 # Each is overridable from the environment, so a room can be tuned without an edit.
-_MIN_SNR = _envf("ALMATHUS_VOICE_MIN_SNR", 3.0)
+_MIN_SNR = _envf("ALMATHUS_VOICE_MIN_SNR", 5.0)
                       # peak must clear the room's own noise floor by this factor
-_MIN_LEVEL = _envf("ALMATHUS_VOICE_MIN_LEVEL", 120.0)
+_MIN_LEVEL = _envf("ALMATHUS_VOICE_MIN_LEVEL", 220.0)
                       # ...and this absolute band RMS. Room tone measured 41-100;
                       # the quietest real answer of that same session, 295.
+                      #
+                      # These two are the whisper gate, and they are deliberately
+                      # set to "said out loud". A whisper must never answer a card:
+                      # murmuring at the mic is how a child hedges a guess, and a
+                      # hedge that scores is worse than one that is not heard —
+                      # they lose the card without having decided to answer. The
+                      # voicing test below is what refuses an unvoiced whisper, but
+                      # a *soft voiced* murmur is a real voice by every acoustic
+                      # measure there is, so nothing but loudness separates it from
+                      # an answer. 220 sits between the room (41-100) and the
+                      # quietest answer actually measured (295), nearer the answer.
+                      # Being refused is not silent: the child is told to speak up.
+                      #
+                      # Both are absolute band RMS and so depend on mic gain and
+                      # distance. `uv run python mic_check.py` prints what a real
+                      # answer and a real whisper measure on THIS mic, in THIS
+                      # room, and the two environment variables above retune it
+                      # without touching the code.
 _MIN_VOICED = _envf("ALMATHUS_VOICE_MIN_VOICED", 0.25)
                       # fraction of energetic frames that must be *voiced* — i.e.
                       # show vocal-fold pitch. This is the one that matters: over
@@ -527,8 +545,9 @@ class SpeechInput:
         heard nothing usable). It is how the caller rejects an utterance that
         isn't an answer at all; the default keeps the last number said.
 
-        on_state("listening"|"thinking") lets the UI show progress. Both callbacks
-        fire from a worker thread — marshal to Tk with widget.after(0, ...).
+        on_state("listening"|"thinking"|"too_quiet"|"no_mic") lets the UI show
+        progress and say why nothing happened. Both callbacks fire from a worker
+        thread — marshal to Tk with widget.after(0, ...).
         """
         if self._stopped:
             return                       # app is quitting — never reopen the mic
@@ -760,21 +779,28 @@ class SpeechInput:
     def _judge(self, span, sr, peak, floor, voiced_blocks, min_voiced):
         """Was that a frank, spoken answer? -> (ok, a line of metrics for the log).
 
-        Three questions, cheapest first: was it long enough to be a word, was it
-        loud enough to be someone talking rather than the room, and was it voiced
-        — an actual voice rather than noise or a whisper.
+        -> (ok, why it was refused or None, a line of metrics for the log)
+
+        Three questions: was it long enough to be a word, was it a voice at all
+        rather than noise, and was that voice *raised* — said out loud rather than
+        whispered at the mic.
+
+        The voicing test runs first even though it costs the most, so that `why`
+        can tell a voice that was too quiet apart from a thump that was. Only the
+        first of those is worth answering with "louder, please"; saying it to a
+        chair would teach the child to shout at nothing.
         """
         if voiced_blocks < min_voiced:
-            return False, f"too short ({voiced_blocks} blocks)"
+            return False, "short", f"too short ({voiced_blocks} blocks)"
         floor = floor or 0.0
         snr = peak / max(floor, 1.0)
-        if peak < _MIN_LEVEL or snr < _MIN_SNR:
-            return False, f"too faint (peak={peak:.0f} floor={floor:.0f} snr={snr:.1f})"
         vf = self._voiced_fraction(self._np.concatenate(span), sr)
-        stats = f"peak={peak:.0f} snr={snr:.1f} voiced={vf:.2f}"
+        stats = f"peak={peak:.0f} snr={snr:.1f} floor={floor:.0f} voiced={vf:.2f}"
         if vf < _MIN_VOICED:
-            return False, f"not a voice ({stats})"
-        return True, stats
+            return False, "not_voice", f"not a voice ({stats})"
+        if peak < _MIN_LEVEL or snr < _MIN_SNR:
+            return False, "faint", f"a voice, but whisper-quiet ({stats})"
+        return True, None, stats
 
     def _voiced_fraction(self, raw, sr) -> float:
         """How much of this utterance was *voiced* — produced with the vocal folds
@@ -999,11 +1025,16 @@ class SpeechInput:
                 done = True                             # hard cap on one utterance
             if not done:
                 continue
-            ok, verdict = self._judge(frames[onset:voiced_end + 1], sr, st["peak"],
-                                      st["efloor"], voiced_end - onset + 1, min_voiced)
+            ok, why, verdict = self._judge(frames[onset:voiced_end + 1], sr, st["peak"],
+                                           st["efloor"], voiced_end - onset + 1, min_voiced)
             if ok:
                 accepted = True
                 break                                   # a real utterance -> transcribe it
+            if why == "faint" and on_state:
+                # Someone spoke and was not loud enough. Say so: a whisper that is
+                # merely dropped looks exactly like a mic that is not working, and
+                # a child who cannot tell the two apart just whispers again.
+                on_state("too_quiet")
             # A cough, a chair, a door, a gurgle, a whisper: not an answer. Drop it
             # and keep listening on the same stream — bouncing back through the
             # caller to re-arm would reopen the mic and go deaf for ~200 ms each

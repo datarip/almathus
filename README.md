@@ -183,9 +183,16 @@ the app keeps listening. **Nothing takes a card off the screen but an answer.**
 1. **Record.** Voice-activity detection records from first speech until ~0.35 s of
    silence (or a ~6 s cap), so you don't press anything. Waiting for speech has no
    deadline — think for as long as you like.
-2. **Was that a voice?** The captured audio is judged on level, signal-to-noise and
-   *voicing* — the vocal-fold pitch that speech has and noise, taps and whispers do
-   not. This is what keeps a chair or a cough out of the recognizer.
+2. **Was that a voice, said out loud?** The captured audio is judged on *voicing*
+   — the vocal-fold pitch that speech has and noise, taps and unvoiced whispers do
+   not — and then on level and signal-to-noise. The first keeps a chair or a cough
+   out of the recognizer; the second two are the **whisper gate**. A murmured guess
+   is a real voice by every acoustic measure there is, so only loudness separates
+   it from an answer, and a whisper must never score a card: the child would lose
+   the question without having decided to answer it. A voice that was heard but
+   was too quiet is told so — *“🔊 Plus fort !”* — rather than silently dropped.
+   Calibrate the two thresholds for your own mic and room with
+   `uv run python mic_check.py`, which prints these measurements and the verdict.
 3. **Recognize.** **Vosk** with a vocabulary restricted to number words is the
    primary recognizer (~100 ms, and the accurate one for isolated digits like the
    French "un"). **parakeet** (`parakeet-mlx`, default model
@@ -198,30 +205,20 @@ the app keeps listening. **Nothing takes a card off the screen but an answer.**
    strict way: its winning hypothesis must be made of number words alone *and*
    score within `ALMATHUS_VOICE_ALT_GAP` of its best hypothesis overall, and a
    second decode by the full un-constrained model can veto it.
-5. **Sure about that?** The right answer scores the card the moment it is said.
-   **Any other number is only offered**: it appears in the answer box, the hint
-   line reads *“🎤 7 ? Redis-le pour valider”*, and the card stays up until the
-   same number is heard again within `VOICE_CONFIRM_WINDOW` (6 s) — or ✓/Enter is
-   pressed, which commits whatever is in the box.
-
-   This is the stage that finally killed *“the card skips itself if I think too
-   long”*. Every stage above can be fooled, and the mic re-arms every second or
-   two, so each extra second of thinking was another chance for a filler, a
-   gurgle or an operand read back to answer for the child and take the question
-   away — which is why it looked like a timeout and why tightening thresholds
-   never fixed it. Slips are individually plausible; what they don't do is repeat
-   themselves on the same number, six seconds apart. A child who knows the answer
-   still says it once, so the per-card times the game charts stay honest.
+5. **Answer.** A number that gets this far *is* the answer, exactly as if ✓ had
+   been pressed — right or wrong. A wrong one plays the wrong-answer sound, shows
+   the correct result, and puts the question in the reinforcement queue, where it
+   is asked **once more at the end of the game** and not again after that. Nothing
+   ever has to be repeated to confirm it.
 
 This is the part that was wrong before. The parser used to pick the numbers out of
 whatever it was handed and drop the rest, so a kid reading the question aloud
 ("quinze moins quatre") answered `4`, and "je sais pas" — which a number-grammar
 recognizer hears as "quinze seize [unk]" — answered `16`. Measured over a 68-clip
 French corpus, **19 of the 30 non-number utterances were scored as an answer**;
-under the strict rule, 3 are (the one-syllable fillers "euh", "non", "oh non") —
-and those 3 now have to say themselves twice before they score anything, which is
-what step 5 is for. 33 of 38 spoken numbers are still recognized. English, through parakeet,
-scores 33/33 numbers with no false accepts.
+under the strict rule, 3 are (the one-syllable fillers "euh", "non", "oh non").
+33 of 38 spoken numbers are still recognized. English, through parakeet, scores
+33/33 numbers with no false accepts.
 
 **Vosk models** live in `./models`. French:
 
@@ -241,8 +238,8 @@ Tuning, if a room needs it — all optional, all with measured defaults:
 |---|---|---|
 | `ALMATHUS_VOICE_ALT_GAP` | `0.5` | how far behind the top hypothesis an all-numbers one may score. Higher = more numbers recognized, more noise accepted |
 | `ALMATHUS_VOICE_VETO_CONF` | `0.9` | how sure the un-constrained model must be before it overrules the number grammar |
-| `ALMATHUS_VOICE_MIN_LEVEL` | `120` | absolute loudness floor for "someone is talking" |
-| `ALMATHUS_VOICE_MIN_SNR` | `3.0` | how far a voice must stand above the room |
+| `ALMATHUS_VOICE_MIN_LEVEL` | `220` | absolute loudness floor for "said out loud" — the whisper gate |
+| `ALMATHUS_VOICE_MIN_SNR` | `5.0` | how far a voice must stand above the room — the whisper gate |
 | `ALMATHUS_VOICE_MIN_VOICED` | `0.25` | fraction of frames that must carry vocal-fold pitch |
 
 Enable it:
@@ -296,9 +293,12 @@ uv run python test_game_flow.py   # a card leaves the screen only when answered
 ```
 
 `test_game_flow.py` opens a Tk window briefly and stubs the microphone out. Its
-`test_voice_confirm` is the regression test for the skipping card: twenty
-different numbers arrive from the recognizer over a long think and not one of
-them may move the card — only the same number, said twice.
+`test_voice_flow` is the regression test for the skipping card: refused
+utterances arrive from the recognizer over a long think and not one of them may
+move the card, and the mic must never go deaf while it is up.
+`test_voice_wrong_answer` holds the other half — a number that *is* recognized
+scores the card at once, wrong included, and that card comes back exactly once,
+at the end.
 
 Nothing outside `voice.py` reads the variable — the keypad, timing, and results
 log behave identically whether it is set or not.

@@ -95,7 +95,6 @@ STRINGS = {
         "listening": "🎧 à l'écoute…",
         "thinking": "🤔 …",
         "didnt_get": "Je n'ai pas compris, réessaie 🎤",
-        "confirm_answer": "🎤 {n} ? Redis-le pour valider",
         "mic_denied": "Micro non autorisé — Réglages ▸ Confidentialité ▸ Microphone",
         "score_spoken": "Tu as eu {c} sur {n}.",
         "progress": "📈 Mes progrès",
@@ -151,7 +150,6 @@ STRINGS = {
         "listening": "🎧 listening…",
         "thinking": "🤔 …",
         "didnt_get": "I didn't catch that, try again 🎤",
-        "confirm_answer": "🎤 {n}? Say it again to confirm",
         "mic_denied": "Mic not allowed — Settings ▸ Privacy ▸ Microphone",
         "score_spoken": "You got {c} out of {n}.",
         "progress": "📈 My progress",
@@ -398,12 +396,6 @@ COUNTDOWN_TICK = 1000    # ms one number stays on screen = the gap between beeps
 COUNTDOWN_GO_AT = 3485   # ms into the sample where the launch tone starts
 COUNTDOWN_GO_LEN = 975   # ms it rings for, after which the sample is silent
 
-# How long a heard-but-unconfirmed number waits for the child to say it again
-# before it stops counting as the same answer — see Almathus._voice_offer. Long
-# enough that a child who reads the hint and repeats themselves is still in time,
-# short enough that two unrelated sounds minutes apart never add up to an answer.
-VOICE_CONFIRM_WINDOW = 6.0   # seconds
-
 
 def read_prefs() -> dict:
     """Everything remembered between runs. Anything unreadable reads as empty."""
@@ -480,7 +472,7 @@ def spoken_answer(nums: list[int], card: Card) -> int | None:
     nothing else (see ``voice.strict_numbers``), so this is only about *which* of
     several numbers was meant. Whether the number it picks is trustworthy enough
     to take the card off the screen is a separate question, and the one that
-    matters — it is answered by ``Almathus._voice_offer``.
+    matters — it is answered by the acoustic gate in ``voice.SpeechInput``.
     """
     if not nums:
         return None
@@ -490,6 +482,12 @@ def spoken_answer(nums: list[int], card: Card) -> int | None:
         return None
     if card.answer in nums:                # "quinze moins quatre, ça fait onze"
         return card.answer
+    # A lone operand is taken as an ordinary wrong answer: a whole session is
+    # built on one number ("− 4"), so refusing it made that number unsayable on
+    # every card of the session. It is also the one wrong answer a half-heard
+    # read-back can produce — the cost of hearing it is one card marked wrong and
+    # asked again at the end, which is the same thing that happens when the child
+    # really does answer 4.
     return nums[-1]                        # self-correction: the last number wins
 
 
@@ -1058,7 +1056,6 @@ class Almathus(tk.Tk):
         self._advance_job = None    # the single pending "move to the next card" timer
         self._voice_job = None      # the watchdog that keeps this card's mic armed
         self._card_done = False     # answer committed: ignore anything else on this card
-        self._pending: tuple[int, float] | None = None   # number heard, awaiting a repeat
         self._fanfare_job = None    # the recap's pending "start the music" timer
         self._pump_job = None       # the worker-thread -> Tk callback pump
         self._stopping = False      # latched on quit: schedule no more timers
@@ -1412,7 +1409,6 @@ class Almathus(tk.Tk):
         # not "leaving an unanswered card" — see _advance().
         self.current = None
         self._card_done = False
-        self._pending = None
         # preload the STT model + raise mic gain so the first spoken answer is instant
         if self.voice_enabled.get() and self.stt and self.stt.available():
             self.stt.warmup()
@@ -1495,7 +1491,6 @@ class Almathus(tk.Tk):
         self._clear()
         card = self.current
         self._card_done = False
-        self._pending = None        # a new card: nothing has been heard on it yet
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
@@ -1616,12 +1611,6 @@ class Almathus(tk.Tk):
             return
         if state == "no_mic":
             lbl.config(text=T("mic_denied"), fg=BAD)
-        elif self._pending is not None:
-            # A number is waiting to be confirmed, and that is what the child
-            # needs to read — not "listening…". This is what keeps the hint on
-            # screen at all: the next capture re-arms within ~200 ms of the offer
-            # and would otherwise paint straight over it.
-            self._voice_hint()
         elif state == "listening":
             lbl.config(text=T("listening"), fg=MUTED)
         elif state == "thinking":
@@ -1631,59 +1620,31 @@ class Almathus(tk.Tk):
         if self.current is not target or self._card_done:   # card already over
             return
         if n is not None:
-            self._voice_offer(n, target)
+            self._voice_answer(n, target)
             return
         # nothing recognized this round: keep listening (unless the mic is unusable)
         if not self._voice_mic_bad and self.voice_enabled.get():
             self._voice_arm(target)
 
-    def _voice_offer(self, n: int, target):
-        """A number was heard. Score the card with it only if it cannot be a slip.
+    def _voice_answer(self, n: int, target):
+        """A number was heard: that is this card's answer, right or wrong.
 
-        Every stage in front of this one can be fooled — a chair, a gurgle, "euh"
-        (which a number-only grammar has no choice but to hear as "un"), an
-        operand muttered while re-reading the question — and *each capture is a
-        fresh chance to be fooled*. That is the whole bug: the mic re-arms every
-        second or two for as long as the card is up, so the longer a child thinks,
-        the likelier it grew that something, at some point, answered for them and
-        took the question away. No threshold fixes that. The slips are each
-        individually plausible; what they don't do is repeat themselves.
+        A spoken number is committed the moment it is understood — exactly as if
+        ✓ had been pressed. A wrong one too: the child sees the number, hears the
+        wrong-answer sound, and the card joins the reinforcement queue to be asked
+        once more at the end of the game. Nothing is ever asked to be repeated to
+        confirm it; that made every wrong answer cost a second round of talking,
+        and left the child reading a hint instead of doing maths.
 
-        So a number that is not the right answer is only *offered*: it goes in the
-        answer box where the child can see it, the card stays up, and it scores
-        only once the same number is heard a second time inside
-        ``VOICE_CONFIRM_WINDOW`` — or ✓/Enter is pressed, which commits whatever
-        is in the box. Two independent slips landing on the same number, that
-        close together, is the thing that does not happen.
-
-        The right answer is still taken the moment it is said, so a child who
-        knows it answers once and moves on. A slip cannot invent the answer to the
-        card in front of it often enough to matter, and on the rare occasion it
-        does the child is credited rather than robbed — whereas making every
-        answer be said twice would tax the one thing this game measures, the time
-        each card takes.
+        What keeps a slip — a chair, a gurgle, "euh", an operand muttered while
+        re-reading the question — from answering for the child is the gate in
+        front of this and not this: the acoustic judge in
+        ``voice.SpeechInput._judge`` (loud enough, voiced, not a whisper), the
+        numbers-and-nothing-else rule in ``voice.strict_numbers``, and
+        ``spoken_answer`` picking which number of an utterance was meant.
         """
-        now = time.perf_counter()
-        pending, self._pending = self._pending, (n, now)
-        self.answer_var.set(str(n))     # heard either way: the child sees the number
-        confirmed = (pending is not None and pending[0] == n
-                     and now - pending[1] <= VOICE_CONFIRM_WINDOW)
-        if n == target.answer or confirmed:
-            self._pending = None
-            self.submit()               # auto-submit, in parallel with the keypad
-            return
-        self._voice_hint()
-        # Nothing was committed, so nothing else will re-arm the mic: the chain
-        # only continues from here. (The watchdog would catch it within a second,
-        # but a second is long enough to miss the repeat we just asked for.)
-        if not self._voice_mic_bad and self.voice_enabled.get():
-            self._voice_arm(target)
-
-    def _voice_hint(self):
-        """Show the number waiting to be confirmed, and what to do about it."""
-        lbl = getattr(self, "voice_lbl", None)
-        if lbl and lbl.winfo_exists() and self._pending is not None:
-            lbl.config(text=T("confirm_answer", n=self._pending[0]), fg=ACCENT)
+        self.answer_var.set(str(n))     # the child sees the number that was heard
+        self.submit()                   # auto-submit, in parallel with the keypad
 
     def _build_keypad(self, parent):
         pad = tk.Frame(parent, bg=BG)

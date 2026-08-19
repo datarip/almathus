@@ -83,6 +83,10 @@ class FakeSTT:
 def start(voice: bool):
     app = M.Almathus()
     app.tts = None                    # no speech: the mic arms immediately
+    # A test that plays a deck to the end reaches the recap, which logs a session
+    # to results/ — the real file the progress screen reads. Nothing here is a
+    # game anyone played, so none of it is written down.
+    app._save_session = lambda *a, **k: None
     app.stt = FakeSTT() if voice else None
     app.voice_enabled.set(voice)
     app.count_var.set(5)
@@ -170,7 +174,8 @@ def test_spoken_answer():
     """Which number of an utterance is the answer — and which is the card.
 
     No window and no mic: this only picks a number out of an utterance. Whether
-    that number is trusted enough to take the card away is test_voice_confirm.
+    the sound behind it was a voice at all is decided upstream, by the acoustic
+    gate in voice.SpeechInput._judge.
     """
     card = M.Card(9, 4, "subtraction", 5)       # a "− 4" session: 4 is on every card
 
@@ -183,7 +188,7 @@ def test_spoken_answer():
 
     # A lone operand is a perfectly ordinary wrong answer — a whole session is
     # built on one number ("− 4"), so refusing it here made that number unsayable
-    # on every card of the session. It is picked; confirming it is the gate's job.
+    # on every card of the session.
     assert M.spoken_answer([4], card) == 4, "a lone operand was refused outright"
 
     # An operand that IS the answer was never in doubt.
@@ -191,70 +196,40 @@ def test_spoken_answer():
     assert M.spoken_answer([4], exact) == 4, "the right answer was refused"
 
 
-def test_voice_confirm():
-    """A wrong number takes the card only when it is said twice.
+def test_voice_wrong_answer():
+    """A wrong spoken number is scored the moment it is heard.
 
-    This is the bug that outlived three patches. Each capture is an independent
-    chance for the recognizer to be fooled, and the mic re-arms every second or
-    two, so a child who thought for a while eventually had a slip — a filler, an
-    operand read back, a gurgle — answer for them and take the question away. It
-    read as "the card times out"; it was really "the card is up long enough to be
-    stolen". Nothing but the same number, twice, may score it.
+    No confirmation, no repeating yourself: the answer is committed exactly as
+    if ✓ had been pressed, the wrong-answer sound plays, and the question comes
+    back once — at the end of the game, out of the reinforcement queue — and not
+    again after that.
     """
     app = start(voice=True)
-    card = app.current
-    wrong = card.answer + 1
     try:
-        # Twenty slips, all different, spread over a long think: not one of them
-        # may move the card, however long the child takes.
-        for i in range(20):
-            app.stt.deliver(wrong + i)
-            pump(app, 0.05)
-            assert app.current is card, f"a single unconfirmed number skipped the card ({i})"
-            assert not app._card_done, f"a single unconfirmed number scored the card ({i})"
-
-        # The same number twice, but not in a row: the second one is a fresh
-        # offer, not a confirmation of the first.
-        app.stt.deliver(wrong)
-        pump(app)
-        app.stt.deliver(wrong + 99)
-        pump(app)
-        app.stt.deliver(wrong)
-        pump(app)
-        assert app.current is card, "two hearings with another number between them scored"
-
-        # ...and now the repeat that means it.
-        app.stt.deliver(wrong)
+        card = app.current
+        assert wait_for(app, app.stt.listening, 5), "the mic was never armed"
+        app.stt.deliver(card.answer + 1)
         assert wait_for(app, lambda: app.current is not card, 5), \
-            "a number said twice did not answer the card"
-        assert card.correct_first_try is False and card.attempts == 1, \
-            "the confirmed answer was not scored once, as wrong"
+            "a wrong spoken number did not answer the card"
+        assert card.attempts == 1 and card.correct_first_try is False, \
+            "the wrong answer was not scored once, as wrong"
+        assert card in app.retry_queue, "the failed card was not queued for the end"
 
-        # The right answer is taken as it is said — no repeat, no lost time.
-        nxt = app.current
-        app.stt.deliver(nxt.answer)
-        assert wait_for(app, lambda: app.current is not nxt, 5), \
-            "the right answer had to be repeated"
-    finally:
-        app._shutdown()
-        app.destroy()
+        # The rest of the deck, answered right: nothing else may join the queue.
+        while app.idx < len(app.deck):
+            cur = app.current
+            assert wait_for(app, app.stt.listening, 5), "the mic went deaf mid-deck"
+            app.stt.deliver(cur.answer)
+            assert wait_for(app, lambda: app.current is not cur, 5), \
+                "a correct spoken answer did not advance"
 
-
-def test_confirm_window():
-    """A repeat that comes too late is a fresh offer, not a confirmation."""
-    app = start(voice=True)
-    card = app.current
-    wrong = card.answer + 1
-    try:
-        app.stt.deliver(wrong)
-        pump(app)
-        assert app._pending and app._pending[0] == wrong, "the number was not offered"
-        # Age the offer past the window without waiting out the clock.
-        app._pending = (wrong, app._pending[1] - M.VOICE_CONFIRM_WINDOW - 1)
-        app.stt.deliver(wrong)
-        pump(app)
-        assert app.current is card, "a stale offer was confirmed by a much later slip"
-        assert app._pending and app._pending[0] == wrong, "the late hearing did not re-offer"
+        assert app.current is card, "the failed card was not asked again at the end"
+        assert wait_for(app, app.stt.listening, 5), "the mic was not armed for the retry"
+        app.stt.deliver(card.answer + 1)
+        assert wait_for(app, lambda: card.attempts == 2, 5), \
+            "the retry was not answered by a spoken number"
+        pump(app, 2.0)
+        assert not app.retry_queue, "a failed retry was queued to be asked yet again"
     finally:
         app._shutdown()
         app.destroy()
@@ -263,7 +238,7 @@ def test_confirm_window():
 def main() -> int:
     failures = []
     for test in (test_spoken_answer, test_keypad_flow, test_voice_flow,
-                 test_voice_confirm, test_confirm_window):
+                 test_voice_wrong_answer):
         try:
             test()
             print(f"ok   {test.__name__}")

@@ -1244,11 +1244,24 @@ class Almathus(tk.Tk):
         # fullscreen mode (which hides the menu bar and jumps to its own space).
         self._maximize()
 
+    def _usable_height(self) -> int:
+        """How tall a window may actually be here — not how tall the screen is.
+
+        The two are not the same, and the difference is what everything on the
+        settings screen was laid out over: on a 900 px Mac display the menu bar
+        takes 28 of them, so a window asking for 900 gets 872 and lays out 916 px
+        of column inside it. The window manager knows the number; ask it.
+        """
+        wm_h = self.wm_maxsize()[1]
+        screen_h = self.winfo_screenheight()
+        return wm_h if 0 < wm_h <= screen_h else screen_h
+
     def _maximize(self):
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        sw, sh = self.winfo_screenwidth(), self._usable_height()
         if self.tk.call("tk", "windowingsystem") == "aqua":
-            # Fill the whole screen from the top-left. macOS keeps the title bar
-            # reachable; with the menu bar hidden this uses every pixel.
+            # Fill the whole usable screen from the top-left. macOS keeps the
+            # title bar reachable; with the menu bar hidden this uses every pixel
+            # — asking for more only got the bottom of the window cut off.
             self.geometry(f"{sw}x{sh}+0+0")
         else:
             try:
@@ -1399,9 +1412,12 @@ class Almathus(tk.Tk):
 
     # -- fonts ------------------------------------------------------------- #
     def _make_fonts(self):
-        # Everything scales with the screen so the settings column still fits
-        # (and stays readable) on a short laptop display.
-        s = min(1.0, self.winfo_screenheight() / 900)
+        # Everything scales with the display so the settings column still fits
+        # (and stays readable) on a short laptop display. Measured against the
+        # height a window may actually have, which is the constraint the column
+        # is up against — the screen's own height is 28 px of menu bar too
+        # generous, and that is a row of the settings screen.
+        s = min(1.0, self._usable_height() / 900)
 
         def scaled(size, weight="normal"):
             return tkfont.Font(
@@ -1583,6 +1599,47 @@ class Almathus(tk.Tk):
             pady=10,
         ).pack(side="left", padx=8)
         self._wrap_footer(footer)
+        self._fit_column(col)
+
+    def _fit_column(self, col) -> None:
+        """Give up the gaps between the panels rather than the bottom of the column.
+
+        A packed column taller than its window is not shrunk to fit, it is cut
+        off — and what goes is whatever is packed last, which here is the row of
+        toggles. Nothing marks the loss: on a 900 px display the voice and
+        dictation switches were simply not on the screen, on exactly the size of
+        laptop most likely to be running this.
+
+        How tall the column comes out cannot be predicted — the labels are
+        translated, the fonts are scaled to the display, and the footer may have
+        folded onto a second row — so it is measured, and the whitespace between
+        the panels is handed back a step at a time until the whole of it fits.
+        The panels themselves are never touched; it is the air between them that
+        goes, and the screen is merely tighter rather than missing a row.
+        """
+        self.update_idletasks()
+        avail = self.winfo_height()
+        if avail <= 1:  # not configured yet (first build, before the window maps)
+            avail = self._usable_height()
+        gaps = [(w, w.pack_info()["pady"]) for w in col.pack_slaves()]
+        gaps.append((col, col.pack_info()["pady"]))
+
+        def needed():
+            own = col.pack_info()["pady"]
+            return col.winfo_reqheight() + sum(
+                own if isinstance(own, tuple) else (own, own)
+            )
+
+        for k in (0.6, 0.35, 0.15, 0.0):
+            if needed() <= avail:
+                return
+            for w, pady in gaps:
+                w.pack_configure(
+                    pady=tuple(round(v * k) for v in pady)
+                    if isinstance(pady, tuple)
+                    else round(pady * k)
+                )
+            self.update_idletasks()
 
     def _wrap_footer(self, footer) -> None:
         """Fold the footer onto a second row when one row is wider than the screen.

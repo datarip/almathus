@@ -1107,14 +1107,16 @@ class TimeChart(tk.Canvas):
         # Reserve the bottom band from the real font metrics — the fonts scale
         # with the screen, so a fixed 30 px clipped the date labels on a tall one.
         self.PAD_B = font.metrics("linespace") + 16
+        # Both axes are headed inside the canvas, on one line above the plot, so
+        # the two titles sit level with each other however the fonts scale.
+        self.PAD_T = font.metrics("linespace") + 12
         if self.deck:
-            # Room for the grade axis: its labels, `20/20` at their widest, and a
-            # line above them to say what they count.
+            # Room for the grade axis: its labels, `20/20` at their widest, and
+            # the title above them saying what they count.
             self.PAD_R = max(
                 font.measure(f"{self.deck}/{self.deck}") + 20,
                 font.measure(T("axis_grade")) + 14,
             )
-            self.PAD_T = font.metrics("linespace") + 8
         self.pts: list[tuple[float, float, tuple]] = []
         self.bind("<Configure>", lambda e: self.redraw())
         self.bind("<Motion>", self._hover)
@@ -1215,10 +1217,21 @@ class TimeChart(tk.Canvas):
                     fill=CHART_GRADE,
                 )
 
+        # Each axis is headed in the colour of the curve it carries, and both
+        # heads share the baseline y0 - 6 — the reader's eye runs straight from
+        # one to the other.
+        self.create_text(
+            2,
+            y0 - 10,
+            text=T("chart_title"),
+            anchor="sw",
+            font=self.font,
+            fill=ACCENT,
+        )
         if self.deck:
             self.create_text(
                 x1 + 10,
-                y0 - 6,
+                y0 - 10,
                 text=T("axis_grade"),
                 anchor="sw",
                 font=self.font,
@@ -2729,17 +2742,15 @@ class Almathus(tk.Tk):
             ).pack(expand=True)
             return
 
-        # The chart takes a third of the height; the table gets the rest and scrolls.
-        tk.Label(
-            body, text=T("chart_title"), font=self.f_small, fg=MUTED, bg=BG, anchor="w"
-        ).pack(fill="x", padx=32, pady=(6, 0))
+        # The chart takes a third of the height; the table gets the rest and
+        # scrolls. Its title is drawn inside it, level with the grade axis' own.
         chart = TimeChart(
             body,
             sessions,
             self.f_small,
             height=max(190, int(self.winfo_height() * 0.30)),
         )
-        chart.pack(fill="x", padx=28, pady=(2, 12))
+        chart.pack(fill="x", padx=28, pady=(8, 12))
         if chart.grades:
             self._legend_grade.pack(side="left", padx=(16, 0))
         else:

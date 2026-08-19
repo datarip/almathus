@@ -63,7 +63,9 @@ a game. It reads `results/results.csv` and shows:
   plateaus are visible. The curve is a monotone cubic through the points: soft,
   but it never dips below a value the kid actually scored. Days that recorded a
   score carry a **second curve of their own** — the grades — on a **right-hand
-  axis** headed *Notes* / *Grades* and running from nothing to a full deck
+  axis** headed *Notes* / *Grades* — level with the chart's own title, both
+  drawn inside the canvas so they stay aligned however the fonts scale — and
+  running from nothing to a full deck
   (`0/20` … `20/20`). The two series share neither scale nor colour: times are
   the theme's accent, grades its `CHART_GRADE` (blue on the dark palette, deep
   teal on the pink one), each axis is written in the colour of the line it

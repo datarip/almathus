@@ -590,7 +590,6 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
     y = start_page()
 
     if chart is not None and getattr(chart, "days", None):
-        pdf.text(MARGIN, y, labels["chart_title"], FS_META, palette["MUTED"])
         _draw_legend(pdf, pdf.w - MARGIN, y, chart, palette, labels)
         y -= 8
         _draw_chart(
@@ -602,6 +601,7 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
             CHART_H,
             palette,
             labels.get("axis_grade", ""),
+            labels["chart_title"],
         )
         y -= CHART_H + 24
 
@@ -691,7 +691,9 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
     return path
 
 
-def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette, grade_axis: str = "") -> None:
+def _draw_chart(
+    pdf: Pdf, chart, x, y, w, h, palette, grade_axis: str = "", title: str = ""
+) -> None:
     """The screen chart as vectors. PDF's y grows upward, so the scale is
     flipped relative to the widget — everything else is the widget's own maths."""
     days = chart.days
@@ -703,11 +705,12 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette, grade_axis: str = "") -> N
     # margin on that side has to hold `20/20` rather than nothing.
     deck = chart.deck
     pad_r = 10.0
-    pad_t, pad_b = 10.0, FS_AXIS + 12
+    # Both axes are headed on one line above the plot, so the box needs a line of
+    # headroom whether or not there are grades to head on the right.
+    pad_t, pad_b = FS_AXIS + 12, FS_AXIS + 12
     if deck:  # the grade axis' labels, and the line above them naming it
         pad_r = max(measure(f"{deck}/{deck}", FS_AXIS), measure(grade_axis, FS_AXIS))
         pad_r += 12
-        pad_t = FS_AXIS + 8
     x0, x1 = x + pad_l, x + w - pad_r
     y0, y1 = y + pad_b, y + h - pad_t  # y0 is the zero baseline, y1 the top
 
@@ -737,8 +740,10 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette, grade_axis: str = "") -> N
                 palette["CHART_GRADE"],
             )
 
+    # Each axis headed in the colour of its curve, both on the same baseline.
+    pdf.text(x, y1 + 8, title, FS_AXIS, palette["ACCENT"])
     if deck:
-        pdf.text(x1 + 6, y1 + 6, grade_axis, FS_AXIS, palette["CHART_GRADE"])
+        pdf.text(x1 + 6, y1 + 8, grade_axis, FS_AXIS, palette["CHART_GRADE"])
 
     ords = [d.toordinal() for d, _, _ in days]
     lo, span = min(ords), max(ords) - min(ords)

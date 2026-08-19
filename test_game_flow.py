@@ -77,6 +77,9 @@ class FakeSTT:
     def warmup(self):
         pass
 
+    def calibrate(self, *a):
+        pass
+
     def boost_input_volume(self, *a):
         pass
 

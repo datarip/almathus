@@ -1308,6 +1308,26 @@ class Almathus(tk.Tk):
 
         self._install_exit_handlers()
         self.show_settings()
+        # ...and once the menu is up, listen to the room. Deliberately after the
+        # first screen is drawn: it must never be something the child waits for.
+        self.after(700, self._calibrate_mic)
+
+    def _calibrate_mic(self):
+        """Measure the noise around the microphone, silently, in the background.
+
+        The gates that decide "that was an answer" are measured against the room,
+        not against a constant, because the room is not a constant: a bedroom at
+        night, a kitchen at breakfast and a terrace by a road are three different
+        microphones as far as the level of a spoken "huit" is concerned. This
+        opens the mic for a couple of seconds, measures what silence sounds like
+        here and now, and closes it again — no dialog, no message, nothing on
+        screen. The input gain is raised first, or the room would be measured at
+        a gain the game will never use and the numbers would not transfer.
+        """
+        if self._stopping or not self.stt or not self.voice_enabled.get():
+            return
+        self.stt.boost_input_volume()
+        self.stt.calibrate()
 
     # ------------------------------------------------------------------ #
     # Clean shutdown — restore the mic gain on EVERY exit path
@@ -1773,6 +1793,10 @@ class Almathus(tk.Tk):
         if self.voice_enabled.get() and self.stt and self.stt.available():
             self.stt.warmup()
             self.stt.boost_input_volume()
+            # The app may have been open since this morning, and the room is not
+            # what it was then. Re-measured here, it lands well inside the
+            # countdown; the room keeps being tracked between answers after that.
+            self.stt.calibrate()
         # Both the count and the sample have a run-up to their GO! — three ticks
         # on screen, COUNTDOWN_GO_AT in the file — and lining the two up is a
         # matter of making the shorter one wait for the longer. This sample opens

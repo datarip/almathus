@@ -14,6 +14,15 @@ Two independent, gracefully-degrading pieces:
                      if any is missing it reports itself unavailable and the game
                      simply stays keypad-only.
 
+                     Calibrates itself to the room: ``.calibrate()`` listens to
+                     the ambient noise in the background (nothing on screen,
+                     nothing to wait for), and every threshold that decides "that
+                     was an answer" is a factor over what it measured, not a
+                     constant. The same measurement gives a noise spectrum, which
+                     is subtracted from the utterance before it is recognized.
+                     Both are kept current between answers, so a room that gets
+                     noisier through the day carries the gates with it.
+
 Nothing here ever raises into the UI: probe with ``.available()`` first, and all
 callbacks are plain values so the caller can marshal them onto the Tk main loop.
 
@@ -38,6 +47,7 @@ import threading
 import time
 import unicodedata
 import wave
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -445,6 +455,19 @@ def _envf(name: str, default: float) -> float:
         return default
 
 
+def _envf_opt(name: str) -> float | None:
+    """A number from the environment, or None if it was never set.
+
+    The difference from ``_envf`` matters for the gates that are normally
+    measured: "not set" means *calibrate me*, and there is no default that can
+    stand for that.
+    """
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return None
+
+
 # --- "was that actually a spoken answer?" ---------------------------------- #
 # The onset detector is deliberately trigger-happy (WebRTC VAD at its most
 # sensitive) so a soft answer is never missed. That leaves it starting on room
@@ -455,29 +478,42 @@ def _envf(name: str, default: float) -> float:
 # So the utterance is judged AFTER the fact, on three measurements (thresholds
 # from measured speech-vs-noise separation; see the constants' comments):
 # Each is overridable from the environment, so a room can be tuned without an edit.
-_MIN_SNR = _envf("ALMATHUS_VOICE_MIN_SNR", 5.0)
-# peak must clear the room's own noise floor by this factor
-_MIN_LEVEL = _envf("ALMATHUS_VOICE_MIN_LEVEL", 220.0)
-# ...and this absolute band RMS. Room tone measured 41-100;
-# the quietest real answer of that same session, 295.
+_MIN_SNR = _envf("ALMATHUS_VOICE_MIN_SNR", 3.0)
+# peak must clear the room's own noise by this factor
 #
-# These two are the whisper gate, and they are deliberately
-# set to "said out loud". A whisper must never answer a card:
-# murmuring at the mic is how a child hedges a guess, and a
-# hedge that scores is worse than one that is not heard —
-# they lose the card without having decided to answer. The
-# voicing test below is what refuses an unvoiced whisper, but
-# a *soft voiced* murmur is a real voice by every acoustic
-# measure there is, so nothing but loudness separates it from
-# an answer. 220 sits between the room (41-100) and the
-# quietest answer actually measured (295), nearer the answer.
-# Being refused is not silent: the child is told to speak up.
+# --- and the level gate, which is measured, not baked in ------------------- #
 #
-# Both are absolute band RMS and so depend on mic gain and
-# distance. `uv run python mic_check.py` prints what a real
-# answer and a real whisper measure on THIS mic, in THIS
-# room, and the two environment variables above retune it
-# without touching the code.
+# There used to be one absolute number here (220 band RMS) for "said out loud".
+# It was measured once, on one mic, in one quiet room, at one distance — and it
+# is the wrong shape of thing. Loudness at the mic is not a property of the
+# voice: it falls with the square of the distance (a child two metres away
+# arrives ~15 dB down on the same child at arm's length) and it rises with the
+# input gain. A constant cannot be right for both, and set for a quiet room at
+# arm's length it simply goes deaf at two metres — which is what happened.
+#
+# What "said out loud" actually means is *clearly above this room, right now*.
+# So the gate is measured: the app listens to the room at startup (see
+# ``SpeechInput.calibrate``) and keeps re-measuring it between utterances, and
+# the bar sits a fixed factor above whatever the room is doing. Outside, at
+# noon, with cars going past, it rises by itself; at night in a bedroom it drops
+# and picks up a small voice from across the room. The whisper gate survives
+# this move — a murmur does not stand 3x above the room, at any distance — and
+# it stays honest at both ends, which a constant never was.
+_LEVEL_OVER_ROOM = _envf("ALMATHUS_VOICE_LEVEL_OVER_ROOM", 3.0)
+# how far above the measured room a voice must stand
+_MIN_LEVEL_FLOOR = _envf("ALMATHUS_VOICE_MIN_LEVEL_FLOOR", 45.0)
+# ...but never ask for less than this in absolute band
+# RMS, so a mic sitting in an anechoic silence (room
+# near 0) cannot end up with a gate of nothing.
+_MIN_LEVEL_BLIND = _envf("ALMATHUS_VOICE_MIN_LEVEL_BLIND", 120.0)
+# the gate before the room has ever been measured
+# (calibration refused, or the very first blocks of the
+# very first capture). Deliberately mid-range: it was
+# the shipped default before the whisper gate went up.
+_MIN_LEVEL = _envf_opt("ALMATHUS_VOICE_MIN_LEVEL")
+# a hard override. Set it and nothing is measured — this
+# is the escape hatch for a room where the automatic
+# gate reads wrong, and it is why the variable is kept.
 _MIN_VOICED = _envf("ALMATHUS_VOICE_MIN_VOICED", 0.25)
 # fraction of energetic frames that must be *voiced* — i.e.
 # show vocal-fold pitch. This is the one that matters: over
@@ -488,6 +524,68 @@ _MIN_VOICED = _envf("ALMATHUS_VOICE_MIN_VOICED", 0.25)
 _NACF_MIN = _envf("ALMATHUS_VOICE_NACF", 0.40)
 # per-frame normalised autocorrelation peak that is "voiced"
 _F0_BAND = (100.0, 600.0)  # Hz — pitch search range, low man to shouting child
+
+# --- listening to the room ------------------------------------------------- #
+# The onset detector and the "still talking?" test used to have absolute floors
+# in them too (60 and 40 band RMS), with the same problem: in a room noisier
+# than that they fired on the room, and in a quiet one they were above a distant
+# voice. Both are now the same shape as the level gate — a factor over the
+# measured room, with a small absolute floor underneath.
+_ONSET_OVER_ROOM = _envf("ALMATHUS_VOICE_ONSET_OVER_ROOM", 2.5)
+_ONSET_FLOOR = _envf("ALMATHUS_VOICE_ONSET_FLOOR", 20.0)
+_OFFSET_OVER_ROOM = 1.5  # ...for the tail of an utterance, which may trail off
+_OFFSET_FLOOR = _envf("ALMATHUS_VOICE_OFFSET_FLOOR", 20.0)
+
+_CALIB_SECS = _envf("ALMATHUS_VOICE_CALIB_SECS", 1.5)
+# how long the startup listen to the room lasts
+_CALIB_SETTLE = 0.35  # ...after dropping this much: a stream's first blocks are
+# the driver waking up, not the room
+_ROOM_WINDOW = 2.0  # seconds of pre-onset audio kept as "what the room sounds
+# like", both to re-measure the level between utterances and
+# to subtract as noise from the utterance that follows
+_ROOM_PCTL = 25  # the room is the quiet quarter of that window, not its mean:
+# a door, a cough or a word in the run-up must not become
+# "the room" and take the gates up with it
+
+# --- subtracting the room from the answer ---------------------------------- #
+# Spectral subtraction: the room's average magnitude spectrum, measured in the
+# seconds before the child speaks, is taken back out of the utterance bin by bin
+# before it reaches the recognizer. This is what a fan, a road or a café does to
+# a recognizer — it does not make the speech quieter, it fills the gaps between
+# the formants — and it is exactly what subtracting a *spectrum* fixes and a
+# band-pass cannot.
+#
+# Conservative on purpose. Over-subtracting leaves "musical noise" (isolated
+# surviving bins warbling), which costs more recognition than the noise did, so
+# the over-subtraction factor is mild and no bin is ever taken down more than
+# ~18 dB. And if it still hurts, nothing is lost: an utterance the recognizer
+# cannot read after cleaning is decoded a second time from the untouched audio
+# (see ``_run_job``).
+_DENOISE = os.environ.get("ALMATHUS_VOICE_DENOISE", "auto").lower()
+_DENOISE_ALPHA = _envf("ALMATHUS_VOICE_DENOISE_ALPHA", 1.5)
+_DENOISE_FLOOR = _envf("ALMATHUS_VOICE_DENOISE_FLOOR", 0.12)
+_DENOISE_MIN_ROOM = _envf("ALMATHUS_VOICE_DENOISE_MIN_ROOM", 15.0)
+# below this the room is already silent: subtracting it
+# can only do harm, so "auto" leaves the audio alone
+
+
+def level_gate(room: float | None) -> float:
+    """The loudness an utterance must reach, for a room measured at ``room``.
+
+    Kept module-level so ``mic_check.py`` reports the same number the game will
+    actually apply, rather than a constant that no longer decides anything.
+    """
+    if _MIN_LEVEL is not None:
+        return _MIN_LEVEL  # hard override: measure nothing
+    if room is None:
+        return _MIN_LEVEL_BLIND
+    return max(_MIN_LEVEL_FLOOR, room * _LEVEL_OVER_ROOM)
+
+
+def _nfft(sr: int) -> int:
+    """Analysis window for the spectral work: the power of two nearest 32 ms."""
+    return 1 << max(8, int(sr * 0.032).bit_length() - 1)
+
 
 # v3 is multilingual (incl. French); v2 is English-only.
 _DEFAULT_PARAKEET = "mlx-community/parakeet-tdt-0.6b-v3"
@@ -584,8 +682,18 @@ class SpeechInput:
         self._stt_thread: threading.Thread | None = None
         self._vosk_model: Any = None
         self._vosk_ok: bool | None = None  # None=unknown, False=unavailable
-        # persists across listens (no re-calibration)
-        self._noise_floor: float | None = None
+        # What the room sounds like with nobody talking: the band RMS every gate
+        # is measured against, and the magnitude spectrum subtracted from an
+        # utterance before it is recognized. Seeded by calibrate() at startup and
+        # kept current between utterances, so a room that gets louder through the
+        # day (or a game played outside) moves the gates with it instead of going
+        # deaf or triggering on traffic.
+        self._room: float | None = None
+        self._room_spec: Any = None  # (samplerate, nfft, magnitudes)
+        self._room_blocks: deque = deque()  # the last _ROOM_WINDOW of pre-onset audio
+        self._room_levels: deque = deque()  # ...and its per-block band RMS
+        self._calibrating = False
+        self._mic_lock = threading.Lock()  # calibration vs. a capture: one at a time
         self._audio_q: queue.Queue = (
             queue.Queue()
         )  # mic blocks, filled while the stream is open
@@ -593,6 +701,7 @@ class SpeechInput:
         self._blk = int(_SAMPLE_RATE * 0.02)
         self._boosted = False  # did we raise the OS mic input gain?
         self._last_raw: Any = None  # last capture, un-band-passed (for Vosk)
+        self._last_dirty: Any = None  # ...the same capture, un-denoised
         # the open mic stream, so we can close it on quit
         self._active_stream: Any = None
         self._stopped = False  # latched on quit: no more captures
@@ -699,7 +808,33 @@ class SpeechInput:
     def warmup(self):
         """Preload the recognizer on the STT thread so the first answer is instant."""
         self._ensure_stt_thread()
-        self._jobs.put((_WARMUP, None, None, None, None))
+        self._jobs.put((_WARMUP, None, None, None, None, None))
+
+    def calibrate(self, seconds: float = _CALIB_SECS) -> None:
+        """Listen to the room for a moment and set the gates from what it hears.
+
+        Returns immediately: the measuring happens on a daemon thread, shows
+        nothing, says nothing and blocks nothing. Called at startup, so by the
+        time the first card is up the app already knows whether it is in a
+        bedroom at night or on a terrace next to a road, and has a spectrum of
+        that room to subtract from what the child says.
+
+        Cheap enough to repeat (it is also called when a game starts, in case the
+        app has been open since this morning). It is a no-op while a capture is
+        running — a card being answered has the mic, and the room is being
+        re-measured from that same stream anyway.
+        """
+        if not (self._sd and self._np) or self._stopped or self._calibrating:
+            return
+        if self._busy:
+            _dbg("calibrate: mic is busy, keeping the room we have")
+            return
+        self._calibrating = True
+        threading.Thread(target=self._calibrate, args=(seconds,), daemon=True).start()
+
+    def room_level(self) -> float | None:
+        """The measured room, or None if it has never been heard. Diagnostics."""
+        return self._room
 
     def boost_input_volume(self, level: int = 80):
         """Raise the macOS mic input gain (moderate — max gain over-amplifies noise
@@ -740,6 +875,152 @@ class SpeechInput:
         except Exception as e:
             _dbg("input volume restore failed:", repr(e))
 
+    # -- the room ---------------------------------------------------------- #
+    def _calibrate(self, seconds: float):
+        """Measure the room on a private thread. Never raises, never blocks a card."""
+        try:
+            # A stream we opened ourselves is ours to close: leaving it open
+            # would keep the OS microphone indicator lit for as long as the app
+            # is on screen, which is not "in the background" in any sense.
+            ours = self._active_stream is None
+            if not self._mic_lock.acquire(timeout=2.0):
+                _dbg("calibrate: mic held by a capture, skipped")
+                return
+            try:
+                sr, blk = self._ensure_stream()
+                if sr is None:
+                    _dbg("calibrate: no usable input device")
+                    return
+                blocks = self._collect(seconds, sr, blk)
+                if blocks is None:
+                    return
+                self._learn_room(blocks, sr, seed=True)
+            finally:
+                if ours:
+                    self._close_stream()
+                self._mic_lock.release()
+        except Exception as e:
+            _dbg("calibrate failed:", repr(e))
+        finally:
+            self._calibrating = False
+
+    def _collect(self, seconds: float, sr: int, blk: int):
+        """``seconds`` of audio off the open stream, past the driver's warm-up."""
+        block_secs = blk / sr
+        want = int(seconds / block_secs)
+        skip = int(_CALIB_SETTLE / block_secs)
+        blocks: list[Any] = []
+        while len(blocks) < want + skip and not self._cancel.is_set():
+            try:
+                blocks.append(self._audio_q.get(timeout=0.5))
+            except queue.Empty:
+                _dbg("calibrate: stream gave nothing")
+                return None
+        return blocks[skip:] or None
+
+    def _learn_room(self, blocks, sr: int, seed: bool = False):
+        """Set the room level and its noise spectrum from a run of quiet blocks.
+
+        The level is a low percentile rather than a mean: whatever is in the
+        window, the quiet quarter of it is the room, and a chair scraping or a
+        word said in the run-up does not get to raise the bar for the answer
+        that follows. The spectrum is averaged over that same quiet quarter.
+        """
+        np = self._np
+        levels = self._band_levels(blocks, sr)
+        if levels is None:
+            return
+        room = float(np.percentile(levels, _ROOM_PCTL))
+        quiet = [b for b, r in zip(blocks, levels, strict=False) if r <= room * 2.0]
+        self._room = room
+        spec = self._noise_spectrum(quiet or blocks, sr)
+        if spec is not None:
+            self._room_spec = (sr, _nfft(sr), spec)
+        _dbg(
+            f"room{' (startup)' if seed else ''}: level={room:.0f} "
+            f"gate={level_gate(room):.0f} spectrum={'yes' if spec is not None else 'no'}"
+        )
+
+    def _band_levels(self, blocks, sr: int):
+        """Per-block RMS in the speech band — the same measure the VAD uses."""
+        np = self._np
+        if not blocks:
+            return None
+        n = min(len(b) for b in blocks)
+        if n < 8:
+            return None
+        x = np.concatenate([b[:n] for b in blocks]).astype(np.float32)
+        sos, sosfilt, _ = self._make_bandpass(sr)
+        if sos is not None:
+            x = sosfilt(sos, x)
+        b = x.reshape(len(blocks), n)
+        return np.sqrt((b * b).mean(axis=1)) + 1e-9
+
+    def _noise_spectrum(self, blocks, sr: int):
+        """The room's average magnitude spectrum, at the denoiser's resolution."""
+        np = self._np
+        x = np.concatenate(blocks).astype(np.float32)
+        nfft = _nfft(sr)
+        frames = self._frames(x, nfft, nfft // 2)
+        if frames is None:
+            return None
+        mag = np.abs(np.fft.rfft(frames * np.hanning(nfft + 1)[:nfft], axis=1))
+        # ...and again only over the quiet frames of it, for the same reason.
+        energy = mag.sum(axis=1)
+        keep = energy <= np.percentile(energy, 60)
+        return mag[keep].mean(axis=0) if keep.any() else mag.mean(axis=0)
+
+    def _frames(self, x, nfft: int, hop: int):
+        """``x`` as overlapping frames, or None if there is not even one."""
+        np = self._np
+        if len(x) < nfft:
+            return None
+        n = 1 + (len(x) - nfft) // hop
+        idx = np.arange(nfft)[None, :] + hop * np.arange(n)[:, None]
+        return x[idx]
+
+    def _denoise(self, x, sr: int):
+        """Take the room back out of an utterance, bin by bin (spectral subtraction).
+
+        Returns the audio unchanged whenever cleaning it cannot help: no spectrum
+        measured yet, a different samplerate than the one it was measured at, a
+        room already quiet enough that there is nothing to subtract, or a clip too
+        short for one analysis window.
+        """
+        np = self._np
+        if _DENOISE == "0" or self._room_spec is None:
+            return x
+        spec_sr, nfft, noise = self._room_spec
+        if spec_sr != sr:
+            return x  # the device changed under us; the old spectrum is meaningless
+        if _DENOISE != "1" and (self._room or 0.0) < _DENOISE_MIN_ROOM:
+            return x
+        hop = nfft // 2
+        win = np.hanning(nfft + 1)[:nfft].astype(np.float32)
+        pad = np.zeros(nfft, dtype=np.float32)
+        xp = np.concatenate([pad, np.asarray(x, dtype=np.float32), pad, pad])
+        frames = self._frames(xp, nfft, hop)
+        if frames is None:
+            return x
+        spectra = np.fft.rfft(frames * win, axis=1)
+        mag = np.abs(spectra)
+        # Smoothed across time before the gain is computed: musical noise is
+        # frame-to-frame jitter in the gain, and this is what stops it.
+        sm = mag.copy()
+        if len(sm) > 2:
+            sm[1:-1] = (mag[:-2] + 2.0 * mag[1:-1] + mag[2:]) / 4.0
+        gain = np.clip(1.0 - _DENOISE_ALPHA * noise / (sm + 1e-9), _DENOISE_FLOOR, 1.0)
+        out = np.fft.irfft(spectra * gain, n=nfft, axis=1) * win
+        y = np.zeros(len(xp), dtype=np.float32)
+        wsum = np.zeros(len(xp), dtype=np.float32)
+        w2 = win * win
+        for i in range(len(out)):
+            j = i * hop
+            y[j : j + nfft] += out[i]
+            wsum[j : j + nfft] += w2
+        y /= np.maximum(wsum, 1e-6)
+        return y[nfft : nfft + len(x)]
+
     # -- internals --------------------------------------------------------- #
     def _ensure_stt_thread(self):
         """Start the recognizer thread, and restart it if it ever went away.
@@ -761,8 +1042,12 @@ class SpeechInput:
     def _capture(self, on_result, on_state, pick=None):
         try:
             self._silent = False
-            self._last_raw = None
-            audio = self._record(on_state)
+            self._last_raw = self._last_dirty = None
+            # The startup calibration reads from the same stream, so the two must
+            # not interleave. It gives up after two seconds rather than wait for a
+            # card to be answered; a card never waits for more than that.
+            with self._mic_lock:
+                audio = self._record(on_state)
             # Two silent captures in a row before crying "no mic": the caller stops
             # re-arming on that signal, so one unlucky window (a stream hiccup, a
             # capture cut short) used to leave the kid talking to a deaf card.
@@ -776,10 +1061,12 @@ class SpeechInput:
             # instance at transcribe time meant a capture that returned nothing
             # could leave the previous utterance's audio in place, and the same
             # answer could be recognized twice.
-            self._jobs.put((audio, self._last_raw, on_result, on_state, pick))
+            self._jobs.put(
+                (audio, self._last_raw, self._last_dirty, on_result, on_state, pick)
+            )
         except Exception as e:
             _dbg("capture EXCEPTION:", repr(e))
-            self._jobs.put((None, None, on_result, on_state, pick))
+            self._jobs.put((None, None, None, on_result, on_state, pick))
 
     def _stt_loop(self):
         """The ONE thread that creates and runs the parakeet model — MLX streams
@@ -803,7 +1090,7 @@ class SpeechInput:
                 self._busy = False
 
     def _run_job(self, job):
-        audio, raw, on_result, on_state, pick = job
+        audio, raw, dirty, on_result, on_state, pick = job
         if audio is _WARMUP:
             try:
                 self._load_vosk()  # primary recognizer, fast (~1s)
@@ -837,6 +1124,12 @@ class SpeechInput:
             _t0 = time.monotonic()
             nums = self._vosk_numbers(raw if raw is not None else audio)
             _dbg(f"vosk -> {nums} ({(time.monotonic() - _t0) * 1000:.0f}ms)")
+            # Noise subtraction is a bet: it usually helps in a loud room and can
+            # smear a word in a quiet one. Nothing is staked on it — if the
+            # cleaned audio says nothing, the untouched capture gets its own go.
+            if not nums and dirty is not None and dirty is not raw:
+                nums = self._vosk_numbers(dirty)
+                _dbg(f"vosk (un-denoised retry) -> {nums}")
             # parakeet only as a backup, and only if it's already loaded (never
             # block on its ~60s load — Vosk handles the common case).
             if not nums and self._model is not None:
@@ -905,10 +1198,13 @@ class SpeechInput:
         floor = floor or 0.0
         snr = peak / max(floor, 1.0)
         vf = self._voiced_fraction(self._np.concatenate(span), sr)
-        stats = f"peak={peak:.0f} snr={snr:.1f} floor={floor:.0f} voiced={vf:.2f}"
+        stats = (
+            f"peak={peak:.0f} snr={snr:.1f} room={floor:.0f} "
+            f"gate={level_gate(floor or None):.0f} voiced={vf:.2f}"
+        )
         if vf < _MIN_VOICED:
             return False, "not_voice", f"not a voice ({stats})"
-        if peak < _MIN_LEVEL or snr < _MIN_SNR:
+        if peak < level_gate(floor or None) or snr < _MIN_SNR:
             return False, "faint", f"a voice, but whisper-quiet ({stats})"
         return True, None, stats
 
@@ -1054,12 +1350,21 @@ class SpeechInput:
                 wvad = None
         _dbg(f"record: detector={'webrtcvad' if wvad else 'energy'} sr={sr}")
 
-        # The noise floor carries over between captures: it is a property of the
-        # room, not of one utterance, and re-learning it from scratch each time
-        # left the very first blocks of a capture with no reference at all.
+        # The room carries over between captures — it is a property of the room,
+        # not of one utterance — and it is re-measured continuously from the
+        # blocks between utterances. It used to be a drop-fast/rise-slow follower
+        # fed *every* block, speech included, so a talkative card walked the floor
+        # upwards and took the gates with it; by the end of a session the same
+        # voice that was heard at the start was being refused as whisper-quiet.
+        # Only silence between answers is the room, so only that is measured.
         peak = 0.0  # loudest block of the utterance so far
         run = 0  # consecutive speech-like blocks, for the onset
-        efloor: float | None = self._noise_floor
+        window = max(8, int(_ROOM_WINDOW / block_secs))
+        if self._room_blocks.maxlen != window:
+            self._room_blocks = deque(self._room_blocks, maxlen=window)
+            self._room_levels = deque(self._room_levels, maxlen=window)
+        since = 0  # blocks since the room level was last recomputed
+        quiet = 0.0  # quietest block of this capture, as a floor of last resort
 
         def band_rms(block):
             b = block.astype(np.float32)
@@ -1067,15 +1372,39 @@ class SpeechInput:
                 b, zi["z"] = sosfilt(sos, b, zi=zi["z"])
             return float(np.sqrt(np.mean(b * b)) + 1e-9)
 
+        def room_now():
+            """The room as it stands, with a fallback for the first moments.
+
+            Calibration normally has this measured before the first card is up.
+            When it has not — calibration refused, the mic taken by something
+            else, the very first blocks of a session — the quietest block seen so
+            far stands in. It can only ever *under*-read the room (speech never
+            lowers a minimum), which fails the safe way: gates that are too low
+            let a noise through to the judge, which refuses it; gates that were
+            too high would drop the answer and say nothing.
+            """
+            return self._room if self._room is not None else quiet
+
+        def note_room(block, r):
+            """This block had nobody talking in it: it is what the room sounds like."""
+            nonlocal since
+            self._room_blocks.append(block)
+            self._room_levels.append(r)
+            since += 1
+            if len(self._room_levels) >= 8 and since >= 10:  # every ~200 ms
+                since = 0
+                self._room = float(
+                    np.percentile(
+                        np.fromiter(self._room_levels, dtype=float), _ROOM_PCTL
+                    )
+                )
+
         def is_speech(block, r):
-            # Track the noise floor (drop fast, rise slow). Trigger on a clear energy
-            # jump OR on WebRTC VAD — the energy path is the robust backup for when
-            # WebRTC misfires (e.g. it did nothing at very high input gain).
-            nonlocal efloor
-            f = efloor
-            efloor = r if f is None else (r if r < f else f * 0.98 + r * 0.02)
-            self._noise_floor = efloor
-            if r > max(efloor * 4.0, 60.0):
+            # Trigger on a clear jump over the room OR on WebRTC VAD — the energy
+            # path is the robust backup for when WebRTC misfires (e.g. it did
+            # nothing at very high input gain). Deliberately trigger-happy: every
+            # onset it invents is judged again, after the fact, by _judge.
+            if r > max(room_now() * _ONSET_OVER_ROOM, _ONSET_FLOOR):
                 return True
             if wvad is not None and len(block) == blk:
                 try:
@@ -1091,8 +1420,6 @@ class SpeechInput:
         # deadline: the mic stays open until the card ends, so a kid who thinks in
         # silence for twenty seconds and then answers is still heard. The timeout
         # below is only a mic health check — nothing but digital silence trips it.
-        from collections import deque
-
         preroll: deque[Any] = deque(maxlen=max(1, pre))  # rolling window of blocks
         frames = []  # the utterance, once it has started
         onset = voiced_end = 0
@@ -1113,8 +1440,10 @@ class SpeechInput:
             starved = 0
             r = band_rms(block)
             peak = max(peak, r)
+            quiet = r if quiet == 0.0 else min(quiet, r)
             preroll.append(block)  # always: a false start keeps its lead-in
             if not started:
+                note_room(block, r)
                 if is_speech(block, r):
                     run += 1
                     if run >= 2:  # ~40 ms of speech -> go
@@ -1137,7 +1466,7 @@ class SpeechInput:
             # Still speaking? Energy has to stand above both this utterance's own
             # peak and the room — the flat 40 floor alone meant that in a quiet
             # room every block of silence counted as speech.
-            if r > max(peak * 0.12, (efloor or 0.0) * 1.5, 40.0):
+            if r > max(peak * 0.12, room_now() * _OFFSET_OVER_ROOM, _OFFSET_FLOOR):
                 voiced_end = i
             if (i - voiced_end) * block_secs > _SILENCE_HANG:
                 done = True  # speaker went quiet -> done
@@ -1149,7 +1478,7 @@ class SpeechInput:
                 frames[onset : voiced_end + 1],
                 sr,
                 peak,
-                efloor,
+                room_now(),
                 voiced_end - onset + 1,
                 min_voiced,
             )
@@ -1191,8 +1520,17 @@ class SpeechInput:
         if not seg:
             return None
         raw = np.concatenate(seg).astype(np.float32)
-        self._last_raw = raw  # keep un-filtered audio for the Vosk fallback
-        audio = sosfilt(sos, raw) if sos is not None else raw  # band-pass for parakeet
+        # The seconds just before the child spoke are the truest sample of this
+        # room there will ever be — same mic, same gain, same second. Re-measure
+        # it from them, then subtract that spectrum from what was actually said.
+        if len(self._room_blocks) >= 8:
+            self._learn_room(list(self._room_blocks), sr)
+        clean = self._denoise(raw, sr)
+        self._last_raw = clean  # un-band-passed (Vosk wants it that way), denoised
+        self._last_dirty = raw  # ...and untouched, in case the cleaning hurt
+        audio = (
+            sosfilt(sos, clean) if sos is not None else clean
+        )  # band-pass for parakeet
         return self._normalize(audio)
 
     def _normalize(self, audio):

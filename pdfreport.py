@@ -28,7 +28,7 @@ emoji in the screen titles) is dropped rather than printed as garbage.
 from __future__ import annotations
 
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import results as resultslog
@@ -309,7 +309,8 @@ def _rgb(color: str) -> tuple[float, float, float]:
     c = (color or "#000000").lstrip("#")
     if len(c) == 3:
         c = "".join(ch * 2 for ch in c)
-    return tuple(int(c[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+    r, g, b = (int(c[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+    return r, g, b
 
 
 def _escape(text: str) -> str:
@@ -727,7 +728,7 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
     # Date labels thinned by pixel distance, like the widget: the axis is
     # calendar time, so neighbouring days are not neighbouring columns.
     gap = measure("00/00", FS_AXIS) + 16
-    kept: list[tuple[object, float]] = []
+    kept: list[tuple[date, float]] = []
     for d, _, _ in days:
         xd = to_x(d.toordinal())
         if not kept or xd - kept[-1][1] >= gap:

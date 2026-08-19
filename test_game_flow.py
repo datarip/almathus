@@ -90,8 +90,11 @@ def start(voice: bool):
     # A test that plays a deck to the end reaches the recap, which logs a session
     # to results/ — the real file the progress screen reads. Nothing here is a
     # game anyone played, so none of it is written down.
-    app._save_session = lambda *_a, **_k: None
-    app.stt = FakeSTT() if voice else None
+    # Stubbing out a method on one instance is the point of the line.
+    app._save_session = lambda *_a, **_k: None  # type: ignore[method-assign]
+    # FakeSTT stands in for SpeechInput structurally; subclassing it would probe
+    # for a microphone, which is exactly what these tests exist to avoid.
+    app.stt = FakeSTT() if voice else None  # type: ignore[assignment]
     app.voice_enabled.set(voice)
     app.count_var.set(5)
     app.allowed = {4}

@@ -26,7 +26,7 @@ from pathlib import Path
 
 # Players in order of preference, each with the flags that make it play one file
 # and get out of the way: no window, no console output, exit at the end.
-PLAYERS = (
+PLAYERS: tuple[tuple[str, list[str]], ...] = (
     ("afplay", []),  # macOS, built in
     ("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet"]),
     ("mpg123", ["-q"]),

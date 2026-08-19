@@ -27,12 +27,13 @@ import signal
 import time
 import tkinter as tk
 import traceback
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog
 from tkinter import font as tkfont
-from typing import Any
+from typing import Any, Literal
 
 import pdfreport
 import results as resultslog
@@ -41,7 +42,8 @@ import sfx
 try:
     import voice as voicemod
 except Exception:  # noqa: BLE001 - keep the game usable if voice.py is absent/broken
-    voicemod = None
+    # The module is optional; every use site already guards on it being None.
+    voicemod = None  # type: ignore[assignment]
 
 # --------------------------------------------------------------------------- #
 # Config
@@ -433,6 +435,20 @@ TITLE_SVG: str = _DEFAULT["TITLE_SVG"]
 TITLE_ICON: str = _DEFAULT["TITLE_ICON"]
 
 THEME: str = "default"
+
+
+Anchor = Literal["nw", "n", "ne", "w", "center", "e", "sw", "s", "se"]
+
+
+def _for_key(n: int, fn: Callable[[int], object]) -> Callable[[tk.Event], None]:
+    """A Tk event handler that calls fn(n). Binding `lambda e, k=n: fn(k)` in a
+    loop works, but a default argument is the only thing holding the value and
+    it cannot be typed; this closes over n explicitly instead."""
+
+    def handler(_event: tk.Event) -> None:
+        fn(n)
+
+    return handler
 
 
 def apply_theme(name: str) -> None:
@@ -894,12 +910,12 @@ class TimeChart(tk.Canvas):
         # Plotting needs both a date (x) and a time (y). Rows missing either
         # still show up in the table — they just can't be placed on the chart.
         plottable = [s for s in sessions if s.day and s.seconds is not None]
-        by_day: dict[object, list] = {}
+        by_day: dict[date, list[resultslog.Session]] = {}
         for s in plottable:
             by_day.setdefault(s.day, []).append(s)
         # (day, mean seconds, the sessions behind it) — one entry per day, in order
-        self.days = [
-            (d, sum(g_.seconds for g_ in g) / len(g), g)
+        self.days: list[tuple[date, float, list[resultslog.Session]]] = [
+            (d, sum(s_.seconds for s_ in g if s_.seconds is not None) / len(g), g)
             for d, g in sorted(by_day.items())
         ]
         self.font = font
@@ -921,7 +937,7 @@ class TimeChart(tk.Canvas):
         self.bind("<Leave>", lambda e: self.delete("tip"))
 
     @staticmethod
-    def _curve(pts: list[tuple[float, float, object]]) -> list[float]:
+    def _curve(pts: Sequence[tuple[float, float, Any]]) -> list[float]:
         """Sample a monotone cubic (Fritsch–Carlson) through every point.
 
         Tk's own `smooth=True` treats the coordinates as spline *control* points,
@@ -1030,7 +1046,7 @@ class TimeChart(tk.Canvas):
         # calendar time, so evenly spaced days are not evenly spaced columns
         # (two sessions a day apart would print on top of each other).
         gap = self.font.measure("00/00") + 22
-        kept: list[tuple[object, float]] = []
+        kept: list[tuple[date, float]] = []
         for d, _, _ in self.days:
             xd = to_x(d.toordinal())
             if not kept or xd - kept[-1][1] >= gap:
@@ -1610,9 +1626,9 @@ class Almathus(tk.Tk):
                 pady=8,
                 padx=(8 if n == NUM_MIN else 4, 8 if n == NUM_MAX else 4),
             )
-            lbl.bind("<Button-1>", lambda e, k=n: toggle(k))
-            lbl.bind("<Enter>", lambda e, k=n: paint(k, hover=True))
-            lbl.bind("<Leave>", lambda e, k=n: paint(k))
+            lbl.bind("<Button-1>", _for_key(n, toggle))
+            lbl.bind("<Enter>", _for_key(n, lambda k: paint(k, hover=True)))
+            lbl.bind("<Leave>", _for_key(n, paint))
             boxes[n] = lbl
             paint(n)
 
@@ -1633,10 +1649,11 @@ class Almathus(tk.Tk):
             btn.config(text=f"{T('voice_toggle')} : {'ON ✅' if on else 'OFF'}")
             btn.set_colors(GOOD if on else CARD_BG, INK if on else MUTED)
 
-        btn._command = lambda: (
-            self.voice_enabled.set(not self.voice_enabled.get()),
-            refresh(),
-        )
+        def toggle_voice() -> None:
+            self.voice_enabled.set(not self.voice_enabled.get())
+            refresh()
+
+        btn._command = toggle_voice
         btn.pack(side="left", padx=8)
         refresh()
 
@@ -1761,9 +1778,11 @@ class Almathus(tk.Tk):
             return
         self.render_card(in_retry)
 
-    def render_card(self, in_retry: bool):
-        self._clear()
+    def render_card(self, in_retry: bool) -> None:
         card = self.current
+        if card is None:  # next_card() always sets one before calling here
+            return
+        self._clear()
         self._card_done = False
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
@@ -1869,7 +1888,7 @@ class Almathus(tk.Tk):
         # marshal the done-callback back onto the Tk thread via the pump
         self.tts.speak(phrase, on_done=(lambda: self._post(then)) if then else None)
 
-    def _voice_arm(self, target):
+    def _voice_arm(self, target: Card) -> None:
         """Listen for one spoken answer; re-arms itself until the card changes."""
         if not (self.stt and self.stt.available()):
             return
@@ -1881,7 +1900,7 @@ class Almathus(tk.Tk):
             pick=lambda nums: spoken_answer(nums, target),
         )
 
-    def _voice_watch(self, target):
+    def _voice_watch(self, target: Card) -> None:
         """Keep the mic armed for as long as this card is up.
 
         Listening re-arms itself from its own result callback, which is a chain:
@@ -1925,7 +1944,7 @@ class Almathus(tk.Tk):
         elif state == "thinking":
             lbl.config(text=T("thinking"), fg=MUTED)
 
-    def _voice_result(self, n, target):
+    def _voice_result(self, n: int | None, target: Card) -> None:
         if self.current is not target or self._card_done:  # card already over
             return
         if n is not None:
@@ -1998,10 +2017,12 @@ class Almathus(tk.Tk):
         m, s = divmod(int(seconds), 60)
         return f"{m:02d}:{s:02d}"
 
-    def submit(self):
+    def submit(self) -> None:
         if self._card_done:  # already answered; the card is on its way out
             return
         card = self.current
+        if card is None:  # nothing is being asked; nothing to answer
+            return
         raw = self.answer_var.get().strip()
         if raw in ("", "-"):
             return
@@ -2149,8 +2170,10 @@ class Almathus(tk.Tk):
 
             # The sound player calls this from a worker thread, so it goes back
             # onto the Tk loop through the pump like every other voice callback.
-            def say():
-                self._post(lambda: self.tts.speak(spoken))
+            def say() -> None:
+                tts = self.tts
+                if tts is not None:
+                    self._post(lambda: tts.speak(spoken))
 
         # A beat before the music, so that the cheer for the card that just ended
         # the game gets to finish — starting a sound cuts the one before it, and
@@ -2246,7 +2269,7 @@ class Almathus(tk.Tk):
         listed = logged if current in logged else [current, *logged]
         # Open on this month, or — if nothing has been played in it yet — on the
         # last month that was, so the screen never opens on an empty chart.
-        self._month = (
+        self._month: tuple[int, int] | None = (
             current if current in logged else (logged[0] if logged else current)
         )
         self._all_sessions = sessions
@@ -2416,7 +2439,7 @@ class Almathus(tk.Tk):
 
         bind_wheel(canvas, wheel)
 
-        cols = (
+        cols: tuple[tuple[str, Anchor, int], ...] = (
             (T("col_date"), "w", 3),
             (T("col_family"), "w", 4),
             (T("col_time"), "e", 3),

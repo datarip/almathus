@@ -30,6 +30,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog
 from tkinter import font as tkfont
+from typing import Any
 
 import pdfreport
 import results as resultslog
@@ -334,84 +335,114 @@ def month_label(ym: tuple[int, int] | None) -> str:
 # a kid can flip to from the settings footer. Every screen reads these names as
 # module globals *while it builds its widgets*, so switching themes is
 # apply_theme() followed by a redraw — nothing repaints itself in place.
-THEMES = {
-    "default": dict(
-        BG="#0f1226",
-        CARD_BG="#1b1f3b",
-        ACCENT="#ffd23f",
-        GOOD="#3ddc97",
-        BAD="#ff6b6b",
-        TEXT="#f5f6ff",
-        MUTED="#9aa0c8",
-        INK="#10121f",  # text laid on top of a bright tile
-        SURFACE="#191d3d",  # raised panel, one step above the page background
-        BORDER="#2b3160",  # hairline outline for panels and chips
-        ENTRY_BG="#12152e",  # the answer box, one step *below* the page
+THEMES: dict[str, dict[str, Any]] = {
+    "default": {
+        "BG": "#0f1226",
+        "CARD_BG": "#1b1f3b",
+        "ACCENT": "#ffd23f",
+        "GOOD": "#3ddc97",
+        "BAD": "#ff6b6b",
+        "TEXT": "#f5f6ff",
+        "MUTED": "#9aa0c8",
+        "INK": "#10121f",  # text laid on top of a bright tile
+        "SURFACE": "#191d3d",  # raised panel, one step above the page background
+        "BORDER": "#2b3160",  # hairline outline for panels and chips
+        "ENTRY_BG": "#12152e",  # the answer box, one step *below* the page
         # Soft, cheerful and deliberately gender-neutral: mint, sky, apricot,
         # lilac. All four are light enough to carry the same near-black text.
-        MODE_COLORS={
+        "MODE_COLORS": {
             "addition": "#4fd1a5",
             "subtraction": "#6cb8f5",
             "multiplication": "#ff9e7d",
             "division": "#b39ddb",
         },
-        NUM_ON_BG="#4fd1a5",
-        NUM_ON_FG="#10121f",
-        NUM_OFF_BG="#333a63",
-        NUM_OFF_FG="#8b93c4",
-        NUM_HOVER_BG="#4b5490",
+        "NUM_ON_BG": "#4fd1a5",
+        "NUM_ON_FG": "#10121f",
+        "NUM_OFF_BG": "#333a63",
+        "NUM_OFF_FG": "#8b93c4",
+        "NUM_HOVER_BG": "#4b5490",
         # Hovering an operation tile lifts it away from the page: bright here,
         # deep on the light palette. Either way the label stays legible.
-        TILE_HOVER_BG="#f5f6ff",
-        TILE_HOVER_FG="#10121f",
-        TITLE_SVG="mario.svg",
-        TITLE_ICON="🧮",  # fallback if the drawing cannot be loaded
-    ),
+        "TILE_HOVER_BG": "#f5f6ff",
+        "TILE_HOVER_FG": "#10121f",
+        "TITLE_SVG": "mario.svg",
+        "TITLE_ICON": "🧮",  # fallback if the drawing cannot be loaded
+    },
     # Peach-pink page, plum ink. The whole palette flips light here, so the
     # greens and reds are darkened too: they carry text on a pale background
     # now, where the dark theme's pastels would wash out.
-    "girly": dict(
-        BG="#ffe6ef",
-        CARD_BG="#ffc8dd",
-        ACCENT="#e6338c",
-        GOOD="#12996f",
-        BAD="#e0304f",
-        TEXT="#43152c",
-        MUTED="#8f5872",
-        INK="#3d0f26",
-        SURFACE="#fff4f8",
-        BORDER="#f3aecb",
-        ENTRY_BG="#fff4f8",
-        MODE_COLORS={
+    "girly": {
+        "BG": "#ffe6ef",
+        "CARD_BG": "#ffc8dd",
+        "ACCENT": "#e6338c",
+        "GOOD": "#12996f",
+        "BAD": "#e0304f",
+        "TEXT": "#43152c",
+        "MUTED": "#8f5872",
+        "INK": "#3d0f26",
+        "SURFACE": "#fff4f8",
+        "BORDER": "#f3aecb",
+        "ENTRY_BG": "#fff4f8",
+        "MODE_COLORS": {
             "addition": "#ff9ec7",
             "subtraction": "#cbaaf2",
             "multiplication": "#ffb08a",
             "division": "#ffe08a",
         },
-        NUM_ON_BG="#ff7ab8",
-        NUM_ON_FG="#3d0f26",
-        NUM_OFF_BG="#ffd9e6",
-        NUM_OFF_FG="#b07f96",
-        NUM_HOVER_BG="#ffb3d3",
+        "NUM_ON_BG": "#ff7ab8",
+        "NUM_ON_FG": "#3d0f26",
+        "NUM_OFF_BG": "#ffd9e6",
+        "NUM_OFF_FG": "#b07f96",
+        "NUM_HOVER_BG": "#ffb3d3",
         # A deeper cut of ACCENT, so the tile reads as the same hot pink the rest
         # of this palette uses for "chosen", with white text over it.
-        TILE_HOVER_BG="#d81b7a",
-        TILE_HOVER_FG="#fff4f8",
-        TITLE_SVG="peach.svg",
-        TITLE_ICON="👑",
-    ),
+        "TILE_HOVER_BG": "#d81b7a",
+        "TILE_HOVER_FG": "#fff4f8",
+        "TITLE_SVG": "peach.svg",
+        "TITLE_ICON": "👑",
+    },
 }
+
+
+# The palette names every screen below reads. They are spelled out here, rather
+# than left for globals().update() to conjure, so a reader — and a linter, and a
+# type checker — can see where they come from. apply_theme() rebinds them; these
+# initial values are the default theme's, so the names are live from import on.
+_DEFAULT = THEMES["default"]
+
+BG: str = _DEFAULT["BG"]
+CARD_BG: str = _DEFAULT["CARD_BG"]
+ACCENT: str = _DEFAULT["ACCENT"]
+GOOD: str = _DEFAULT["GOOD"]
+BAD: str = _DEFAULT["BAD"]
+TEXT: str = _DEFAULT["TEXT"]
+MUTED: str = _DEFAULT["MUTED"]
+INK: str = _DEFAULT["INK"]
+SURFACE: str = _DEFAULT["SURFACE"]
+BORDER: str = _DEFAULT["BORDER"]
+ENTRY_BG: str = _DEFAULT["ENTRY_BG"]
+MODE_COLORS: dict[str, str] = _DEFAULT["MODE_COLORS"]
+NUM_ON_BG: str = _DEFAULT["NUM_ON_BG"]
+NUM_ON_FG: str = _DEFAULT["NUM_ON_FG"]
+NUM_OFF_BG: str = _DEFAULT["NUM_OFF_BG"]
+NUM_OFF_FG: str = _DEFAULT["NUM_OFF_FG"]
+NUM_HOVER_BG: str = _DEFAULT["NUM_HOVER_BG"]
+TILE_HOVER_BG: str = _DEFAULT["TILE_HOVER_BG"]
+TILE_HOVER_FG: str = _DEFAULT["TILE_HOVER_FG"]
+TITLE_SVG: str = _DEFAULT["TITLE_SVG"]
+TITLE_ICON: str = _DEFAULT["TITLE_ICON"]
+
+THEME: str = "default"
 
 
 def apply_theme(name: str) -> None:
     """Rebind the palette globals to one of THEMES. Widgets that already exist
     keep the colors they were built with, so callers redraw the screen after."""
-    global THEME
+    global THEME  # noqa: PLW0603 — the palette *is* module state; see above.
     THEME = name if name in THEMES else "default"
     globals().update(THEMES[THEME])
 
 
-THEME = "default"
 apply_theme(THEME)
 
 OP_SYMBOL = {

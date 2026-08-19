@@ -16,7 +16,7 @@ display, and it does not touch the microphone — the speech input is stubbed.
 import sys
 import time
 
-import main as M
+import main as almathus
 
 
 def pump(app, seconds=0.2):
@@ -43,6 +43,8 @@ class FakeSTT:
         self.break_chain = False  # swallow the result, like a dropped callback
         self._listening = False
         self._on_result = None
+        self._on_state = None
+        self._pick = None
 
     def available(self):
         return True
@@ -56,6 +58,8 @@ class FakeSTT:
         self.arm_count += 1
         self._listening = True
         self._on_result = on_result
+        self._on_state = on_state
+        self._pick = pick
 
     def deliver(self, n):
         """What the recognizer reports: an int, or None for 'not an answer'."""
@@ -81,12 +85,12 @@ class FakeSTT:
 
 
 def start(voice: bool):
-    app = M.Almathus()
+    app = almathus.Almathus()
     app.tts = None  # no speech: the mic arms immediately
     # A test that plays a deck to the end reaches the recap, which logs a session
     # to results/ — the real file the progress screen reads. Nothing here is a
     # game anyone played, so none of it is written down.
-    app._save_session = lambda *a, **k: None
+    app._save_session = lambda *_a, **_k: None
     app.stt = FakeSTT() if voice else None
     app.voice_enabled.set(voice)
     app.count_var.set(5)
@@ -181,25 +185,29 @@ def test_spoken_answer():
     the sound behind it was a voice at all is decided upstream, by the acoustic
     gate in voice.SpeechInput._judge.
     """
-    card = M.Card(9, 4, "subtraction", 5)  # a "− 4" session: 4 is on every card
+    card = almathus.Card(9, 4, "subtraction", 5)  # a "− 4" session: 4 is on every card
 
-    assert M.spoken_answer([5], card) == 5, "the right answer was not taken"
-    assert M.spoken_answer([7], card) == 7, "a wrong answer was not taken"
-    assert M.spoken_answer([9, 4, 5], card) == 5, (
+    assert almathus.spoken_answer([5], card) == 5, "the right answer was not taken"
+    assert almathus.spoken_answer([7], card) == 7, "a wrong answer was not taken"
+    assert almathus.spoken_answer([9, 4, 5], card) == 5, (
         "the question read back, then answered"
     )
-    assert M.spoken_answer([], card) is None
-    assert M.spoken_answer([9, 4], card) is None, "the question read back was scored"
-    assert M.spoken_answer([3, 7], card) == 7, "self-correction: the last number wins"
+    assert almathus.spoken_answer([], card) is None
+    assert almathus.spoken_answer([9, 4], card) is None, (
+        "the question read back was scored"
+    )
+    assert almathus.spoken_answer([3, 7], card) == 7, (
+        "self-correction: the last number wins"
+    )
 
     # A lone operand is a perfectly ordinary wrong answer — a whole session is
     # built on one number ("− 4"), so refusing it here made that number unsayable
     # on every card of the session.
-    assert M.spoken_answer([4], card) == 4, "a lone operand was refused outright"
+    assert almathus.spoken_answer([4], card) == 4, "a lone operand was refused outright"
 
     # An operand that IS the answer was never in doubt.
-    exact = M.Card(8, 4, "subtraction", 4)
-    assert M.spoken_answer([4], exact) == 4, "the right answer was refused"
+    exact = almathus.Card(8, 4, "subtraction", 4)
+    assert almathus.spoken_answer([4], exact) == 4, "the right answer was refused"
 
 
 def test_voice_wrong_answer():
@@ -228,7 +236,7 @@ def test_voice_wrong_answer():
             cur = app.current
             assert wait_for(app, app.stt.listening, 5), "the mic went deaf mid-deck"
             app.stt.deliver(cur.answer)
-            assert wait_for(app, lambda: app.current is not cur, 5), (
+            assert wait_for(app, lambda cur=cur: app.current is not cur, 5), (
                 "a correct spoken answer did not advance"
             )
 

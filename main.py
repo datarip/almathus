@@ -1929,13 +1929,13 @@ class Almathus(tk.Tk):
         if self.current is not target or self._card_done:  # card already over
             return
         if n is not None:
-            self._voice_answer(n, target)
+            self._voice_answer(n)
             return
         # nothing recognized this round: keep listening (unless the mic is unusable)
         if not self._voice_mic_bad and self.voice_enabled.get():
             self._voice_arm(target)
 
-    def _voice_answer(self, n: int, target):
+    def _voice_answer(self, n: int) -> None:
         """A number was heard: that is this card's answer, right or wrong.
 
         A spoken number is committed the moment it is understood — exactly as if

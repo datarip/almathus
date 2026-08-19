@@ -460,12 +460,8 @@ class Pdf:
         n_pages = len(self.pages)
         page_ids = [5 + 2 * i for i in range(n_pages)]
         add(b"<< /Type /Catalog /Pages 2 0 R >>")
-        add(
-            (
-                "<< /Type /Pages /Count %d /Kids [%s] >>"
-                % (n_pages, " ".join(f"{i} 0 R" for i in page_ids))
-            ).encode("ascii")
-        )
+        kids = " ".join(f"{i} 0 R" for i in page_ids)
+        add(f"<< /Type /Pages /Count {n_pages} /Kids [{kids}] >>".encode("ascii"))
         for name in ("Helvetica", "Helvetica-Bold"):
             add(
                 (
@@ -477,9 +473,9 @@ class Pdf:
             stream = "\n".join(ops).encode("latin-1", "replace")
             add(
                 (
-                    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %s %s] "
+                    f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_n(self.w)} {_n(self.h)}] "
                     "/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> "
-                    "/Contents %d 0 R >>" % (_n(self.w), _n(self.h), page_ids[i] + 1)
+                    f"/Contents {page_ids[i] + 1} 0 R >>"
                 ).encode("ascii")
             )
             add(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")

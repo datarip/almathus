@@ -94,6 +94,7 @@ STRINGS = {
         "correct": "Bravo ! 🎉",
         "wrong": "Presque ! La réponse était {a}",
         "voice_toggle": "🎤 Répondre à la voix",
+        "dictation_toggle": "🔊 Lire la carte",
         "girly_toggle": "👑 Mode princesse",
         "voice_off_hint": "🎤 Voix indisponible : {reason}",
         "listening": "🎧 à l'écoute…",
@@ -150,6 +151,7 @@ STRINGS = {
         "correct": "Well done! 🎉",
         "wrong": "Almost! The answer was {a}",
         "voice_toggle": "🎤 Answer by voice",
+        "dictation_toggle": "🔊 Read the card",
         "girly_toggle": "👑 Girly mode",
         "voice_off_hint": "🎤 Voice unavailable: {reason}",
         "listening": "🎧 listening…",
@@ -520,6 +522,13 @@ def load_theme() -> str:
     """The palette chosen last time — girly mode outlives a restart."""
     name = read_prefs().get("theme")
     return name if name in THEMES else "default"
+
+
+def load_dictation() -> bool:
+    """Whether each question is read aloud. On unless it was switched off: a
+    child who is still learning to read the signs needs to hear the card, and
+    that is the mode the game was built around."""
+    return bool(read_prefs().get("dictation", True))
 
 
 # --------------------------------------------------------------------------- #
@@ -1279,6 +1288,10 @@ class Almathus(tk.Tk):
         self.stt = voicemod.SpeechInput(LANG) if voicemod else None
         stt_ok = bool(self.stt and self.stt.available())
         self.voice_enabled = tk.BooleanVar(value=stt_ok)
+        # Dictation: the question read aloud before the child answers it. Off,
+        # the card is only *shown* — and then nothing stands between showing it
+        # and playing it, so the clock and the microphone both start at once.
+        self.dictation_enabled = tk.BooleanVar(value=load_dictation())
 
         # thread-safe channel: worker threads (STT/TTS) post callables here and
         # the pump runs them on the Tk main loop — never touch Tk off-thread.
@@ -1531,6 +1544,7 @@ class Almathus(tk.Tk):
         footer = tk.Frame(col, bg=BG)
         footer.pack(pady=(18, 4))
         self._build_voice_toggle(footer)
+        self._build_dictation_toggle(footer)
         self._build_girly_toggle(footer)
         Btn(
             footer,
@@ -1542,6 +1556,29 @@ class Almathus(tk.Tk):
             padx=22,
             pady=10,
         ).pack(side="left", padx=8)
+        self._wrap_footer(footer)
+
+    def _wrap_footer(self, footer) -> None:
+        """Fold the footer onto a second row when one row is wider than the screen.
+
+        A packed row that does not fit is not shrunk, it is cut off at both ends
+        — the outermost options simply stop being there, with nothing to say they
+        ever were. How wide the row comes out cannot be predicted: the labels are
+        translated and the fonts are scaled to the display, so it is measured and
+        folded only when it has to be.
+        """
+        buttons = footer.winfo_children()
+        footer.update_idletasks()
+        room = self.winfo_screenwidth() - 96  # the column's padding, both sides
+        if len(buttons) < 2 or footer.winfo_reqwidth() <= room:
+            return
+        # Pack and grid cannot share a parent, so the row is unpacked first and
+        # every button re-placed; both geometry managers are the frame's own.
+        per_row = (len(buttons) + 1) // 2
+        for b in buttons:  # every one of them, before the first grid() call
+            b.pack_forget()
+        for i, b in enumerate(buttons):
+            b.grid(row=i // per_row, column=i % per_row, padx=8, pady=4, sticky="ew")
 
     def _build_title(self, parent):
         """'<drawing> Almathus' — Mario normally, Peach in girly mode."""
@@ -1654,6 +1691,33 @@ class Almathus(tk.Tk):
             refresh()
 
         btn._command = toggle_voice
+        btn.pack(side="left", padx=8)
+        refresh()
+
+    def _build_dictation_toggle(self, parent):
+        """Read the question aloud, or only show it.
+
+        Hidden when there is no speech synthesis to switch off — the game then
+        already plays the way this toggle's OFF position describes.
+        """
+        if not (self.tts and self.tts.available()):
+            return
+
+        btn = Btn(parent, "", font=self.f_body, padx=22, pady=10)
+
+        def refresh():
+            on = self.dictation_enabled.get()
+            btn.config(text=f"{T('dictation_toggle')} : {'ON ✅' if on else 'OFF'}")
+            btn.set_colors(GOOD if on else CARD_BG, INK if on else MUTED)
+
+        def toggle_dictation() -> None:
+            self.dictation_enabled.set(not self.dictation_enabled.get())
+            # written on every tap: quitting goes through os._exit(), so there is
+            # no exit hook late enough to be trusted with this
+            write_prefs(dictation=self.dictation_enabled.get())
+            refresh()
+
+        btn._command = toggle_dictation
         btn.pack(side="left", padx=8)
         refresh()
 
@@ -1826,6 +1890,9 @@ class Almathus(tk.Tk):
         ).grid(row=1, column=0, pady=(0, 8))
 
         voice_on = bool(self.voice_enabled.get() and self.stt and self.stt.available())
+        dictation_on = bool(
+            self.dictation_enabled.get() and self.tts and self.tts.available()
+        )
 
         inputs = tk.Frame(body, bg=BG)
         inputs.grid(row=2, column=0, pady=(0, 8))
@@ -1865,13 +1932,25 @@ class Almathus(tk.Tk):
         if not voice_on:
             self._show_keypad()
 
+        # The clock starts with the card, dictation or not: what is being timed
+        # is the whole moment the child is given the question, and with the
+        # question read aloud that moment opens with the reading. Answering
+        # before the sentence is finished is allowed, and the times of two
+        # sessions played the same way stay comparable, which is the only thing
+        # the progress screen ever asks of them.
         self.card_start = time.perf_counter()
         self._tick()
 
-        # read the operation aloud, then listen continuously
+        # Dictation on: read the operation aloud, then listen. Off: the card is
+        # only shown, so there is nothing to wait for — arm the mic on the spot.
         if voice_on:
-            self._speak_operation(card, then=lambda: self._voice_arm(card))
+            if dictation_on:
+                self._speak_operation(card, then=lambda: self._voice_arm(card))
+            else:
+                self._voice_arm(card)
             self._voice_watch(card)
+        elif dictation_on:
+            self._speak_operation(card)
 
     def _show_keypad(self):
         kp = getattr(self, "keypad_frame", None)

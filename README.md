@@ -165,12 +165,27 @@ the **Amélie** French voice — nothing to install, fully offline.
   *System Settings → Accessibility → Spoken Content → System Voice → Manage Voices*).
 - Off macOS it falls back to `pyttsx3` if installed.
 
+### 🔊 Dictation — the question read aloud (toggle on the settings screen)
+
+**ON** (the default) each card is read aloud — *“sept fois quatre”* — before the
+child answers: the mode the game was built for, for a child who is faster with
+numbers than with the signs. The mic opens when the reading ends, so the machine
+never records its own voice.
+
+**OFF** the card is only shown, and nothing stands between showing it and playing
+it: the mic opens with the card and the child can answer straight away.
+
+Either way the card's clock starts the instant the card appears, so a session
+played one way is only comparable with sessions played the same way — the reading
+is part of the time. The choice is remembered between runs (`prefs.json`).
+
 ### 🎤 Answer by voice — the two-stage pipeline
 
 When enabled (toggle on the settings screen), voice input runs **continuously and
-in parallel with the keypad** — there is no mic button. Each card is read aloud,
-then the app keeps listening and re-arming until the card changes. A spoken number
-is auto-filled and auto-submitted; the keypad stays fully usable the whole time.
+in parallel with the keypad** — there is no mic button. With dictation on the card
+is read aloud first; then the app keeps listening and re-arming until the card
+changes. A spoken number is auto-filled and auto-submitted; the keypad stays fully
+usable the whole time.
 
 ```
 mic audio ─▶ [VAD record] ─▶ [is it a voice?] ─▶ Vosk ─▶ [numbers only?] ─▶ [sure?] ─▶ submit
@@ -298,7 +313,9 @@ utterances arrive from the recognizer over a long think and not one of them may
 move the card, and the mic must never go deaf while it is up.
 `test_voice_wrong_answer` holds the other half — a number that *is* recognized
 scores the card at once, wrong included, and that card comes back exactly once,
-at the end.
+at the end. `test_dictation_modes` pins the two openings of a card: with
+dictation on the mic stays shut until the reading is over, with it off the mic
+opens with the card, and the clock starts with the card either way.
 
 Nothing outside `voice.py` reads the variable — the keypad, timing, and results
 log behave identically whether it is set or not.

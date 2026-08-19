@@ -84,9 +84,46 @@ class FakeSTT:
         pass
 
 
-def start(voice: bool):
+class FakeTTS:
+    """Stands in for voice.TTS, with nothing speaking behind it.
+
+    The real one hands its done-callback back from a watcher thread; this one
+    hands it back from finish(), so a test says when the sentence ends.
+    """
+
+    def __init__(self):
+        self.said = []
+        self._speaking = False
+        self._on_done = None
+
+    def available(self):
+        return True
+
+    def speak(self, text, on_done=None):
+        self.said.append(text)
+        self._speaking = True
+        self._on_done = on_done
+
+    def speaking(self):
+        return self._speaking
+
+    def finish(self):
+        self._speaking = False
+        cb, self._on_done = self._on_done, None
+        if cb:
+            cb()
+
+    def stop(self):
+        self._speaking = False
+        self._on_done = None
+
+
+def start(voice: bool, dictation: bool = False):
     app = almathus.Almathus()
-    app.tts = None  # no speech: the mic arms immediately
+    # Speech synthesis is always there to be switched on, so that "dictation
+    # off" is tested as the choice it is and not as a machine that cannot talk.
+    # FakeTTS stands in for TTS structurally, like FakeSTT below.
+    app.tts = FakeTTS()  # type: ignore[assignment]
     # A test that plays a deck to the end reaches the recap, which logs a session
     # to results/ — the real file the progress screen reads. Nothing here is a
     # game anyone played, so none of it is written down.
@@ -96,6 +133,7 @@ def start(voice: bool):
     # for a microphone, which is exactly what these tests exist to avoid.
     app.stt = FakeSTT() if voice else None  # type: ignore[assignment]
     app.voice_enabled.set(voice)
+    app.dictation_enabled.set(dictation)
     app.count_var.set(5)
     app.allowed = {4}
     app.start_game("addition")
@@ -181,6 +219,39 @@ def test_voice_flow():
         app.destroy()
 
 
+def test_dictation_modes():
+    """Dictation decides what the card opens with — and the mic follows it.
+
+    On, the question is read and the mic stays shut until the reading is over,
+    so the child is not recorded answering the machine's own voice. Off, there
+    is nothing to wait for: the card is shown, the clock runs, the mic is open.
+    Either way the clock starts with the card.
+    """
+    app = start(voice=True, dictation=True)
+    try:
+        card = app.current
+        assert app.tts.said, "the question was never read aloud"
+        assert not app.stt.listening(), "the mic opened over the question being read"
+        assert app.card_start > 0, "the clock did not start with the card"
+        app.tts.finish()
+        assert wait_for(app, app.stt.listening, 5), (
+            "the mic never opened after the reading"
+        )
+        assert app.current is card, "the card moved while nothing was answered"
+    finally:
+        app._shutdown()
+        app.destroy()
+
+    app = start(voice=True, dictation=False)
+    try:
+        assert app.tts.said == [], "the card was read aloud with dictation off"
+        assert app.stt.listening(), "the mic did not open with the card"
+        assert app.card_start > 0, "the clock did not start with the card"
+    finally:
+        app._shutdown()
+        app.destroy()
+
+
 def test_spoken_answer():
     """Which number of an utterance is the answer — and which is the card.
 
@@ -259,20 +330,22 @@ def test_voice_wrong_answer():
 
 
 def main() -> int:
-    failures = []
-    for test in (
+    tests = (
         test_spoken_answer,
         test_keypad_flow,
         test_voice_flow,
         test_voice_wrong_answer,
-    ):
+        test_dictation_modes,
+    )
+    failures = []
+    for test in tests:
         try:
             test()
             print(f"ok   {test.__name__}")
         except Exception as e:  # noqa: BLE001 — a failure report, not a handler
             failures.append(f"FAIL {test.__name__}: {e}")
             print(failures[-1])
-    print(f"{5 - len(failures)}/5 passed")
+    print(f"{len(tests) - len(failures)}/{len(tests)} passed")
     return 1 if failures else 0
 
 

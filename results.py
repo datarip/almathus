@@ -14,11 +14,11 @@ HEADER DEFINITION
 
 Canonical French header (written when LANG = "fr"):
 
-    date,famille,temps,cartes,note,temps_moyen_par_carte
+    date,famille,temps,cartes,note,temps_moyen_par_carte,difficultes
 
 Canonical English header (written when LANG = "en"):
 
-    date,family,time,cards,grade,average_time_per_card
+    date,family,time,cards,grade,average_time_per_card,difficulty
 
 | field         | fr header               | en header              | meaning                                   |
 |---------------|-------------------------|------------------------|-------------------------------------------|
@@ -28,6 +28,7 @@ Canonical English header (written when LANG = "en"):
 | `cartes`      | `cartes`                | `cards`                | how many cards were asked                 |
 | `note`        | `note`                  | `grade`                | cards answered right the first time       |
 | `temps_moyen` | `temps_moyen_par_carte` | `average_time_per_card`| `temps / cartes`                          |
+| `difficultes` | `difficultes`           | `difficulty`           | the five cards that fought back           |
 
 Either language is accepted on read, in any column order, and header matching
 ignores case, accents, spaces and underscores — so `Temps`, `temps`,
@@ -67,6 +68,13 @@ Hand-editing rules
   including the pause after each answer and the reinforcement round — by the
   number of cards, so it stays consistent with the two columns beside it and can
   be checked with a calculator.
+* **difficultes** — the cards the session fought with, hardest first, comma
+  separated: `18 - 4, 11 - 4, 13 - 4`. Same ASCII signs as the `famille` cell,
+  so it is as easy to type as it is to read. A card lands here for being wrong
+  on the first try, or for being slow — see `TOP_DIFFICULT` and the ranking in
+  `main.difficult_cards`. **The next session reads this cell back** and deals
+  each of yesterday's operations twice, so writing one in by hand is a way to
+  say "drill this tomorrow".
 
 Rows that can't be parsed at all are skipped on read; they are never rewritten,
 so nothing you type here can be destroyed by the app.
@@ -82,7 +90,8 @@ import csv
 import io
 import unicodedata
 from collections import Counter
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import date as _date
 from datetime import datetime
 from pathlib import Path
@@ -90,9 +99,22 @@ from pathlib import Path
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 RESULTS_FILE = RESULTS_DIR / "results.csv"
 
-# The six logical fields, in canonical order. `temps_moyen` is derived but kept
-# as a real column so it can be hand-filled for rows with no card count.
-FIELDS = ("date", "famille", "temps", "cartes", "note", "temps_moyen")
+# The logical fields, in canonical order. `temps_moyen` is derived but kept as a
+# real column so it can be hand-filled for rows with no card count; `difficultes`
+# comes last because it is the only free-text one, and a long cell at the end of
+# a line is the one place it cannot push anything out of sight.
+FIELDS = (
+    "date",
+    "famille",
+    "temps",
+    "cartes",
+    "note",
+    "temps_moyen",
+    "difficultes",
+)
+
+# How many cards a session records as its difficulties.
+TOP_DIFFICULT = 5
 
 HEADERS = {
     "fr": {
@@ -102,6 +124,7 @@ HEADERS = {
         "cartes": "cartes",
         "note": "note",
         "temps_moyen": "temps_moyen_par_carte",
+        "difficultes": "difficultes",
     },
     "en": {
         "date": "date",
@@ -110,6 +133,7 @@ HEADERS = {
         "cartes": "cards",
         "note": "grade",
         "temps_moyen": "average_time_per_card",
+        "difficultes": "difficulty",
     },
 }
 
@@ -149,6 +173,14 @@ ALIASES = {
         "avg_time",
         "avg_time_per_card",
         "average",
+    ),
+    "difficultes": (
+        "difficultes",
+        "difficulte",
+        "difficulty",
+        "difficulties",
+        "cartes_difficiles",
+        "hard_cards",
     ),
 }
 
@@ -276,6 +308,69 @@ def parse_note(text: str) -> int | None:
     return parse_int((text or "").split("/")[0])
 
 
+# Every sign we accept where an operation is written. The four on the left are
+# the ones we write (`CSV_OP`); the rest are what a keyboard, a textbook or a
+# copy-paste from the screen puts there instead — the typographic minus and
+# times signs the game itself shows, and the `:` French schoolbooks divide with.
+_OP_SIGNS = {
+    **{sign: mode for mode, sign in CSV_OP.items()},
+    "−": "subtraction",
+    "–": "subtraction",
+    "*": "multiplication",
+    "X": "multiplication",
+    "×": "multiplication",
+    "÷": "division",
+    ":": "division",
+}
+
+
+def fmt_operation(mode: str, a: int, b: int) -> str:
+    """One operation, written for the log: `18 - 4`.
+
+    ASCII signs, like the `famille` cell — the two columns describe the same
+    thing, and a cell you can retype on any keyboard is one a parent can edit.
+    """
+    return f"{a} {CSV_OP.get(mode, '?')} {b}"
+
+
+def parse_operation(text: str) -> tuple[str, int, int] | None:
+    """Read `18 - 4` back into `("subtraction", 18, 4)`. None if it isn't one.
+
+    Spaces are optional and every sign in `_OP_SIGNS` is accepted, so the form
+    the screen shows (`18 − 4`) reads as happily as the one we write.
+    """
+    s = (text or "").strip()
+    # From index 1: the first character can only ever be part of the left
+    # operand, and both operands are whole and positive here.
+    for i in range(1, len(s)):
+        mode = _OP_SIGNS.get(s[i])
+        if mode is None:
+            continue
+        a, b = s[:i].strip(), s[i + 1 :].strip()
+        if a.isdigit() and b.isdigit():
+            return mode, int(a), int(b)
+    return None
+
+
+def fmt_difficulties(ops: Sequence[str]) -> str:
+    """The `difficultes` cell: the hardest cards, hardest first, `a, b, c`."""
+    return ", ".join(op.strip() for op in ops if op.strip())
+
+
+def parse_difficulties(text: str) -> list[str]:
+    """The cell, back into the list of operations that was written in it.
+
+    Anything that isn't an operation is dropped rather than carried around: the
+    cell is read to *deal cards from*, and a card is the only thing it can make.
+    """
+    out: list[str] = []
+    for part in (text or "").split(","):
+        parsed = parse_operation(part)
+        if parsed and (op := fmt_operation(*parsed)) not in out:
+            out.append(op)
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Model
 # --------------------------------------------------------------------------- #
@@ -293,6 +388,9 @@ class Session:
     avg_seconds: float | None
     correct: int | None = None
     raw_time: str = ""
+    # The cards this session fought with, hardest first — already normalized to
+    # `18 - 4` form, so the next session can deal straight from them.
+    difficultes: list[str] = field(default_factory=list)
 
     @property
     def avg(self) -> float | None:
@@ -419,6 +517,7 @@ def load_sessions(path: Path | None = None) -> list[Session]:
                 avg_seconds=parse_duration(cell(row, "temps_moyen")),
                 correct=parse_note(cell(row, "note")),
                 raw_time=raw_time,
+                difficultes=parse_difficulties(cell(row, "difficultes")),
             )
         )
     # Oldest first; undated rows sink to the bottom but keep their file order.
@@ -501,6 +600,7 @@ def append_session(
     correct: int | None = None,
     lang: str = "fr",
     path: Path | None = None,
+    difficultes: Sequence[str] | None = None,
 ) -> None:
     """Add one line at the bottom, matching whatever header the file already has.
 
@@ -545,6 +645,9 @@ def append_session(
         # plain seconds: a per-card average reads better as `4.8` than `0:04.8`
         # (and is read back just as happily).
         "temps_moyen": f"{seconds / cards:.1f}" if cards else "",
+        # Hardest first. A session with nothing to say here writes nothing, and
+        # the column is then simply not added to a file that never needed it.
+        "difficultes": fmt_difficulties(difficultes or ()),
     }
 
     # A file written before a column existed has nowhere to put it: give it one
@@ -555,9 +658,9 @@ def append_session(
         cols = _header_map(header)
 
     row = [""] * len(header)
-    for field, i in cols.items():
+    for col, i in cols.items():
         if i < len(row):
-            row[i] = values.get(field, "")
+            row[i] = values.get(col, "")
 
     try:
         with path.open("a", newline="", encoding="utf-8") as fh:

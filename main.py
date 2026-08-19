@@ -346,6 +346,10 @@ THEMES: dict[str, dict[str, Any]] = {
         "BG": "#0f1226",
         "CARD_BG": "#1b1f3b",
         "ACCENT": "#ffd23f",
+        # The progress chart's second line — the grades, against the times drawn
+        # in ACCENT. Blue against yellow is the widest hue gap the palette has,
+        # and the one pair the common colour blindnesses still tell apart.
+        "CHART_GRADE": "#6cb8f5",
         "GOOD": "#3ddc97",
         "BAD": "#ff6b6b",
         "TEXT": "#f5f6ff",
@@ -381,6 +385,9 @@ THEMES: dict[str, dict[str, Any]] = {
         "BG": "#ffe6ef",
         "CARD_BG": "#ffc8dd",
         "ACCENT": "#e6338c",
+        # Deep enough to read on the pink page, and far enough from the hot pink
+        # of the time curve that no one has to guess which line is which.
+        "CHART_GRADE": "#1b7fa3",
         "GOOD": "#12996f",
         "BAD": "#e0304f",
         "TEXT": "#43152c",
@@ -419,6 +426,7 @@ _DEFAULT = THEMES["default"]
 BG: str = _DEFAULT["BG"]
 CARD_BG: str = _DEFAULT["CARD_BG"]
 ACCENT: str = _DEFAULT["ACCENT"]
+CHART_GRADE: str = _DEFAULT["CHART_GRADE"]
 GOOD: str = _DEFAULT["GOOD"]
 BAD: str = _DEFAULT["BAD"]
 TEXT: str = _DEFAULT["TEXT"]
@@ -1058,12 +1066,10 @@ class Dropdown(Btn):
 class TimeChart(tk.Canvas):
     PAD_L, PAD_R, PAD_T, PAD_B = 66, 24, 16, 30
     HIT = 32  # px: how close the pointer must be to a dot
-    LANE_GAP = 6  # px: clearance between the plot floor and the note lane
-    TAG_GAP = 6  # px: clearance between two tags sharing the lane
     # Round y steps a parent reads at a glance: 5 s up to 15 min.
     STEPS = (5, 10, 15, 20, 30, 60, 90, 120, 180, 300, 600, 900)
 
-    def __init__(self, parent, sessions, font, note_font=None, height=220):
+    def __init__(self, parent, sessions, font, height=220):
         super().__init__(parent, bg=BG, height=height, highlightthickness=0, bd=0)
         # Plotting needs both a date (x) and a time (y). Rows missing either
         # still show up in the table — they just can't be placed on the chart.
@@ -1077,19 +1083,26 @@ class TimeChart(tk.Canvas):
             for d, g in sorted(by_day.items())
         ]
         self.font = font
-        # The tags get their own, smaller face. They share one lane under the
-        # plot, so at the axis' size a fortnight of daily sessions left room for
-        # barely a third of them; small and bold, most of them fit and still read.
-        self.note_font = note_font or font
-        self.NOTE_H = self.note_font.metrics("linespace") + 4
-        self.has_notes = any(resultslog.grade(g) for _, _, g in self.days)
+        # The second series: the day's grade as a ratio, 0..1. It is its own
+        # curve on its own axis, so a day that recorded no score is simply not
+        # on that line — the old paper rows leave a gap, they do not read as 0.
+        self.grades: list[tuple[date, float]] = []
+        decks: dict[int, int] = {}
+        for day, _, group in self.days:
+            note = resultslog.grade(group)
+            if not note:
+                continue
+            self.grades.append((day, note[0] / note[1]))
+            decks[note[1]] = decks.get(note[1], 0) + 1
+        # The right axis is written out of the deck the grades are mostly out of
+        # — the smaller one on a tie, the same rule `grade()` uses to pick the
+        # deck a mixed day is graded over.
+        self.deck = min(decks, key=lambda n: (-decks[n], n)) if decks else 0
         # Reserve the bottom band from the real font metrics — the fonts scale
         # with the screen, so a fixed 30 px clipped the date labels on a tall one.
-        # The note lane is part of that band: grades sit below the curve, so a
-        # long span can never bury the line they annotate.
         self.PAD_B = font.metrics("linespace") + 16
-        if self.has_notes:
-            self.PAD_B += self.NOTE_H + self.LANE_GAP
+        if self.deck:  # room for the grade axis' own labels, `20/20` at its widest
+            self.PAD_R = font.measure(f"{self.deck}/{self.deck}") + 20
         self.pts: list[tuple[float, float, tuple]] = []
         self.bind("<Configure>", lambda e: self.redraw())
         self.bind("<Motion>", self._hover)
@@ -1160,8 +1173,12 @@ class TimeChart(tk.Canvas):
 
         # grid + y labels (a zero baseline: these are durations, so the height
         # of a point has to mean its whole magnitude)
+        rows: list[float] = []
         v = 0.0
         while v <= top + 1e-9:
+            rows.append(v)
+            v += step
+        for i, v in enumerate(rows):
             y = to_y(v)
             self.create_line(x0, y, x1, y, fill=BORDER)
             self.create_text(
@@ -1170,9 +1187,21 @@ class TimeChart(tk.Canvas):
                 text=resultslog.fmt_duration(v, 0),
                 anchor="e",
                 font=self.font,
-                fill=MUTED,
+                fill=ACCENT,
             )
-            v += step
+            # The grades ride the same gridlines on their own scale: zero at the
+            # baseline, a full deck at the top. Each axis is written in the
+            # colour of the curve it belongs to — that, not a legend, is what
+            # says which line is being read.
+            if self.deck and len(rows) > 1:
+                self.create_text(
+                    x1 + 10,
+                    y,
+                    text=f"{self.deck * i / (len(rows) - 1):.0f}/{self.deck}",
+                    anchor="w",
+                    font=self.font,
+                    fill=CHART_GRADE,
+                )
 
         # x is real calendar time, so plateaus and gaps are visible.
         ords = [d.toordinal() for d, _, _ in self.days]
@@ -1185,23 +1214,19 @@ class TimeChart(tk.Canvas):
         for entry in self.days:
             day, mean, _ = entry
             pts.append((to_x(day.toordinal()), to_y(mean), entry))
-        if len(pts) > 1:
-            self.create_line(
-                self._curve(pts),
-                fill=ACCENT,
-                width=2,
-                capstyle="round",
-                joinstyle="round",
-            )
-        for x, y, _ in pts:
-            # a 2px background ring keeps a dot legible where the curve runs steep
-            self.create_oval(
-                x - 4, y - 4, x + 4, y + 4, fill=ACCENT, outline=BG, width=2
-            )
-        self.pts = pts
-        lane_y = y1 + self.LANE_GAP  # top of the note lane
-        self._draw_notes(pts, x0, x1, lane_y)
-        label_y = lane_y + self.NOTE_H + 4 if self.has_notes else y1 + 10
+        # The grade line first, so where the two cross it is the times — the
+        # thing the screen is titled after — that stay on top.
+        by_day = {entry[0]: entry for entry in self.days}
+        gpts = [
+            (to_x(day.toordinal()), y1 - ratio * (y1 - y0), by_day[day])
+            for day, ratio in self.grades
+        ]
+        self._series(gpts, CHART_GRADE, 3)
+        self._series(pts, ACCENT, 4)
+        # Both lines answer the pointer: the grade point of a day is as good a
+        # handle on that day as its time point.
+        self.pts = pts + gpts
+        label_y = y1 + 10
 
         # x labels: distinct days, thinned by *pixel* distance — the axis is
         # calendar time, so evenly spaced days are not evenly spaced columns
@@ -1226,6 +1251,28 @@ class TimeChart(tk.Canvas):
                 anchor="n",
                 font=self.font,
                 fill=MUTED,
+            )
+
+    def _series(self, pts, color, radius):
+        """One curve and its dots, in one colour — the times or the grades."""
+        if len(pts) > 1:
+            self.create_line(
+                self._curve(pts),
+                fill=color,
+                width=2,
+                capstyle="round",
+                joinstyle="round",
+            )
+        for x, y, _ in pts:
+            # a 2px background ring keeps a dot legible where the curve runs steep
+            self.create_oval(
+                x - radius,
+                y - radius,
+                x + radius,
+                y + radius,
+                fill=color,
+                outline=BG,
+                width=2,
             )
 
     def _round_rect(self, x0, y0, x1, y1, r, **kw):
@@ -1275,64 +1322,6 @@ class TimeChart(tk.Canvas):
             **kw,
         )
 
-    def _draw_notes(self, pts, x_min, x_max, lane_y):
-        """The day's grades as a row of their own, under the plot — `15/20`, the
-        number the sheet is really about. Days that never recorded one (the old
-        paper rows) simply get no mark.
-
-        Every mark sits on the same baseline, so a tag can cover neither the
-        curve nor another tag. Tags are kept left to right only while the next
-        one still fits beside the last; a day squeezed out keeps a dot in the
-        lane, so the grade is visibly there and the hover tooltip reads it out.
-        The newest day always keeps its number — it is the one being looked at.
-        """
-        bh = self.NOTE_H
-        tagged = [
-            (x, text, self.note_font.measure(text) + 8)
-            for x, _, (_, _, group) in pts
-            if (text := resultslog.fmt_note(resultslog.grade(group)))
-        ]
-        if not tagged:
-            return
-        # 6 px of slack on either side: enough for the first and last tags to
-        # stay centred on their dots, not enough to reach an axis label.
-        lo, hi = x_min - 6, x_max + 6
-
-        def left(x: float, bw: float) -> float:
-            return min(max(x - bw / 2, lo), max(lo, hi - bw))
-
-        kept: list[tuple[int, float]] = []  # index into `tagged`, left edge
-        for i, (x, _, bw) in enumerate(tagged):
-            bx = left(x, bw)
-            if kept and bx < kept[-1][1] + tagged[kept[-1][0]][2] + self.TAG_GAP:
-                continue
-            kept.append((i, bx))
-        if kept[-1][0] != len(tagged) - 1:
-            x, _, bw = tagged[-1]
-            bx = left(x, bw)
-            while kept and bx < kept[-1][1] + tagged[kept[-1][0]][2] + self.TAG_GAP:
-                kept.pop()
-            kept.append((len(tagged) - 1, bx))
-
-        labelled = {i for i, _ in kept}
-        cy = lane_y + bh / 2
-        for i, (x, _, _) in enumerate(tagged):
-            if i not in labelled:
-                self.create_oval(x - 2, cy - 2, x + 2, cy + 2, fill=ACCENT, outline="")
-        for i, bx in kept:
-            _, text, bw = tagged[i]
-            self._round_rect(
-                bx, lane_y, bx + bw, lane_y + bh, 4, fill=ACCENT, outline=BG
-            )
-            self.create_text(
-                bx + bw / 2,
-                cy,
-                text=text,
-                font=self.note_font,
-                fill=BG,
-                anchor="center",
-            )
-
     def _hover(self, e):
         self.delete("tip")
         best, closest = None, self.HIT**2
@@ -1356,8 +1345,7 @@ class TimeChart(tk.Canvas):
         per_card = [s.avg for s in group if s.avg is not None]
         if per_card:
             lines.append(f"{T('col_avg')} : {sum(per_card) / len(per_card):.1f} s")
-        # The lane only prints the grades that fit side by side; the rest are
-        # a dot until you point at them, so the tooltip always spells it out.
+        # The grade curve carries the shape; the number itself lives here.
         note = resultslog.fmt_note(resultslog.grade(group))
         if note:
             lines.append(f"{T('col_note')} : {note}")
@@ -1590,13 +1578,6 @@ class Almathus(tk.Tk):
         self.f_chip = scaled(14, "bold")
         self.f_num = scaled(20, "bold")
         self.f_hint = scaled(14)
-        # The chart's note tags, below the 11 px floor scaled() keeps for everything
-        # else: a tag is one short number on a coloured pill inside the plot, not
-        # a line of text to read, and at any larger size a fortnight of them
-        # covers the curve they annotate. Bold, so small still reads.
-        self.f_tag = tkfont.Font(
-            family="Helvetica", size=max(9, round(11 * s)), weight="bold"
-        )
 
     # -- frame helper ------------------------------------------------------ #
     def _hush(self):
@@ -2705,7 +2686,6 @@ class Almathus(tk.Tk):
             body,
             sessions,
             self.f_small,
-            note_font=self.f_tag,
             height=max(190, int(self.winfo_height() * 0.30)),
         )
         chart.pack(fill="x", padx=28, pady=(2, 12))

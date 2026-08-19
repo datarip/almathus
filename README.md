@@ -60,19 +60,21 @@ a game. It reads `results/results.csv` and shows:
 - a **chart** of time over the dates — **one point per day**, averaging that
   day's sessions (three tries in an afternoon used to stack into a vertical
   spike that said nothing about progress). x is real calendar time, so gaps and
-  plateaus are visible. Hover a dot for its date, families, session count and
-  average. The curve is a monotone cubic through the points: soft, but it never
-  dips below a value the kid actually scored. Days that recorded a score also
-  get a small **note tag** — `18/20`, right answers over cards asked — in a
-  **lane of its own under the plot**, all on one baseline: stacked over their
-  dots they used to climb out of each other's way until the headroom ran out and
-  a long span became a ladder of numbers across the curve. Tags are kept left to
-  right while they still fit side by side; a day squeezed out keeps a dot in the
-  lane and gives its grade to the tooltip, and the newest day always keeps its
-  number. Like the point it grades, the tag **averages** the day rather than
-  totalling it: three sessions of 20 cards read `16/20`, not `47/60`. Mixed decks average their
-  ratios and are written over the deck played most that day (the smaller one on
-  a tie), so a 20- and a 30-card session still read out of 20;
+  plateaus are visible. The curve is a monotone cubic through the points: soft,
+  but it never dips below a value the kid actually scored. Days that recorded a
+  score carry a **second curve of their own** — the grades — on a **right-hand
+  axis** running from nothing to a full deck (`0/20` … `20/20`). The two series
+  share neither scale nor colour: times are the theme's accent, grades its
+  `CHART_GRADE` (blue on the dark palette, deep teal on the pink one), and each
+  axis is written in the colour of the line it belongs to — which is what a
+  legend would otherwise have to say. A day with no score is simply absent from
+  the grade line, so the old paper rows leave a gap rather than reading as a
+  zero. Hover either line for that day's date, families, session count, average
+  and grade. Like the point it grades, a day's grade **averages** the day rather
+  than totalling it: three sessions of 20 cards read `16/20`, not `47/60`. Mixed
+  decks average their ratios and are written over the deck played most that day
+  (the smaller one on a tie), so a 20- and a 30-card session still read out
+  of 20;
 - the **table** of every session, newest first, with a *note* column (`18/20`),
   a *temps moyen / carte* column and a *Difficultés* column — the five cards
   that session fought with;

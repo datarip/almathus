@@ -507,12 +507,7 @@ class Pdf:
 MARGIN = 40.0
 CHART_H = 200.0
 ROW_H = 17.0
-FS_TITLE, FS_META, FS_AXIS, FS_ROW, FS_FOOT, FS_NOTE = 20, 9.5, 8, 9, 7.5, 6
-# A note tag on the chart, and the clearances around its lane. Deliberately
-# smaller than the axis beside it — the tags share one row under the plot, and
-# at the axis' size barely a third of a fortnight's grades fit in it. Kept in
-# step with the screen's own tag face, so paper and screen stay the same picture.
-NOTE_H, LANE_GAP, TAG_GAP = 9.5, 4.0, 5.0
+FS_TITLE, FS_META, FS_AXIS, FS_ROW, FS_FOOT = 20, 9.5, 8, 9, 7.5
 
 # Same weights as the on-screen table, so the columns line up with the app.
 COLUMNS = (
@@ -694,18 +689,19 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
 
     y_labels = [resultslog.fmt_duration(v, 0) for v in _frange(0, top, step)]
     pad_l = max(measure(t, FS_AXIS) for t in y_labels) + 12
-    has_notes = any(resultslog.grade(g) for _, _, g in days)
-    # The grades are a lane below the plot, so the bottom band carries them as
-    # well as the dates; nothing is reserved above the curve for a tag.
-    pad_r, pad_t = 10.0, 10.0
-    pad_b = FS_AXIS + 12 + (NOTE_H + LANE_GAP if has_notes else 0.0)
+    # The grades are a second curve on a right-hand axis of their own, so the
+    # margin on that side has to hold `20/20` rather than nothing.
+    deck = chart.deck
+    pad_r = measure(f"{deck}/{deck}", FS_AXIS) + 14 if deck else 10.0
+    pad_t, pad_b = 10.0, FS_AXIS + 12
     x0, x1 = x + pad_l, x + w - pad_r
     y0, y1 = y + pad_b, y + h - pad_t  # y0 is the zero baseline, y1 the top
 
     def to_y(v):
         return y0 + (v / top) * (y1 - y0)
 
-    for v in _frange(0, top, step):
+    rows = _frange(0, top, step)
+    for i, v in enumerate(rows):
         gy = to_y(v)
         pdf.line(x0, gy, x1, gy, palette["BORDER"], 0.5)
         pdf.text(
@@ -713,9 +709,19 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
             gy - FS_AXIS * 0.35,
             resultslog.fmt_duration(v, 0),
             FS_AXIS,
-            palette["MUTED"],
+            palette["ACCENT"],
             anchor="e",
         )
+        # The grade axis rides the same gridlines on its own scale, and is
+        # written in the colour of the curve it belongs to — the screen's rule.
+        if deck and len(rows) > 1:
+            pdf.text(
+                x1 + 6,
+                gy - FS_AXIS * 0.35,
+                f"{deck * i / (len(rows) - 1):.0f}/{deck}",
+                FS_AXIS,
+                palette["CHART_GRADE"],
+            )
 
     ords = [d.toordinal() for d, _, _ in days]
     lo, span = min(ords), max(ords) - min(ords)
@@ -728,13 +734,21 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
         for entry in days
         for day, mean, _ in (entry,)
     ]
-    if len(pts) > 1:
-        pdf.polyline(type(chart)._curve(pts), palette["ACCENT"], 1.6)
-    for px, py, _ in pts:
-        pdf.circle(px, py, 2.6, palette["ACCENT"], outline=palette["BG"], width=1.2)
-    # Held inside the plot, give or take a hair, so a tag cannot land on a y label.
-    lane_y = y0 - LANE_GAP - NOTE_H  # the lane's floor, under the zero line
-    _draw_notes(pdf, pts, x0 - 4, x1 + 4, lane_y, palette)
+    gpts = [
+        (to_x(day.toordinal()), y0 + ratio * (y1 - y0), None)
+        for day, ratio in chart.grades
+    ]
+
+    def series(points, color, r):
+        if len(points) > 1:
+            pdf.polyline(type(chart)._curve(points), color, 1.6)
+        for px, py, _ in points:
+            pdf.circle(px, py, r, color, outline=palette["BG"], width=1.2)
+
+    # Grades first, so where the two cross it is the times — what the chart is
+    # titled after — that stay on top.
+    series(gpts, palette["CHART_GRADE"], 2.0)
+    series(pts, palette["ACCENT"], 2.6)
 
     # Date labels thinned by pixel distance, like the widget: the axis is
     # calendar time, so neighbouring days are not neighbouring columns.
@@ -753,67 +767,10 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
     for d, xd in kept:
         pdf.text(
             xd,
-            (lane_y if has_notes else y0) - FS_AXIS - 4,
+            y0 - FS_AXIS - 4,
             d.strftime("%d/%m"),
             FS_AXIS,
             palette["MUTED"],
-            anchor="center",
-        )
-
-
-def _draw_notes(pdf: Pdf, pts, x_min, x_max, lane_y, palette) -> None:
-    """The screen's note lane, on paper: `15/20` in a row under the curve.
-
-    Same rules as the widget — every mark on one baseline, tags kept left to
-    right while they still fit beside each other, a dot for a day squeezed out,
-    and the newest grade always printed.
-    """
-    tagged = [
-        (px, text, measure(text, FS_NOTE) + 7)
-        for px, _, (_, _, group) in pts
-        if (text := resultslog.fmt_note(resultslog.grade(group)))
-    ]
-    if not tagged:
-        return
-
-    def left(px: float, bw: float) -> float:
-        return min(max(px - bw / 2, x_min), max(x_min, x_max - bw))
-
-    kept: list[tuple[int, float]] = []  # index into `tagged`, left edge
-    for i, (px, _, bw) in enumerate(tagged):
-        bx = left(px, bw)
-        if kept and bx < kept[-1][1] + tagged[kept[-1][0]][2] + TAG_GAP:
-            continue
-        kept.append((i, bx))
-    if kept[-1][0] != len(tagged) - 1:
-        px, _, bw = tagged[-1]
-        bx = left(px, bw)
-        while kept and bx < kept[-1][1] + tagged[kept[-1][0]][2] + TAG_GAP:
-            kept.pop()
-        kept.append((len(tagged) - 1, bx))
-
-    labelled = {i for i, _ in kept}
-    for i, (px, _, _) in enumerate(tagged):
-        if i not in labelled:
-            pdf.circle(px, lane_y + NOTE_H / 2, 1.5, palette["ACCENT"])
-    for i, bx in kept:
-        _, text, bw = tagged[i]
-        pdf.round_rect(
-            bx,
-            lane_y,
-            bw,
-            NOTE_H,
-            2.8,
-            palette["ACCENT"],
-            outline=palette["BG"],
-            width=0.8,
-        )
-        pdf.text(
-            bx + bw / 2,
-            lane_y + (NOTE_H - FS_NOTE) / 2 + 1.5,
-            text,
-            FS_NOTE,
-            palette["BG"],
             anchor="center",
         )
 

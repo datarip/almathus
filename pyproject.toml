@@ -14,7 +14,16 @@ dependencies = []
 #   It is the recognizer for languages with no Vosk model (English out of the box).
 # Spoken numbers are parsed by voice.strict_numbers — no library, on purpose: the
 #   rule has to be "numbers and nothing else", which a general parser will not do.
-voice = ["sounddevice", "numpy", "parakeet-mlx", "vosk", "webrtcvad-wheels"]
+voice = [
+    "sounddevice",
+    "numpy",
+    "parakeet-mlx",
+    # vosk 0.3.45 ships no macOS wheel (0.3.44 is the last universal2 build), so
+    # resolving to it silently drops the primary French recognizer on a Mac.
+    "vosk<0.3.45; sys_platform == 'darwin'",
+    "vosk; sys_platform != 'darwin'",
+    "webrtcvad-wheels",
+]
 
 [project.scripts]
 almathus = "main:main"

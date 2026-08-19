@@ -175,9 +175,19 @@ never records its own voice.
 **OFF** the card is only shown, and nothing stands between showing it and playing
 it: the mic opens with the card and the child can answer straight away.
 
-Either way the card's clock starts the instant the card appears, so a session
-played one way is only comparable with sessions played the same way — the reading
-is part of the time. The choice is remembered between runs (`prefs.json`).
+**Neither mode is timed for the reading.** The card's clock starts when the
+sentence ends and the session total is held across it, so a card is worth the
+same time whichever way it was played — what is measured is a child thinking,
+not a machine talking. A question costs about 2.2s of system voice, against card
+times of 5 to 9, so counting it would have made the log a third a measure of the
+speech rate: change the voice or its `rate` and every number would move without
+the child doing anything differently. The keypad stays live under a reading, so
+a card answered before its clock starts is worth zero, never less.
+
+Sessions logged before 2026-08-19 were timed the old way; `tools/retime_dictation.py`
+took the readings back out of them, card by card, so the progress chart is one
+curve measured one way. The choice of mode is remembered between runs
+(`prefs.json`).
 
 ### 🎤 Answer by voice — the two-stage pipeline
 
@@ -260,7 +270,9 @@ Tuning, if a room needs it — all optional, all with measured defaults:
 Enable it:
 
 ```bash
-uv sync --extra voice        # sounddevice + numpy + vosk + parakeet-mlx + webrtcvad
+uv sync --extra voice --group dev   # sounddevice + numpy + vosk + parakeet-mlx + webrtcvad
+                                    # keep --extra voice on every sync: without it
+                                    # uv prunes the audio libs and the mic goes dead
 ```
 
 - First run downloads the parakeet model (~600 MB). **macOS microphone permission
@@ -314,8 +326,8 @@ move the card, and the mic must never go deaf while it is up.
 `test_voice_wrong_answer` holds the other half — a number that *is* recognized
 scores the card at once, wrong included, and that card comes back exactly once,
 at the end. `test_dictation_modes` pins the two openings of a card: with
-dictation on the mic stays shut until the reading is over, with it off the mic
-opens with the card, and the clock starts with the card either way.
+dictation on the mic stays shut and both clocks are held until the reading is
+over, with it off the mic and the clocks start with the card.
 
 Nothing outside `voice.py` reads the variable — the keypad, timing, and results
 log behave identically whether it is set or not.

@@ -545,8 +545,8 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
     `chart` is the live `TimeChart` (or None): we take its per-day averages and
     reuse its `_y_scale` / `_curve` so paper and screen agree to the pixel.
     `palette` is the theme dict; `labels` carries every already-translated
-    string (`title`, `subtitle`, `chart_title`, `n_sessions`, `footer`, plus one
-    per column key). `labels["period"]` is optional: the month the report covers,
+    string (`title`, `subtitle`, `chart_title`, `axis_grade`, `legend_time`,
+    `legend_grade`, `n_sessions`, `footer`, plus one per column key). `labels["period"]` is optional: the month the report covers,
     printed on every page — leave it out (or empty) for the whole history.
     """
     path = Path(path)
@@ -591,8 +591,18 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
 
     if chart is not None and getattr(chart, "days", None):
         pdf.text(MARGIN, y, labels["chart_title"], FS_META, palette["MUTED"])
+        _draw_legend(pdf, pdf.w - MARGIN, y, chart, palette, labels)
         y -= 8
-        _draw_chart(pdf, chart, MARGIN, y - CHART_H, inner, CHART_H, palette)
+        _draw_chart(
+            pdf,
+            chart,
+            MARGIN,
+            y - CHART_H,
+            inner,
+            CHART_H,
+            palette,
+            labels.get("axis_grade", ""),
+        )
         y -= CHART_H + 24
 
     # -- the table ------------------------------------------------------ #
@@ -681,7 +691,7 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
     return path
 
 
-def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
+def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette, grade_axis: str = "") -> None:
     """The screen chart as vectors. PDF's y grows upward, so the scale is
     flipped relative to the widget — everything else is the widget's own maths."""
     days = chart.days
@@ -692,8 +702,12 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
     # The grades are a second curve on a right-hand axis of their own, so the
     # margin on that side has to hold `20/20` rather than nothing.
     deck = chart.deck
-    pad_r = measure(f"{deck}/{deck}", FS_AXIS) + 14 if deck else 10.0
+    pad_r = 10.0
     pad_t, pad_b = 10.0, FS_AXIS + 12
+    if deck:  # the grade axis' labels, and the line above them naming it
+        pad_r = max(measure(f"{deck}/{deck}", FS_AXIS), measure(grade_axis, FS_AXIS))
+        pad_r += 12
+        pad_t = FS_AXIS + 8
     x0, x1 = x + pad_l, x + w - pad_r
     y0, y1 = y + pad_b, y + h - pad_t  # y0 is the zero baseline, y1 the top
 
@@ -722,6 +736,9 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
                 FS_AXIS,
                 palette["CHART_GRADE"],
             )
+
+    if deck:
+        pdf.text(x1 + 6, y1 + 6, grade_axis, FS_AXIS, palette["CHART_GRADE"])
 
     ords = [d.toordinal() for d, _, _ in days]
     lo, span = min(ords), max(ords) - min(ords)
@@ -773,6 +790,24 @@ def _draw_chart(pdf: Pdf, chart, x, y, w, h, palette) -> None:
             palette["MUTED"],
             anchor="center",
         )
+
+
+def _draw_legend(pdf: Pdf, right: float, y: float, chart, palette, labels) -> None:
+    """The screen's key, on paper: each curve drawn small — a stroke with a dot
+    on it — beside its name, laid out from the right margin leftwards."""
+    keys = [(palette["ACCENT"], labels.get("legend_time", ""))]
+    if getattr(chart, "grades", None):
+        keys.append((palette["CHART_GRADE"], labels.get("legend_grade", "")))
+    cy = y + FS_META * 0.35  # the stroke sits at the middle of the text, not its foot
+    x = right
+    for color, text in reversed(keys):
+        if not text:
+            continue
+        pdf.text(x, y, text, FS_META, palette["MUTED"], anchor="e")
+        x -= measure(text, FS_META) + 5
+        pdf.line(x - 16, cy, x, cy, color, 1.6)
+        pdf.circle(x - 8, cy, 1.8, color, outline=palette["BG"], width=0.8)
+        x -= 16 + 14
 
 
 def _frange(start: float, stop: float, step: float) -> list[float]:

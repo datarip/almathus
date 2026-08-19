@@ -107,6 +107,9 @@ STRINGS = {
         "back": "← Retour",
         "progress_title": "📈 Mes progrès",
         "chart_title": "Temps moyen par jour",
+        "axis_grade": "Notes",
+        "legend_time": "Temps moyen",
+        "legend_grade": "Note moyenne",
         "avg_label": "moyenne",
         "no_results": "Pas encore de résultats — joue une partie !",
         "col_date": "Date",
@@ -165,6 +168,9 @@ STRINGS = {
         "back": "← Back",
         "progress_title": "📈 My progress",
         "chart_title": "Average time per day",
+        "axis_grade": "Grades",
+        "legend_time": "Average time",
+        "legend_grade": "Average grade",
         "avg_label": "average",
         "no_results": "No results yet — play a game!",
         "col_date": "Date",
@@ -1101,8 +1107,14 @@ class TimeChart(tk.Canvas):
         # Reserve the bottom band from the real font metrics — the fonts scale
         # with the screen, so a fixed 30 px clipped the date labels on a tall one.
         self.PAD_B = font.metrics("linespace") + 16
-        if self.deck:  # room for the grade axis' own labels, `20/20` at its widest
-            self.PAD_R = font.measure(f"{self.deck}/{self.deck}") + 20
+        if self.deck:
+            # Room for the grade axis: its labels, `20/20` at their widest, and a
+            # line above them to say what they count.
+            self.PAD_R = max(
+                font.measure(f"{self.deck}/{self.deck}") + 20,
+                font.measure(T("axis_grade")) + 14,
+            )
+            self.PAD_T = font.metrics("linespace") + 8
         self.pts: list[tuple[float, float, tuple]] = []
         self.bind("<Configure>", lambda e: self.redraw())
         self.bind("<Motion>", self._hover)
@@ -1202,6 +1214,16 @@ class TimeChart(tk.Canvas):
                     font=self.font,
                     fill=CHART_GRADE,
                 )
+
+        if self.deck:
+            self.create_text(
+                x1 + 10,
+                y0 - 6,
+                text=T("axis_grade"),
+                anchor="sw",
+                font=self.font,
+                fill=CHART_GRADE,
+            )
 
         # x is real calendar time, so plateaus and gaps are visible.
         ords = [d.toordinal() for d, _, _ in self.days]
@@ -2649,11 +2671,39 @@ class Almathus(tk.Tk):
         picker.pack(side="left")
         Tooltip(picker, T("month_tip"), self.f_hint)
 
+        # The chart's key, beside the filter: which colour is which curve. The
+        # grade key only appears while the month on show has a grade to draw, so
+        # a legend never promises a line that is not there.
+        legend = tk.Frame(bar, bg=BG)
+        legend.pack(side="left", padx=(20, 0))
+        self._legend_key(legend, ACCENT, T("legend_time")).pack(side="left")
+        self._legend_grade = self._legend_key(legend, CHART_GRADE, T("legend_grade"))
+
         # Only this frame is rebuilt when the month changes, so the header — and
         # the pick your eye just left — stays put.
         self._progress_body = tk.Frame(f, bg=BG)
         self._progress_body.pack(fill="both", expand=True)
         self._render_progress()
+
+    def _legend_key(self, parent, color: str, text: str) -> tk.Frame:
+        """One key of the chart's legend: the series drawn small — a stroke with
+        a dot on it, in the colour that curve is drawn in — and its name. The
+        colour is the whole of the pairing, so the swatch is the curve's own."""
+        row = tk.Frame(parent, bg=BG)
+        h = self.f_small.metrics("linespace")
+        mid = h / 2
+        swatch = tk.Canvas(
+            row, width=22, height=h, bg=BG, highlightthickness=0, bd=0, takefocus=0
+        )
+        swatch.create_line(1, mid, 21, mid, fill=color, width=2, capstyle="round")
+        swatch.create_oval(
+            8, mid - 3.5, 15, mid + 3.5, fill=color, outline=BG, width=1.5
+        )
+        swatch.pack(side="left")
+        tk.Label(row, text=text, font=self.f_small, fg=MUTED, bg=BG).pack(
+            side="left", padx=(6, 0)
+        )
+        return row
 
     def _select_month(self, ym: tuple[int, int] | None) -> None:
         self._month = ym
@@ -2673,6 +2723,7 @@ class Almathus(tk.Tk):
         self._n_label.config(text=T("n_sessions", n=len(sessions)))
 
         if not sessions:
+            self._legend_grade.pack_forget()  # no chart, nothing to key
             tk.Label(
                 body, text=T("no_month_results"), font=self.f_body, fg=MUTED, bg=BG
             ).pack(expand=True)
@@ -2689,6 +2740,10 @@ class Almathus(tk.Tk):
             height=max(190, int(self.winfo_height() * 0.30)),
         )
         chart.pack(fill="x", padx=28, pady=(2, 12))
+        if chart.grades:
+            self._legend_grade.pack(side="left", padx=(16, 0))
+        else:
+            self._legend_grade.pack_forget()
         tk.Frame(body, bg=BORDER, height=1).pack(fill="x", padx=28)
         self._chart = chart
 
@@ -2729,6 +2784,9 @@ class Almathus(tk.Tk):
                     # the whole history is being printed.
                     "period": "" if self._month is None else month_label(self._month),
                     "chart_title": T("chart_title"),
+                    "axis_grade": T("axis_grade"),
+                    "legend_time": T("legend_time"),
+                    "legend_grade": T("legend_grade"),
                     "n_sessions": T("n_sessions", n=len(self._sessions)),
                     "footer": T("pdf_footer"),
                     "date": T("col_date"),

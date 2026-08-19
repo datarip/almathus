@@ -63,11 +63,13 @@ a game. It reads `results/results.csv` and shows:
   plateaus are visible. The curve is a monotone cubic through the points: soft,
   but it never dips below a value the kid actually scored. Days that recorded a
   score carry a **second curve of their own** — the grades — on a **right-hand
-  axis** running from nothing to a full deck (`0/20` … `20/20`). The two series
-  share neither scale nor colour: times are the theme's accent, grades its
-  `CHART_GRADE` (blue on the dark palette, deep teal on the pink one), and each
-  axis is written in the colour of the line it belongs to — which is what a
-  legend would otherwise have to say. A day with no score is simply absent from
+  axis** headed *Notes* / *Grades* and running from nothing to a full deck
+  (`0/20` … `20/20`). The two series share neither scale nor colour: times are
+  the theme's accent, grades its `CHART_GRADE` (blue on the dark palette, deep
+  teal on the pink one), each axis is written in the colour of the line it
+  belongs to, and a **legend** in the header — beside the month filter, and on
+  the PDF beside the chart's title — draws each curve small against its name.
+  The grade key only appears while the month on show has a grade to draw. A day with no score is simply absent from
   the grade line, so the old paper rows leave a gap rather than reading as a
   zero. Hover either line for that day's date, families, session count, average
   and grade. Like the point it grades, a day's grade **averages** the day rather

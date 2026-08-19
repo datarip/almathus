@@ -24,11 +24,10 @@ import queue
 import random
 import signal
 import time
+import tkinter as tk
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-
-import tkinter as tk
 from tkinter import filedialog
 from tkinter import font as tkfont
 
@@ -181,20 +180,52 @@ STRINGS = {
 }
 
 OP_SPOKEN = {
-    "fr": {"addition": "plus", "subtraction": "moins",
-           "multiplication": "fois", "division": "divisé par"},
-    "en": {"addition": "plus", "subtraction": "minus",
-           "multiplication": "times", "division": "divided by"},
+    "fr": {
+        "addition": "plus",
+        "subtraction": "moins",
+        "multiplication": "fois",
+        "division": "divisé par",
+    },
+    "en": {
+        "addition": "plus",
+        "subtraction": "minus",
+        "multiplication": "times",
+        "division": "divided by",
+    },
 }
 
 # Month names written out, rather than `strftime("%B")`: that one follows the
 # operating system's locale, which has nothing to do with the language the app
 # was started in — a French app on an English Mac would say "July".
 MONTHS = {
-    "fr": ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
-           "août", "septembre", "octobre", "novembre", "décembre"),
-    "en": ("January", "February", "March", "April", "May", "June", "July",
-           "August", "September", "October", "November", "December"),
+    "fr": (
+        "janvier",
+        "février",
+        "mars",
+        "avril",
+        "mai",
+        "juin",
+        "juillet",
+        "août",
+        "septembre",
+        "octobre",
+        "novembre",
+        "décembre",
+    ),
+    "en": (
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ),
 }
 
 
@@ -203,8 +234,8 @@ def T(key: str, **kw) -> str:
     return s.format(**kw) if kw else s
 
 
-WHEEL_LINE = 22          # px one line of scrolling is worth — about a table row
-WHEEL_MAX = 5 * WHEEL_LINE   # ...and the most a single event may scroll
+WHEEL_LINE = 22  # px one line of scrolling is worth — about a table row
+WHEEL_MAX = 5 * WHEEL_LINE  # ...and the most a single event may scroll
 
 
 def bind_wheel(widget, scroll) -> None:
@@ -229,7 +260,7 @@ def bind_wheel(widget, scroll) -> None:
     widget.bind("<MouseWheel>", lambda e: scroll(wheel_pixels(e)))
     try:
         widget.bind("<TouchpadScroll>", lambda e: scroll(touchpad_pixels(e)))
-    except tk.TclError:                  # Tk 8 has no such event: wheel only
+    except tk.TclError:  # Tk 8 has no such event: wheel only
         pass
     if widget.tk.call("tk", "windowingsystem") == "x11":
         widget.bind("<Button-4>", lambda e: scroll(wheel_pixels(e)))
@@ -312,10 +343,10 @@ THEMES = {
         BAD="#ff6b6b",
         TEXT="#f5f6ff",
         MUTED="#9aa0c8",
-        INK="#10121f",        # text laid on top of a bright tile
-        SURFACE="#191d3d",    # raised panel, one step above the page background
-        BORDER="#2b3160",     # hairline outline for panels and chips
-        ENTRY_BG="#12152e",   # the answer box, one step *below* the page
+        INK="#10121f",  # text laid on top of a bright tile
+        SURFACE="#191d3d",  # raised panel, one step above the page background
+        BORDER="#2b3160",  # hairline outline for panels and chips
+        ENTRY_BG="#12152e",  # the answer box, one step *below* the page
         # Soft, cheerful and deliberately gender-neutral: mint, sky, apricot,
         # lilac. All four are light enough to carry the same near-black text.
         MODE_COLORS={
@@ -324,14 +355,17 @@ THEMES = {
             "multiplication": "#ff9e7d",
             "division": "#b39ddb",
         },
-        NUM_ON_BG="#4fd1a5", NUM_ON_FG="#10121f",
-        NUM_OFF_BG="#333a63", NUM_OFF_FG="#8b93c4",
+        NUM_ON_BG="#4fd1a5",
+        NUM_ON_FG="#10121f",
+        NUM_OFF_BG="#333a63",
+        NUM_OFF_FG="#8b93c4",
         NUM_HOVER_BG="#4b5490",
         # Hovering an operation tile lifts it away from the page: bright here,
         # deep on the light palette. Either way the label stays legible.
-        TILE_HOVER_BG="#f5f6ff", TILE_HOVER_FG="#10121f",
+        TILE_HOVER_BG="#f5f6ff",
+        TILE_HOVER_FG="#10121f",
         TITLE_SVG="mario.svg",
-        TITLE_ICON="🧮",       # fallback if the drawing cannot be loaded
+        TITLE_ICON="🧮",  # fallback if the drawing cannot be loaded
     ),
     # Peach-pink page, plum ink. The whole palette flips light here, so the
     # greens and reds are darkened too: they carry text on a pale background
@@ -354,12 +388,15 @@ THEMES = {
             "multiplication": "#ffb08a",
             "division": "#ffe08a",
         },
-        NUM_ON_BG="#ff7ab8", NUM_ON_FG="#3d0f26",
-        NUM_OFF_BG="#ffd9e6", NUM_OFF_FG="#b07f96",
+        NUM_ON_BG="#ff7ab8",
+        NUM_ON_FG="#3d0f26",
+        NUM_OFF_BG="#ffd9e6",
+        NUM_OFF_FG="#b07f96",
         NUM_HOVER_BG="#ffb3d3",
         # A deeper cut of ACCENT, so the tile reads as the same hot pink the rest
         # of this palette uses for "chosen", with white text over it.
-        TILE_HOVER_BG="#d81b7a", TILE_HOVER_FG="#fff4f8",
+        TILE_HOVER_BG="#d81b7a",
+        TILE_HOVER_FG="#fff4f8",
         TITLE_SVG="peach.svg",
         TITLE_ICON="👑",
     ),
@@ -389,14 +426,14 @@ PREFS_FILE = Path(__file__).resolve().parent / "prefs.json"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 SOUNDS_DIR = ASSETS_DIR / "sounds"
 
-COUNTDOWN_STEPS = 3      # 3-2-1, then GO!
+COUNTDOWN_STEPS = 3  # 3-2-1, then GO!
 # countdown.mp3 is three beeps and a launch tone, laid out on an exact one-second
 # grid: beeps at 485, 1485 and 2485 ms, the tone at 3485 ms, ringing to 4460. The
 # numbers on screen are hung off that grid rather than the other way round, so a
 # beep and a number land on the same instant instead of merely near one another.
-COUNTDOWN_TICK = 1000    # ms one number stays on screen = the gap between beeps
-COUNTDOWN_GO_AT = 3485   # ms into the sample where the launch tone starts
-COUNTDOWN_GO_LEN = 975   # ms it rings for, after which the sample is silent
+COUNTDOWN_TICK = 1000  # ms one number stays on screen = the gap between beeps
+COUNTDOWN_GO_AT = 3485  # ms into the sample where the launch tone starts
+COUNTDOWN_GO_LEN = 975  # ms it rings for, after which the sample is silent
 
 
 def read_prefs() -> dict:
@@ -451,7 +488,7 @@ class Card:
     mode: str
     answer: int
     # measurement / state
-    time_taken: float = 0.0        # seconds spent on the first attempt
+    time_taken: float = 0.0  # seconds spent on the first attempt
     attempts: int = 0
     correct_first_try: bool | None = None
     is_retry: bool = False
@@ -478,11 +515,11 @@ def spoken_answer(nums: list[int], card: Card) -> int | None:
     """
     if not nums:
         return None
-    if nums[:2] == [card.a, card.b]:       # the question, read back
+    if nums[:2] == [card.a, card.b]:  # the question, read back
         nums = nums[2:]
     if not nums:
         return None
-    if card.answer in nums:                # "quinze moins quatre, ça fait onze"
+    if card.answer in nums:  # "quinze moins quatre, ça fait onze"
         return card.answer
     # A lone operand is taken as an ordinary wrong answer: a whole session is
     # built on one number ("− 4"), so refusing it made that number unsayable on
@@ -490,7 +527,7 @@ def spoken_answer(nums: list[int], card: Card) -> int | None:
     # read-back can produce — the cost of hearing it is one card marked wrong and
     # asked again at the end, which is the same thing that happens when the child
     # really does answer 4.
-    return nums[-1]                        # self-correction: the last number wins
+    return nums[-1]  # self-correction: the last number wins
 
 
 def make_card(mode: str, a: int, b: int) -> Card:
@@ -522,7 +559,9 @@ def every_operation(mode: str, allowed: set[int]) -> list[tuple[int, int]]:
             pairs += [(a, b) for a in range(RANGES["multiplication"]["max_factor"] + 1)]
         elif mode == "division":
             # a = answer*b, which guarantees an integer result
-            pairs += [(ans * b, b) for ans in range(RANGES["division"]["max_factor"] + 1)]
+            pairs += [
+                (ans * b, b) for ans in range(RANGES["division"]["max_factor"] + 1)
+            ]
         else:
             raise ValueError(mode)
     return pairs
@@ -544,8 +583,8 @@ def make_deck(mode: str, n: int, allowed: set[int] | None = None) -> list[Card]:
     while len(deck) < n:
         bag = random.sample(pool, len(pool))
         if deck and len(bag) > 1 and bag[0] == (deck[-1].a, deck[-1].b):
-            bag.append(bag.pop(0))       # no repeat across the seam either
-        deck += [make_card(mode, a, b) for a, b in bag[:n - len(deck)]]
+            bag.append(bag.pop(0))  # no repeat across the seam either
+        deck += [make_card(mode, a, b) for a, b in bag[: n - len(deck)]]
     return deck
 
 
@@ -559,8 +598,20 @@ def make_deck(mode: str, n: int, allowed: set[int] | None = None) -> list[Card]:
 
 
 class Btn(tk.Label):
-    def __init__(self, parent, text, command=None, bg=None, fg=None, font=None,
-                 active_bg=None, active_fg=None, padx=14, pady=10, **kw):
+    def __init__(
+        self,
+        parent,
+        text,
+        command=None,
+        bg=None,
+        fg=None,
+        font=None,
+        active_bg=None,
+        active_fg=None,
+        padx=14,
+        pady=10,
+        **kw,
+    ):
         # The palette defaults are filled in here rather than in the signature:
         # default arguments are evaluated once at import, which would nail every
         # unstyled button to whichever theme happened to be loaded first.
@@ -568,8 +619,17 @@ class Btn(tk.Label):
         fg = fg or TEXT
         active_bg = active_bg or ACCENT
         active_fg = active_fg or INK
-        super().__init__(parent, text=text, bg=bg, fg=fg, font=font,
-                         padx=padx, pady=pady, cursor="hand2", **kw)
+        super().__init__(
+            parent,
+            text=text,
+            bg=bg,
+            fg=fg,
+            font=font,
+            padx=padx,
+            pady=pady,
+            cursor="hand2",
+            **kw,
+        )
         self._bg, self._fg, self._abg, self._afg = bg, fg, active_bg, active_fg
         self._command = command
         self.bind("<Enter>", lambda e: self._paint(self._abg, self._afg))
@@ -582,7 +642,7 @@ class Btn(tk.Label):
 
     def _release(self, e):
         inside = 0 <= e.x < self.winfo_width() and 0 <= e.y < self.winfo_height()
-        self._paint(*(( self._abg, self._afg) if inside else (self._bg, self._fg)))
+        self._paint(*((self._abg, self._afg) if inside else (self._bg, self._fg)))
         if inside and self._command:
             self._command()
 
@@ -626,21 +686,31 @@ class Tooltip:
         if self.tip or not self.widget.winfo_exists():
             return
         self.tip = tk.Toplevel(self.widget)
-        self.tip.wm_overrideredirect(True)          # no title bar, no shadow frame
+        self.tip.wm_overrideredirect(True)  # no title bar, no shadow frame
         try:
             self.tip.wm_attributes("-topmost", True)
         except tk.TclError:
             pass
-        tk.Label(self.tip, text=self.text, font=self.font, bg=SURFACE, fg=TEXT,
-                 padx=10, pady=5, highlightthickness=1, highlightbackground=BORDER
-                 ).pack()
+        tk.Label(
+            self.tip,
+            text=self.text,
+            font=self.font,
+            bg=SURFACE,
+            fg=TEXT,
+            padx=10,
+            pady=5,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        ).pack()
         self.tip.update_idletasks()
         # Hang it under the widget, right edges aligned — the button lives in the
         # top-right corner, so a left-aligned bubble would run off the screen.
         w = self.tip.winfo_reqwidth()
         x = self.widget.winfo_rootx() + self.widget.winfo_width() - w
         x = max(4, min(x, self.widget.winfo_screenwidth() - w - 4))
-        self.tip.wm_geometry(f"+{x}+{self.widget.winfo_rooty() + self.widget.winfo_height() + 6}")
+        self.tip.wm_geometry(
+            f"+{x}+{self.widget.winfo_rooty() + self.widget.winfo_height() + 6}"
+        )
 
     def _hide(self, _e=None):
         self._cancel()
@@ -663,7 +733,7 @@ class Dropdown(Btn):
     """
 
     ARROW = "  ▾"
-    MAX_SCREEN = 0.6                 # of the screen height: taller lists scroll
+    MAX_SCREEN = 0.6  # of the screen height: taller lists scroll
 
     def __init__(self, parent, options, value, command, font, **kw):
         self.options = list(options)
@@ -671,8 +741,9 @@ class Dropdown(Btn):
         self._on_pick = command
         self._font = font
         self._pop = None
-        super().__init__(parent, self._text_for(value), command=self._toggle,
-                         font=font, **kw)
+        super().__init__(
+            parent, self._text_for(value), command=self._toggle, font=font, **kw
+        )
         # A screen change destroys the button; the popup is a Toplevel, so it
         # would otherwise be left floating over whatever comes next.
         self.bind("<Destroy>", lambda e: self._close(), add="+")
@@ -684,9 +755,9 @@ class Dropdown(Btn):
         self._close() if self._pop else self._open()
 
     def _open(self):
-        self.update_idletasks()          # the list hangs off this button's geometry
+        self.update_idletasks()  # the list hangs off this button's geometry
         self._pop = top = tk.Toplevel(self)
-        top.wm_overrideredirect(True)                # no title bar, no shadow
+        top.wm_overrideredirect(True)  # no title bar, no shadow
         # Built out of sight: measuring the rows maps the window, and the window
         # manager places it before it hears where we want it — so an unhidden
         # popup flashes in the corner of the screen on its way under the button.
@@ -695,8 +766,9 @@ class Dropdown(Btn):
             top.wm_attributes("-topmost", True)
         except tk.TclError:
             pass
-        frame = tk.Frame(top, bg=SURFACE, highlightthickness=1,
-                         highlightbackground=BORDER)
+        frame = tk.Frame(
+            top, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER
+        )
         frame.pack(fill="both", expand=True)
         canvas = tk.Canvas(frame, bg=SURFACE, highlightthickness=0, bd=0)
         canvas.pack(fill="both", expand=True)
@@ -705,9 +777,17 @@ class Dropdown(Btn):
         here = None
         for v, label in self.options:
             chosen = v == self.value
-            row = Btn(rows, label, command=lambda v=v: self._choose(v), font=self._font,
-                      bg=ACCENT if chosen else SURFACE, fg=INK if chosen else TEXT,
-                      padx=16, pady=7, anchor="w")
+            row = Btn(
+                rows,
+                label,
+                command=lambda v=v: self._choose(v),
+                font=self._font,
+                bg=ACCENT if chosen else SURFACE,
+                fg=INK if chosen else TEXT,
+                padx=16,
+                pady=7,
+                anchor="w",
+            )
             row.pack(fill="x")
             here = row if chosen else here
 
@@ -717,20 +797,23 @@ class Dropdown(Btn):
         view = min(h, int(self.winfo_screenheight() * self.MAX_SCREEN))
         # `yscrollincrement=1`: without it a canvas scrolls a tenth of its own
         # height per unit, which on a list this size is half the popup a nudge.
-        canvas.configure(width=w, height=view, scrollregion=(0, 0, w, h),
-                         yscrollincrement=1)
-        canvas.itemconfig(window, width=w)           # rows span the full width
+        canvas.configure(
+            width=w, height=view, scrollregion=(0, 0, w, h), yscrollincrement=1
+        )
+        canvas.itemconfig(window, width=w)  # rows span the full width
         if h > view:
             # Bound on the Toplevel: a row Label's bindtags include its window,
             # so a wheel event over a row is looked up here as well.
             bind_wheel(top, lambda px: canvas.yview_scroll(px, "units"))
-            if here is not None:                     # open on the month you are on
+            if here is not None:  # open on the month you are on
                 canvas.yview_moveto(max(0.0, (here.winfo_y() - view / 2) / h))
 
         # Hang it under the button, pushed back inside the screen if it overruns.
         top.update_idletasks()
-        x = min(max(self.winfo_rootx(), 4),
-                self.winfo_screenwidth() - top.winfo_reqwidth() - 4)
+        x = min(
+            max(self.winfo_rootx(), 4),
+            self.winfo_screenwidth() - top.winfo_reqwidth() - 4,
+        )
         top.wm_geometry(f"+{x}+{self.winfo_rooty() + self.winfo_height() + 4}")
         top.wm_deiconify()
 
@@ -779,8 +862,8 @@ class Dropdown(Btn):
 
 class TimeChart(tk.Canvas):
     PAD_L, PAD_R, PAD_T, PAD_B = 66, 24, 16, 30
-    HIT = 32                       # px: how close the pointer must be to a dot
-    NOTE_GAP = 8                   # px: clearance between a note tag and its dot
+    HIT = 32  # px: how close the pointer must be to a dot
+    NOTE_GAP = 8  # px: clearance between a note tag and its dot
     # Round y steps a parent reads at a glance: 5 s up to 15 min.
     STEPS = (5, 10, 15, 20, 30, 60, 90, 120, 180, 300, 600, 900)
 
@@ -793,8 +876,10 @@ class TimeChart(tk.Canvas):
         for s in plottable:
             by_day.setdefault(s.day, []).append(s)
         # (day, mean seconds, the sessions behind it) — one entry per day, in order
-        self.days = [(d, sum(g_.seconds for g_ in g) / len(g), g)
-                     for d, g in sorted(by_day.items())]
+        self.days = [
+            (d, sum(g_.seconds for g_ in g) / len(g), g)
+            for d, g in sorted(by_day.items())
+        ]
         self.font = font
         # The tags get their own, smaller face. They sit *inside* the plot, one per
         # day, so at the axis' size a fortnight of daily sessions covered its own
@@ -830,24 +915,28 @@ class TimeChart(tk.Canvas):
         d = [(ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]) for i in range(n - 1)]
         m = [d[0]] + [(d[i - 1] + d[i]) / 2 for i in range(1, n - 1)] + [d[-1]]
         for i in range(n - 1):
-            if d[i] == 0:                       # a flat run stays flat
+            if d[i] == 0:  # a flat run stays flat
                 m[i] = m[i + 1] = 0.0
                 continue
             a, b = m[i] / d[i], m[i + 1] / d[i]
-            if a * a + b * b > 9:               # clamp the tangents: no overshoot
+            if a * a + b * b > 9:  # clamp the tangents: no overshoot
                 t = 3.0 / (a * a + b * b) ** 0.5
                 m[i], m[i + 1] = t * a * d[i], t * b * d[i]
 
         out: list[float] = []
         for i in range(n - 1):
             h = xs[i + 1] - xs[i]
-            steps = max(2, min(48, int(h / 4)))     # ~4 px per sampled segment
+            steps = max(2, min(48, int(h / 4)))  # ~4 px per sampled segment
             for k in range(steps + (1 if i == n - 2 else 0)):
                 t = k / steps
                 t2, t3 = t * t, t * t * t
-                out += [xs[i] + h * t,
-                        (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h * m[i]
-                        + (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h * m[i + 1]]
+                out += [
+                    xs[i] + h * t,
+                    (2 * t3 - 3 * t2 + 1) * ys[i]
+                    + (t3 - 2 * t2 + t) * h * m[i]
+                    + (-2 * t3 + 3 * t2) * ys[i + 1]
+                    + (t3 - t2) * h * m[i + 1],
+                ]
         return out
 
     def _y_scale(self, peak: float) -> tuple[int, float]:
@@ -878,8 +967,14 @@ class TimeChart(tk.Canvas):
         while v <= top + 1e-9:
             y = Y(v)
             self.create_line(x0, y, x1, y, fill=BORDER)
-            self.create_text(x0 - 10, y, text=resultslog.fmt_duration(v, 0),
-                             anchor="e", font=self.font, fill=MUTED)
+            self.create_text(
+                x0 - 10,
+                y,
+                text=resultslog.fmt_duration(v, 0),
+                anchor="e",
+                font=self.font,
+                fill=MUTED,
+            )
             v += step
 
         # x is real calendar time, so plateaus and gaps are visible.
@@ -894,12 +989,18 @@ class TimeChart(tk.Canvas):
             day, mean, _ = entry
             pts.append((X(day.toordinal()), Y(mean), entry))
         if len(pts) > 1:
-            self.create_line(self._curve(pts), fill=ACCENT, width=2,
-                             capstyle="round", joinstyle="round")
+            self.create_line(
+                self._curve(pts),
+                fill=ACCENT,
+                width=2,
+                capstyle="round",
+                joinstyle="round",
+            )
         for x, y, _ in pts:
             # a 2px background ring keeps a dot legible where the curve runs steep
-            self.create_oval(x - 4, y - 4, x + 4, y + 4,
-                             fill=ACCENT, outline=BG, width=2)
+            self.create_oval(
+                x - 4, y - 4, x + 4, y + 4, fill=ACCENT, outline=BG, width=2
+            )
         self.pts = pts
         self._draw_notes(pts, x0, x1)
 
@@ -913,24 +1014,67 @@ class TimeChart(tk.Canvas):
             if not kept or xd - kept[-1][1] >= gap:
                 kept.append((d, xd))
         last = self.days[-1][0]
-        if kept and kept[-1][0] != last:      # the newest date always gets a label
+        if kept and kept[-1][0] != last:  # the newest date always gets a label
             xd = X(last.toordinal())
             while kept and xd - kept[-1][1] < gap:
                 kept.pop()
             kept.append((last, xd))
         for d, xd in kept:
-            self.create_text(xd, y1 + 10, text=d.strftime("%d/%m"),
-                             anchor="n", font=self.font, fill=MUTED)
+            self.create_text(
+                xd,
+                y1 + 10,
+                text=d.strftime("%d/%m"),
+                anchor="n",
+                font=self.font,
+                fill=MUTED,
+            )
 
     def _round_rect(self, x0, y0, x1, y1, r, **kw):
         """Tk has no rounded rectangle. A polygon that repeats its corner points
         and is then smoothed gives one: the doubled points pin the straight
         edges, and the single ones round the turns."""
         return self.create_polygon(
-            x0 + r, y0, x1 - r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y0 + r,
-            x1, y1 - r, x1, y1 - r, x1, y1, x1 - r, y1, x1 - r, y1, x0 + r, y1,
-            x0 + r, y1, x0, y1, x0, y1 - r, x0, y1 - r, x0, y0 + r, x0, y0 + r,
-            x0, y0, smooth=True, **kw)
+            x0 + r,
+            y0,
+            x1 - r,
+            y0,
+            x1 - r,
+            y0,
+            x1,
+            y0,
+            x1,
+            y0 + r,
+            x1,
+            y0 + r,
+            x1,
+            y1 - r,
+            x1,
+            y1 - r,
+            x1,
+            y1,
+            x1 - r,
+            y1,
+            x1 - r,
+            y1,
+            x0 + r,
+            y1,
+            x0 + r,
+            y1,
+            x0,
+            y1,
+            x0,
+            y1 - r,
+            x0,
+            y1 - r,
+            x0,
+            y0 + r,
+            x0,
+            y0 + r,
+            x0,
+            y0,
+            smooth=True,
+            **kw,
+        )
 
     def _draw_notes(self, pts, x_min, x_max):
         """The day's note as a small tag over its dot — `15/20`, the number the
@@ -947,8 +1091,10 @@ class TimeChart(tk.Canvas):
         bh = self.NOTE_H
 
         def free(bx, by, bw):
-            return not any(bx < px + pw and px < bx + bw and by < py + ph
-                           and py < by + bh for px, py, pw, ph in placed)
+            return not any(
+                bx < px + pw and px < bx + bw and by < py + ph and py < by + bh
+                for px, py, pw, ph in placed
+            )
 
         for x, y, (_, _, group) in pts:
             text = resultslog.fmt_note(resultslog.grade(group))
@@ -959,7 +1105,7 @@ class TimeChart(tk.Canvas):
             # stay centred on their dots, not enough to reach an axis label.
             lo, hi = x_min - 6, x_max + 6
             bx = min(max(x - bw / 2, lo), max(lo, hi - bw))
-            home = y - self.NOTE_GAP - bh          # where it would sit undisturbed
+            home = y - self.NOTE_GAP - bh  # where it would sit undisturbed
             by = home
             while not free(bx, by, bw) and by - (bh + 2) >= 2:
                 by -= bh + 2
@@ -968,17 +1114,31 @@ class TimeChart(tk.Canvas):
 
             if by == home and abs(bx + bw / 2 - x) < 0.5:
                 # right above its own dot: a speech-bubble tail down to it
-                self.create_polygon(x - 4, by + bh - 1, x + 4, by + bh - 1,
-                                    x, y - 5, fill=ACCENT, outline=ACCENT)
+                self.create_polygon(
+                    x - 4,
+                    by + bh - 1,
+                    x + 4,
+                    by + bh - 1,
+                    x,
+                    y - 5,
+                    fill=ACCENT,
+                    outline=ACCENT,
+                )
             else:
                 self.create_line(bx + bw / 2, by + bh, x, y - 5, fill=ACCENT, width=1)
             self._round_rect(bx, by, bx + bw, by + bh, 4, fill=ACCENT, outline=BG)
-            self.create_text(bx + bw / 2, by + bh / 2, text=text, font=self.note_font,
-                             fill=BG, anchor="center")
+            self.create_text(
+                bx + bw / 2,
+                by + bh / 2,
+                text=text,
+                font=self.note_font,
+                fill=BG,
+                anchor="center",
+            )
 
     def _hover(self, e):
         self.delete("tip")
-        best, closest = None, self.HIT ** 2
+        best, closest = None, self.HIT**2
         for x, y, s in self.pts:
             d = (x - e.x) ** 2 + (y - e.y) ** 2
             if d < closest:
@@ -990,8 +1150,10 @@ class TimeChart(tk.Canvas):
         fams = list(dict.fromkeys(s.famille for s in group if s.famille))
         lines = [day.strftime("%d/%m/%Y"), ", ".join(fams) or "—"]
         if len(group) > 1:
-            lines.append(f"{T('n_sessions', n=len(group))} · "
-                         f"{T('avg_label')} {resultslog.fmt_duration(mean)}")
+            lines.append(
+                f"{T('n_sessions', n=len(group))} · "
+                f"{T('avg_label')} {resultslog.fmt_duration(mean)}"
+            )
         else:
             lines.append(resultslog.fmt_duration(mean))
         per_card = [s.avg for s in group if s.avg is not None]
@@ -1003,11 +1165,19 @@ class TimeChart(tk.Canvas):
         bh = lh * len(lines) + 14
         bx = min(max(x + 14, 4), self.winfo_width() - bw - 4)
         by = min(max(y - bh - 12, 4), self.winfo_height() - bh - 4)
-        self.create_rectangle(bx, by, bx + bw, by + bh,
-                              fill=SURFACE, outline=BORDER, tags="tip")
+        self.create_rectangle(
+            bx, by, bx + bw, by + bh, fill=SURFACE, outline=BORDER, tags="tip"
+        )
         for i, t in enumerate(lines):
-            self.create_text(bx + 10, by + 7 + i * lh, text=t, anchor="nw",
-                             font=self.font, fill=ACCENT if i == 0 else TEXT, tags="tip")
+            self.create_text(
+                bx + 10,
+                by + 7 + i * lh,
+                text=t,
+                anchor="nw",
+                font=self.font,
+                fill=ACCENT if i == 0 else TEXT,
+                tags="tip",
+            )
         self.create_oval(x - 6, y - 6, x + 6, y + 6, outline=TEXT, width=2, tags="tip")
 
 
@@ -1019,7 +1189,7 @@ class TimeChart(tk.Canvas):
 class Almathus(tk.Tk):
     def __init__(self):
         super().__init__()
-        apply_theme(load_theme())      # before any widget reads a color
+        apply_theme(load_theme())  # before any widget reads a color
         self.title(T("title"))
         self.configure(bg=BG)
         self.minsize(720, 640)
@@ -1035,7 +1205,7 @@ class Almathus(tk.Tk):
             self.geometry(f"{sw}x{sh}+0+0")
         else:
             try:
-                self.state("zoomed")           # Windows / most Linux WMs
+                self.state("zoomed")  # Windows / most Linux WMs
             except tk.TclError:
                 self.geometry(f"{sw}x{sh}+0+0")  # fallback: size to the screen
 
@@ -1047,20 +1217,20 @@ class Almathus(tk.Tk):
         # numbers the operations are played with, restored from the last run
         self.allowed = load_allowed()
         self.deck: list[Card] = []
-        self.results: list[Card] = []     # completed cards, in play order
+        self.results: list[Card] = []  # completed cards, in play order
         self.retry_queue: list[Card] = []
-        self.retry_seen: set[tuple] = set()   # operations already queued for retry
+        self.retry_seen: set[tuple] = set()  # operations already queued for retry
         self.idx = 0
         self.current: Card | None = None
         self.card_start = 0.0
         self.game_start = 0.0
         self._tick_job = None
-        self._advance_job = None    # the single pending "move to the next card" timer
-        self._voice_job = None      # the watchdog that keeps this card's mic armed
-        self._card_done = False     # answer committed: ignore anything else on this card
-        self._fanfare_job = None    # the recap's pending "start the music" timer
-        self._pump_job = None       # the worker-thread -> Tk callback pump
-        self._stopping = False      # latched on quit: schedule no more timers
+        self._advance_job = None  # the single pending "move to the next card" timer
+        self._voice_job = None  # the watchdog that keeps this card's mic armed
+        self._card_done = False  # answer committed: ignore anything else on this card
+        self._fanfare_job = None  # the recap's pending "start the music" timer
+        self._pump_job = None  # the worker-thread -> Tk callback pump
+        self._stopping = False  # latched on quit: schedule no more timers
         self._voice_mic_bad = False
 
         # sound effects (a no-op if no command-line player is installed)
@@ -1087,16 +1257,18 @@ class Almathus(tk.Tk):
     # Clean shutdown — restore the mic gain on EVERY exit path
     # ------------------------------------------------------------------ #
     def _install_exit_handlers(self):
-        self.protocol("WM_DELETE_WINDOW", self._on_quit)     # window close box
+        self.protocol("WM_DELETE_WINDOW", self._on_quit)  # window close box
         try:
-            self.createcommand("tk::mac::Quit", self._on_quit)   # macOS Cmd+Q / Quit menu
+            self.createcommand(
+                "tk::mac::Quit", self._on_quit
+            )  # macOS Cmd+Q / Quit menu
         except tk.TclError:
             pass
         self.bind_all("<Command-q>", lambda e: self._on_quit())
         self.bind_all("<Control-c>", lambda e: self._on_quit())
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             try:
-                signal.signal(sig, self._on_signal)          # terminal kill / close
+                signal.signal(sig, self._on_signal)  # terminal kill / close
             except (OSError, ValueError):
                 pass
 
@@ -1105,8 +1277,13 @@ class Almathus(tk.Tk):
         # raises out of Tcl ("invalid command name ..._pump") with nowhere to
         # report it.
         self._stopping = True
-        for job in ("_pump_job", "_tick_job", "_advance_job", "_voice_job",
-                    "_fanfare_job"):
+        for job in (
+            "_pump_job",
+            "_tick_job",
+            "_advance_job",
+            "_voice_job",
+            "_fanfare_job",
+        ):
             pending = getattr(self, job, None)
             if pending is not None:
                 try:
@@ -1118,8 +1295,8 @@ class Almathus(tk.Tk):
         # orphaned, still playing to an empty screen, unless it is killed here.
         self.sfx.stop()
         if self.stt:
-            self.stt.stop()                                  # close mic stream (mic light off)
-            self.stt.restore_input_volume(50)                # idempotent
+            self.stt.stop()  # close mic stream (mic light off)
+            self.stt.restore_input_volume(50)  # idempotent
 
     def _on_quit(self):
         self._shutdown()
@@ -1137,7 +1314,7 @@ class Almathus(tk.Tk):
 
     def _pump(self):
         if self._stopping:
-            return                    # the window is going away; stop rescheduling
+            return  # the window is going away; stop rescheduling
         try:
             while True:
                 self._ui_queue.get_nowait()()
@@ -1158,8 +1335,9 @@ class Almathus(tk.Tk):
         s = min(1.0, self.winfo_screenheight() / 900)
 
         def F(size, weight="normal"):
-            return tkfont.Font(family="Helvetica", size=max(11, round(size * s)),
-                               weight=weight)
+            return tkfont.Font(
+                family="Helvetica", size=max(11, round(size * s)), weight=weight
+            )
 
         self.f_giant = F(120, "bold")
         self.f_huge = F(90, "bold")
@@ -1176,8 +1354,9 @@ class Almathus(tk.Tk):
         # else: a tag is one short number on a coloured pill inside the plot, not
         # a line of text to read, and at any larger size a fortnight of them
         # covers the curve they annotate. Bold, so small still reads.
-        self.f_tag = tkfont.Font(family="Helvetica", size=max(9, round(11 * s)),
-                                 weight="bold")
+        self.f_tag = tkfont.Font(
+            family="Helvetica", size=max(9, round(11 * s)), weight="bold"
+        )
 
     # -- frame helper ------------------------------------------------------ #
     def _hush(self):
@@ -1211,7 +1390,7 @@ class Almathus(tk.Tk):
     # ------------------------------------------------------------------ #
     def show_settings(self):
         self._clear()
-        self._hush()             # leaving the recap: the fanfare goes with it
+        self._hush()  # leaving the recap: the fanfare goes with it
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
@@ -1226,29 +1405,62 @@ class Almathus(tk.Tk):
 
         # -- how many cards (one compact toolbar row) ----------------------- #
         self.count_var = tk.IntVar(value=self.n_cards)
-        panel = tk.Frame(col, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER)
+        panel = tk.Frame(
+            col, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER
+        )
         panel.pack(fill="x", pady=(14, 18))
         bar = tk.Frame(panel, bg=SURFACE)
         bar.pack(pady=12)
-        tk.Label(bar, text=T("how_many"), font=self.f_body, fg=MUTED, bg=SURFACE
-                 ).pack(side="left", padx=(0, 18))
+        tk.Label(bar, text=T("how_many"), font=self.f_body, fg=MUTED, bg=SURFACE).pack(
+            side="left", padx=(0, 18)
+        )
 
         def bump(d):
             self.count_var.set(max(1, min(99, self.count_var.get() + d)))
 
-        Btn(bar, "−", command=lambda: bump(-1), font=self.f_mode, bg=CARD_BG, fg=TEXT,
-            width=2, pady=0).pack(side="left", padx=6)
-        tk.Label(bar, textvariable=self.count_var, font=self.f_mode, fg=ACCENT, bg=SURFACE,
-                 width=3).pack(side="left")
-        Btn(bar, "+", command=lambda: bump(1), font=self.f_mode, bg=CARD_BG, fg=TEXT,
-            width=2, pady=0).pack(side="left", padx=6)
+        Btn(
+            bar,
+            "−",
+            command=lambda: bump(-1),
+            font=self.f_mode,
+            bg=CARD_BG,
+            fg=TEXT,
+            width=2,
+            pady=0,
+        ).pack(side="left", padx=6)
+        tk.Label(
+            bar,
+            textvariable=self.count_var,
+            font=self.f_mode,
+            fg=ACCENT,
+            bg=SURFACE,
+            width=3,
+        ).pack(side="left")
+        Btn(
+            bar,
+            "+",
+            command=lambda: bump(1),
+            font=self.f_mode,
+            bg=CARD_BG,
+            fg=TEXT,
+            width=2,
+            pady=0,
+        ).pack(side="left", padx=6)
 
         # quick picks double as a segmented control: the live value stays lit
         chips: dict[int, Btn] = {}
         for q in (5, 10, 20, 30, 50):
-            chips[q] = Btn(bar, str(q), command=lambda v=q: self.count_var.set(v),
-                           font=self.f_chip, width=3, padx=10, pady=6,
-                           active_bg=ACCENT, active_fg=INK)
+            chips[q] = Btn(
+                bar,
+                str(q),
+                command=lambda v=q: self.count_var.set(v),
+                font=self.f_chip,
+                width=3,
+                padx=10,
+                pady=6,
+                active_bg=ACCENT,
+                active_fg=INK,
+            )
             chips[q].pack(side="left", padx=(18 if q == 5 else 5, 0))
 
         def lit(*_):
@@ -1263,25 +1475,42 @@ class Almathus(tk.Tk):
         self._build_number_row(col)
 
         # -- which operation (step 2, and it starts the game) --------------- #
-        tk.Label(col, text=T("choose_mode"), font=self.f_title, fg=TEXT, bg=BG
-                 ).pack(pady=(4, 14))
+        tk.Label(col, text=T("choose_mode"), font=self.f_title, fg=TEXT, bg=BG).pack(
+            pady=(4, 14)
+        )
 
         grid = tk.Frame(col, bg=BG)
         grid.pack(fill="x")
-        for c in (0, 1):                       # keep both tiles the same width
+        for c in (0, 1):  # keep both tiles the same width
             grid.grid_columnconfigure(c, uniform="ops", weight=1)
         for i, m in enumerate(MODES):
-            Btn(grid, f"{T(m)}  {OP_SYMBOL[m]}", command=lambda mm=m: self.start_game(mm),
-                font=self.f_tile, bg=MODE_COLORS[m], fg=INK,
-                active_bg=TILE_HOVER_BG, active_fg=TILE_HOVER_FG, padx=20, pady=22
-                ).grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="nsew")
+            Btn(
+                grid,
+                f"{T(m)}  {OP_SYMBOL[m]}",
+                command=lambda mm=m: self.start_game(mm),
+                font=self.f_tile,
+                bg=MODE_COLORS[m],
+                fg=INK,
+                active_bg=TILE_HOVER_BG,
+                active_fg=TILE_HOVER_FG,
+                padx=20,
+                pady=22,
+            ).grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="nsew")
 
         footer = tk.Frame(col, bg=BG)
         footer.pack(pady=(18, 4))
         self._build_voice_toggle(footer)
         self._build_girly_toggle(footer)
-        Btn(footer, T("progress"), command=self.show_progress, font=self.f_body,
-            bg=CARD_BG, fg=MUTED, padx=22, pady=10).pack(side="left", padx=8)
+        Btn(
+            footer,
+            T("progress"),
+            command=self.show_progress,
+            font=self.f_body,
+            bg=CARD_BG,
+            fg=MUTED,
+            padx=22,
+            pady=10,
+        ).pack(side="left", padx=8)
 
     def _build_title(self, parent):
         """'<drawing> Almathus' — Mario normally, Peach in girly mode."""
@@ -1294,9 +1523,12 @@ class Almathus(tk.Tk):
             self._title_icon = icon
             tk.Label(row, image=icon, bg=BG).pack(side="left", padx=(0, 16))
         else:
-            tk.Label(row, text=TITLE_ICON, font=self.f_big, fg=ACCENT, bg=BG
-                     ).pack(side="left", padx=(0, 12))
-        tk.Label(row, text="Almathus", font=self.f_big, fg=ACCENT, bg=BG).pack(side="left")
+            tk.Label(row, text=TITLE_ICON, font=self.f_big, fg=ACCENT, bg=BG).pack(
+                side="left", padx=(0, 12)
+            )
+        tk.Label(row, text="Almathus", font=self.f_big, fg=ACCENT, bg=BG).pack(
+            side="left"
+        )
 
     def _title_image(self):
         """This theme's drawing, rendered to about two lines of title text.
@@ -1317,10 +1549,13 @@ class Almathus(tk.Tk):
 
     def _build_number_row(self, parent):
         """Row of [1]..[10] toggles: the numbers every operation is played with."""
-        panel = tk.Frame(parent, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER)
+        panel = tk.Frame(
+            parent, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER
+        )
         panel.pack(fill="x", pady=(0, 22), ipady=10)
-        tk.Label(panel, text=T("choose_numbers"), font=self.f_body, fg=MUTED, bg=SURFACE
-                 ).pack(pady=(6, 2))
+        tk.Label(
+            panel, text=T("choose_numbers"), font=self.f_body, fg=MUTED, bg=SURFACE
+        ).pack(pady=(6, 2))
 
         # The row hugs its chips instead of stretching: slack is what Tk hands
         # out a pixel at a time, and that is what made the chips uneven.
@@ -1330,13 +1565,15 @@ class Almathus(tk.Tk):
 
         def paint(n: int, hover: bool = False):
             on = n in self.allowed
-            boxes[n].config(bg=NUM_ON_BG if on else (NUM_HOVER_BG if hover else NUM_OFF_BG),
-                            fg=NUM_ON_FG if on else (TEXT if hover else NUM_OFF_FG))
+            boxes[n].config(
+                bg=NUM_ON_BG if on else (NUM_HOVER_BG if hover else NUM_OFF_BG),
+                fg=NUM_ON_FG if on else (TEXT if hover else NUM_OFF_FG),
+            )
 
         def toggle(n: int):
             if n in self.allowed:
                 if len(self.allowed) == 1:
-                    return          # always keep at least one number to play with
+                    return  # always keep at least one number to play with
                 self.allowed.discard(n)
             else:
                 self.allowed.add(n)
@@ -1348,18 +1585,25 @@ class Almathus(tk.Tk):
         for n in range(NUM_MIN, NUM_MAX + 1):
             # width in characters, identical for every chip, so "10" does not
             # request more room than "1" and the uniform columns can all match
-            lbl = tk.Label(strip, text=str(n), font=self.f_num, width=2, pady=8,
-                           cursor="hand2")
-            lbl.grid(row=0, column=n - NUM_MIN, sticky="nsew", pady=8,
-                     padx=(8 if n == NUM_MIN else 4, 8 if n == NUM_MAX else 4))
+            lbl = tk.Label(
+                strip, text=str(n), font=self.f_num, width=2, pady=8, cursor="hand2"
+            )
+            lbl.grid(
+                row=0,
+                column=n - NUM_MIN,
+                sticky="nsew",
+                pady=8,
+                padx=(8 if n == NUM_MIN else 4, 8 if n == NUM_MAX else 4),
+            )
             lbl.bind("<Button-1>", lambda e, k=n: toggle(k))
             lbl.bind("<Enter>", lambda e, k=n: paint(k, hover=True))
             lbl.bind("<Leave>", lambda e, k=n: paint(k))
             boxes[n] = lbl
             paint(n)
 
-        tk.Label(panel, text=T("numbers_hint"), font=self.f_hint, fg=MUTED, bg=SURFACE
-                 ).pack(pady=(2, 6))
+        tk.Label(
+            panel, text=T("numbers_hint"), font=self.f_hint, fg=MUTED, bg=SURFACE
+        ).pack(pady=(2, 6))
 
     def _build_voice_toggle(self, parent):
         # Only offer the toggle when voice input actually works; otherwise show
@@ -1374,15 +1618,24 @@ class Almathus(tk.Tk):
             btn.config(text=f"{T('voice_toggle')} : {'ON ✅' if on else 'OFF'}")
             btn.set_colors(GOOD if on else CARD_BG, INK if on else MUTED)
 
-        btn._command = lambda: (self.voice_enabled.set(not self.voice_enabled.get()), refresh())
+        btn._command = lambda: (
+            self.voice_enabled.set(not self.voice_enabled.get()),
+            refresh(),
+        )
         btn.pack(side="left", padx=8)
         refresh()
 
     def _build_girly_toggle(self, parent):
         on = THEME == "girly"
-        btn = Btn(parent, f"{T('girly_toggle')} : {'ON 👑' if on else 'OFF'}",
-                  font=self.f_body, padx=22, pady=10,
-                  bg=ACCENT if on else CARD_BG, fg=INK if on else MUTED)
+        btn = Btn(
+            parent,
+            f"{T('girly_toggle')} : {'ON 👑' if on else 'OFF'}",
+            font=self.f_body,
+            padx=22,
+            pady=10,
+            bg=ACCENT if on else CARD_BG,
+            fg=INK if on else MUTED,
+        )
 
         def flip():
             apply_theme("default" if THEME == "girly" else "girly")
@@ -1432,9 +1685,13 @@ class Almathus(tk.Tk):
         self._clear()
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
-        tk.Label(f, text=str(n) if n > 0 else T("go"),
-                 font=self.f_giant, fg=ACCENT if n > 0 else GOOD, bg=BG
-                 ).place(relx=0.5, rely=0.45, anchor="center")
+        tk.Label(
+            f,
+            text=str(n) if n > 0 else T("go"),
+            font=self.f_giant,
+            fg=ACCENT if n > 0 else GOOD,
+            bg=BG,
+        ).place(relx=0.5, rely=0.45, anchor="center")
         if n > 0:
             self.after(COUNTDOWN_TICK, lambda: self.countdown(n - 1))
         else:
@@ -1473,7 +1730,7 @@ class Almathus(tk.Tk):
         self.next_card()
 
     def next_card(self):
-        if self._advance_job is not None:      # any other pending move is stale
+        if self._advance_job is not None:  # any other pending move is stale
             self.after_cancel(self._advance_job)
             self._advance_job = None
         # main deck first, then the reinforcement queue
@@ -1497,17 +1754,23 @@ class Almathus(tk.Tk):
         f.pack(fill="both", expand=True)
 
         # header (pinned top)
-        header = (T("retry_round") if in_retry
-                  else T("card_of", n=min(self.idx + 1, self.n_cards), total=self.n_cards))
-        tk.Label(f, text=header, font=self.f_title,
-                 fg=ACCENT if in_retry else MUTED, bg=BG).pack(side="top", pady=(20, 0))
+        header = (
+            T("retry_round")
+            if in_retry
+            else T("card_of", n=min(self.idx + 1, self.n_cards), total=self.n_cards)
+        )
+        tk.Label(
+            f, text=header, font=self.f_title, fg=ACCENT if in_retry else MUTED, bg=BG
+        ).pack(side="top", pady=(20, 0))
 
         # timers (pinned bottom, always fully visible)
         bar = tk.Frame(f, bg=BG)
         bar.pack(side="bottom", fill="x", padx=40, pady=(0, 20))
         self.card_time_lbl = tk.Label(bar, text="", font=self.f_body, fg=MUTED, bg=BG)
         self.card_time_lbl.pack(side="left")
-        self.total_time_lbl = tk.Label(bar, text="", font=self.f_title, fg=ACCENT, bg=BG)
+        self.total_time_lbl = tk.Label(
+            bar, text="", font=self.f_title, fg=ACCENT, bg=BG
+        )
         self.total_time_lbl.pack(side="right")
 
         # body fills the space between header and timers; weighted spacer rows
@@ -1515,20 +1778,35 @@ class Almathus(tk.Tk):
         body = tk.Frame(f, bg=BG)
         body.pack(side="top", fill="both", expand=True)
         body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)   # top spacer
-        body.rowconfigure(4, weight=1)   # bottom spacer (equal -> group centered)
+        body.rowconfigure(0, weight=1)  # top spacer
+        body.rowconfigure(4, weight=1)  # bottom spacer (equal -> group centered)
 
-        tk.Label(body, text=card.text, font=self.f_huge, fg=TEXT, bg=CARD_BG,
-                 padx=80, pady=12).grid(row=1, column=0, pady=(0, 8))
+        tk.Label(
+            body,
+            text=card.text,
+            font=self.f_huge,
+            fg=TEXT,
+            bg=CARD_BG,
+            padx=80,
+            pady=12,
+        ).grid(row=1, column=0, pady=(0, 8))
 
         voice_on = bool(self.voice_enabled.get() and self.stt and self.stt.available())
 
         inputs = tk.Frame(body, bg=BG)
         inputs.grid(row=2, column=0, pady=(0, 8))
         self.answer_var = tk.StringVar()
-        entry = tk.Entry(inputs, textvariable=self.answer_var, font=self.f_big,
-                         justify="center", width=6, bd=0,
-                         bg=ENTRY_BG, fg=ACCENT, insertbackground=ACCENT)
+        entry = tk.Entry(
+            inputs,
+            textvariable=self.answer_var,
+            font=self.f_big,
+            justify="center",
+            width=6,
+            bd=0,
+            bg=ENTRY_BG,
+            fg=ACCENT,
+            insertbackground=ACCENT,
+        )
         entry.pack(pady=(2, 2), ipady=6)
         entry.focus_set()
         entry.bind("<Return>", lambda e: self.submit())
@@ -1539,7 +1817,9 @@ class Almathus(tk.Tk):
         self.voice_lbl = None
         self._voice_mic_bad = False
         if self.stt and self.stt.available():
-            self.voice_lbl = tk.Label(inputs, text="", font=self.f_small, fg=MUTED, bg=BG)
+            self.voice_lbl = tk.Label(
+                inputs, text="", font=self.f_small, fg=MUTED, bg=BG
+            )
             self.voice_lbl.pack(pady=1)
 
         # On-screen keypad (kid-friendly; works with touch/mouse too). It is built
@@ -1597,7 +1877,7 @@ class Almathus(tk.Tk):
         """
         self._voice_job = None
         if self.current is not target or self._card_done:
-            return                        # this card is over; stop watching it
+            return  # this card is over; stop watching it
         talking = bool(self.tts and self.tts.speaking())
         if not talking and not self._voice_mic_bad and self.voice_enabled.get():
             if self.stt and self.stt.available() and not self.stt.listening():
@@ -1606,8 +1886,8 @@ class Almathus(tk.Tk):
 
     def _voice_status(self, state):
         if state == "no_mic":
-            self._voice_mic_bad = True   # stop re-arming; capture is silent
-            self._show_keypad()          # give the child a way back in
+            self._voice_mic_bad = True  # stop re-arming; capture is silent
+            self._show_keypad()  # give the child a way back in
         lbl = getattr(self, "voice_lbl", None)
         if not (lbl and lbl.winfo_exists()):
             return
@@ -1625,7 +1905,7 @@ class Almathus(tk.Tk):
             lbl.config(text=T("thinking"), fg=MUTED)
 
     def _voice_result(self, n, target):
-        if self.current is not target or self._card_done:   # card already over
+        if self.current is not target or self._card_done:  # card already over
             return
         if n is not None:
             self._voice_answer(n, target)
@@ -1651,8 +1931,8 @@ class Almathus(tk.Tk):
         numbers-and-nothing-else rule in ``voice.strict_numbers``, and
         ``spoken_answer`` picking which number of an utterance was meant.
         """
-        self.answer_var.set(str(n))     # the child sees the number that was heard
-        self.submit()                   # auto-submit, in parallel with the keypad
+        self.answer_var.set(str(n))  # the child sees the number that was heard
+        self.submit()  # auto-submit, in parallel with the keypad
 
     def _build_keypad(self, parent):
         pad = tk.Frame(parent, bg=BG)
@@ -1665,15 +1945,28 @@ class Almathus(tk.Tk):
                 elif k == "✓":
                     cmd, col, fg = self.submit, GOOD, INK
                 else:
-                    cmd = (lambda d=k: self.answer_var.set(self.answer_var.get() + d))
+                    cmd = lambda d=k: self.answer_var.set(self.answer_var.get() + d)
                     col, fg = CARD_BG, TEXT
-                Btn(pad, k, command=cmd, font=self.f_mode, bg=col, fg=fg,
-                    width=2, padx=16, pady=4).grid(row=r, column=c, padx=6, pady=4)
+                Btn(
+                    pad,
+                    k,
+                    command=cmd,
+                    font=self.f_mode,
+                    bg=col,
+                    fg=fg,
+                    width=2,
+                    padx=16,
+                    pady=4,
+                ).grid(row=r, column=c, padx=6, pady=4)
 
     def _tick(self):
         now = time.perf_counter()
-        self.total_time_lbl.config(text=f"{T('timer_total')}  {self._fmt(now - self.game_start)}")
-        self.card_time_lbl.config(text=f"{T('timer_card')}  {now - self.card_start:4.1f}s")
+        self.total_time_lbl.config(
+            text=f"{T('timer_total')}  {self._fmt(now - self.game_start)}"
+        )
+        self.card_time_lbl.config(
+            text=f"{T('timer_card')}  {now - self.card_start:4.1f}s"
+        )
         self._tick_job = self.after(100, self._tick)
 
     @staticmethod
@@ -1682,7 +1975,7 @@ class Almathus(tk.Tk):
         return f"{m:02d}:{s:02d}"
 
     def submit(self):
-        if self._card_done:      # already answered; the card is on its way out
+        if self._card_done:  # already answered; the card is on its way out
             return
         card = self.current
         raw = self.answer_var.get().strip()
@@ -1698,7 +1991,7 @@ class Almathus(tk.Tk):
         is_correct = val == card.answer
         self._card_done = True
         if self.stt:
-            self.stt.cancel()    # drop the capture in flight; the card is over
+            self.stt.cancel()  # drop the capture in flight; the card is over
 
         # record time + outcome only on the very first attempt of a card
         if card.correct_first_try is None:
@@ -1756,32 +2049,70 @@ class Almathus(tk.Tk):
         tk.Label(col, text=emoji, font=self.f_giant, bg=BG, fg=ACCENT).pack(pady=(4, 0))
         tk.Label(col, text=msg, font=self.f_big, fg=TEXT, bg=BG).pack(pady=(0, 8))
 
-        tk.Label(col, text=f"{T('score')} : {correct}/{n}  ({pct:.0f}%)",
-                 font=self.f_title, fg=GOOD if pct >= 80 else ACCENT, bg=BG).pack(pady=4)
-        tk.Label(col, text=f"{T('total_time')} : {self._fmt(total_time)}",
-                 font=self.f_body, fg=TEXT, bg=BG).pack(pady=2)
-        tk.Label(col, text=f"{T('avg_time')} : {avg:.1f}s",
-                 font=self.f_body, fg=MUTED, bg=BG).pack(pady=2)
+        tk.Label(
+            col,
+            text=f"{T('score')} : {correct}/{n}  ({pct:.0f}%)",
+            font=self.f_title,
+            fg=GOOD if pct >= 80 else ACCENT,
+            bg=BG,
+        ).pack(pady=4)
+        tk.Label(
+            col,
+            text=f"{T('total_time')} : {self._fmt(total_time)}",
+            font=self.f_body,
+            fg=TEXT,
+            bg=BG,
+        ).pack(pady=2)
+        tk.Label(
+            col, text=f"{T('avg_time')} : {avg:.1f}s", font=self.f_body, fg=MUTED, bg=BG
+        ).pack(pady=2)
 
         # slowest / struggled operations, for reinforcement
         slow = sorted(cards, key=lambda c: c.time_taken, reverse=True)[:5]
         if slow:
-            tk.Label(col, text=T("slowest"), font=self.f_body, fg=ACCENT, bg=BG).pack(pady=(16, 4))
+            tk.Label(col, text=T("slowest"), font=self.f_body, fg=ACCENT, bg=BG).pack(
+                pady=(16, 4)
+            )
             box = tk.Frame(col, bg=CARD_BG)
             box.pack(pady=4)
             for c in slow:
                 mark = "✅" if c.correct_first_try else "❌"
-                tk.Label(box, text=f"{mark}  {c.text} = {c.answer}    {c.time_taken:.1f}s",
-                         font=self.f_small, fg=TEXT, bg=CARD_BG, anchor="w").pack(fill="x", padx=16, pady=2)
+                tk.Label(
+                    box,
+                    text=f"{mark}  {c.text} = {c.answer}    {c.time_taken:.1f}s",
+                    font=self.f_small,
+                    fg=TEXT,
+                    bg=CARD_BG,
+                    anchor="w",
+                ).pack(fill="x", padx=16, pady=2)
 
         btns = tk.Frame(f, bg=BG)
         btns.pack(side="bottom", pady=28)
-        Btn(btns, T("again"), command=self.show_settings, font=self.f_mode,
-            bg=GOOD, fg=INK).pack(side="left", padx=12)
-        Btn(btns, T("progress"), command=self.show_progress, font=self.f_mode,
-            bg=CARD_BG, fg=TEXT).pack(side="left", padx=12)
-        Btn(btns, T("quit"), command=self._on_quit, font=self.f_mode,
-            bg=CARD_BG, fg=TEXT, active_bg=BAD).pack(side="left", padx=12)
+        Btn(
+            btns,
+            T("again"),
+            command=self.show_settings,
+            font=self.f_mode,
+            bg=GOOD,
+            fg=INK,
+        ).pack(side="left", padx=12)
+        Btn(
+            btns,
+            T("progress"),
+            command=self.show_progress,
+            font=self.f_mode,
+            bg=CARD_BG,
+            fg=TEXT,
+        ).pack(side="left", padx=12)
+        Btn(
+            btns,
+            T("quit"),
+            command=self._on_quit,
+            font=self.f_mode,
+            bg=CARD_BG,
+            fg=TEXT,
+            active_bg=BAD,
+        ).pack(side="left", padx=12)
 
         # The winner's music, once — then, over the silence it leaves, the same
         # encouragement that is on screen, spoken in a warm voice. Chained rather
@@ -1791,6 +2122,7 @@ class Almathus(tk.Tk):
         say = None
         if self.tts and self.tts.available():
             spoken = f"{msg} {T('score_spoken', c=correct, n=n)}"
+
             # The sound player calls this from a worker thread, so it goes back
             # onto the Tk loop through the pump like every other voice callback.
             def say():
@@ -1815,14 +2147,19 @@ class Almathus(tk.Tk):
             return "😊", "BIEN JOUÉ !" if LANG == "fr" else "WELL DONE!"
         if pct >= 40:
             return "💪", "ENCORE UN EFFORT !" if LANG == "fr" else "KEEP GOING!"
-        return "🤕", "ALLEZ, ENCORE UN PEU DE TRAVAIL !" if LANG == "fr" else "A BIT MORE PRACTICE!"
+        return (
+            "🤕",
+            "ALLEZ, ENCORE UN PEU DE TRAVAIL !"
+            if LANG == "fr"
+            else "A BIT MORE PRACTICE!",
+        )
 
     # ------------------------------------------------------------------ #
     # Screen 5: progress — the results CSV, charted and tabulated
     # ------------------------------------------------------------------ #
     def show_progress(self):
         self._clear()
-        self._hush()             # ditto — this screen is for reading, not cheering
+        self._hush()  # ditto — this screen is for reading, not cheering
         sessions = resultslog.load_sessions()
 
         f = tk.Frame(self.container, bg=BG)
@@ -1830,24 +2167,45 @@ class Almathus(tk.Tk):
 
         bar = tk.Frame(f, bg=BG)
         bar.pack(fill="x", padx=28, pady=(18, 6))
-        Btn(bar, T("back"), command=self.show_settings, font=self.f_body,
-            bg=CARD_BG, fg=TEXT).pack(side="left")
-        tk.Label(bar, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG
-                 ).pack(side="left", padx=20)
+        Btn(
+            bar,
+            T("back"),
+            command=self.show_settings,
+            font=self.f_body,
+            bg=CARD_BG,
+            fg=TEXT,
+        ).pack(side="left")
+        tk.Label(
+            bar, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG
+        ).pack(side="left", padx=20)
         # Reconfigured on every filter change: the count belongs to what is shown.
-        self._n_label = tk.Label(bar, text=T("n_sessions", n=len(sessions)),
-                                 font=self.f_small, fg=MUTED, bg=BG)
+        self._n_label = tk.Label(
+            bar,
+            text=T("n_sessions", n=len(sessions)),
+            font=self.f_small,
+            fg=MUTED,
+            bg=BG,
+        )
         self._n_label.pack(side="right")
 
         if not sessions:
-            tk.Label(f, text=T("no_results"), font=self.f_body, fg=MUTED, bg=BG
-                     ).pack(expand=True)
+            tk.Label(f, text=T("no_results"), font=self.f_body, fg=MUTED, bg=BG).pack(
+                expand=True
+            )
             return
 
         # Export lives next to the session count: same corner, same weight as the
         # rest of the header. Its result is reported in the label beside it.
-        pdf_btn = Btn(bar, T("pdf_button"), command=self._export_pdf, font=self.f_small,
-                      bg=CARD_BG, fg=MUTED, padx=14, pady=7)
+        pdf_btn = Btn(
+            bar,
+            T("pdf_button"),
+            command=self._export_pdf,
+            font=self.f_small,
+            bg=CARD_BG,
+            fg=MUTED,
+            padx=14,
+            pady=7,
+        )
         pdf_btn.pack(side="right", padx=(0, 14))
         Tooltip(pdf_btn, T("pdf_tip"), self.f_hint)
         self._pdf_status = tk.Label(bar, text="", font=self.f_small, fg=MUTED, bg=BG)
@@ -1864,12 +2222,21 @@ class Almathus(tk.Tk):
         listed = logged if current in logged else [current] + logged
         # Open on this month, or — if nothing has been played in it yet — on the
         # last month that was, so the screen never opens on an empty chart.
-        self._month = current if current in logged else (logged[0] if logged else current)
+        self._month = (
+            current if current in logged else (logged[0] if logged else current)
+        )
         self._all_sessions = sessions
-        picker = Dropdown(bar, [(None, T("month_all"))]
-                          + [(ym, month_label(ym)) for ym in listed],
-                          self._month, self._select_month, font=self.f_small,
-                          bg=CARD_BG, fg=TEXT, padx=14, pady=7)
+        picker = Dropdown(
+            bar,
+            [(None, T("month_all"))] + [(ym, month_label(ym)) for ym in listed],
+            self._month,
+            self._select_month,
+            font=self.f_small,
+            bg=CARD_BG,
+            fg=TEXT,
+            padx=14,
+            pady=7,
+        )
         picker.pack(side="left")
         Tooltip(picker, T("month_tip"), self.f_hint)
 
@@ -1889,22 +2256,30 @@ class Almathus(tk.Tk):
         for w in body.winfo_children():
             w.destroy()
 
-        sessions = [s for s in self._all_sessions
-                    if resultslog.in_month(s, self._month)]
+        sessions = [
+            s for s in self._all_sessions if resultslog.in_month(s, self._month)
+        ]
         # Kept for the PDF export, which prints exactly what is on the screen.
         self._chart, self._sessions = None, sessions
         self._n_label.config(text=T("n_sessions", n=len(sessions)))
 
         if not sessions:
-            tk.Label(body, text=T("no_month_results"), font=self.f_body,
-                     fg=MUTED, bg=BG).pack(expand=True)
+            tk.Label(
+                body, text=T("no_month_results"), font=self.f_body, fg=MUTED, bg=BG
+            ).pack(expand=True)
             return
 
         # The chart takes a third of the height; the table gets the rest and scrolls.
-        tk.Label(body, text=T("chart_title"), font=self.f_small, fg=MUTED, bg=BG,
-                 anchor="w").pack(fill="x", padx=32, pady=(6, 0))
-        chart = TimeChart(body, sessions, self.f_small, note_font=self.f_tag,
-                          height=max(190, int(self.winfo_height() * 0.30)))
+        tk.Label(
+            body, text=T("chart_title"), font=self.f_small, fg=MUTED, bg=BG, anchor="w"
+        ).pack(fill="x", padx=32, pady=(6, 0))
+        chart = TimeChart(
+            body,
+            sessions,
+            self.f_small,
+            note_font=self.f_tag,
+            height=max(190, int(self.winfo_height() * 0.30)),
+        )
         chart.pack(fill="x", padx=28, pady=(2, 12))
         tk.Frame(body, bg=BORDER, height=1).pack(fill="x", padx=28)
         self._chart = chart
@@ -1917,25 +2292,31 @@ class Almathus(tk.Tk):
         With a month selected that is the monthly report — the filter and the
         export are the same view, so what you see is what gets printed.
         """
-        if not self._sessions:                    # an empty month has nothing to print
+        if not self._sessions:  # an empty month has nothing to print
             self._flash_pdf_status(T("no_month_results"), MUTED)
             return
         stamp = datetime.now()
         path = filedialog.asksaveasfilename(
-            parent=self, title=T("pdf_dialog"), defaultextension=".pdf",
+            parent=self,
+            title=T("pdf_dialog"),
+            defaultextension=".pdf",
             initialdir=str(resultslog.RESULTS_DIR),
             initialfile=pdfreport.default_filename(LANG, stamp, self._month),
             filetypes=[("PDF", "*.pdf")],
         )
-        if not path:                                   # the parent changed their mind
+        if not path:  # the parent changed their mind
             return
         try:
             pdfreport.export_progress(
-                path, self._sessions, self._chart,
+                path,
+                self._sessions,
+                self._chart,
                 palette=THEMES[THEME],
                 labels={
                     "title": T("progress_title"),
-                    "subtitle": T("pdf_exported_on", when=stamp.strftime("%d/%m/%Y %H:%M")),
+                    "subtitle": T(
+                        "pdf_exported_on", when=stamp.strftime("%d/%m/%Y %H:%M")
+                    ),
                     # The month it covers, named on the report itself; empty when
                     # the whole history is being printed.
                     "period": "" if self._month is None else month_label(self._month),
@@ -1961,8 +2342,12 @@ class Almathus(tk.Tk):
         if not self._pdf_status.winfo_exists():
             return
         self._pdf_status.config(text=text, fg=color)
-        self.after(ms, lambda: self._pdf_status.winfo_exists()
-                   and self._pdf_status.config(text=""))
+        self.after(
+            ms,
+            lambda: (
+                self._pdf_status.winfo_exists() and self._pdf_status.config(text="")
+            ),
+        )
 
     def _build_results_table(self, parent, sessions):
         """Every logged session, oldest first — the paper sheet, on screen."""
@@ -1972,8 +2357,7 @@ class Almathus(tk.Tk):
         # `yscrollincrement=1` makes a `yview_scroll` unit one pixel: a canvas
         # left at 0 scrolls a tenth of its own height per unit instead, so a
         # single nudge of the wheel would jump most of the table at a time.
-        canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0, bd=0,
-                           yscrollincrement=1)
+        canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0, bd=0, yscrollincrement=1)
         bar = tk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=bar.set)
         bar.pack(side="right", fill="y")
@@ -1985,10 +2369,14 @@ class Almathus(tk.Tk):
         # below), so this binding is also consulted for *their* <Configure> — and
         # widening the scrolled window to a single cell's width would collapse the
         # whole table, one feedback pass at a time.
-        canvas.bind("<Configure>", lambda e: e.widget is canvas
-                    and canvas.itemconfig(window, width=e.width))
-        table.bind("<Configure>",
-                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind(
+            "<Configure>",
+            lambda e: e.widget is canvas and canvas.itemconfig(window, width=e.width),
+        )
+        table.bind(
+            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
         # Wheel and trackpad. The pointer is nearly always over a row Label, not
         # over the canvas, and Tk hands an event to the widget's own bindtags
         # only — it never walks up to a parent widget — so a plain binding on the
@@ -2016,10 +2404,19 @@ class Almathus(tk.Tk):
             table.grid_columnconfigure(i, weight=weight)
 
         for i, (label, anchor, _) in enumerate(cols):
-            tk.Label(table, text=label, font=self.f_small, fg=MUTED, bg=BG,
-                     anchor=anchor, padx=14, pady=8).grid(row=0, column=i, sticky="nsew")
-        tk.Frame(table, bg=BORDER, height=1).grid(row=1, column=0, columnspan=len(cols),
-                                                  sticky="ew")
+            tk.Label(
+                table,
+                text=label,
+                font=self.f_small,
+                fg=MUTED,
+                bg=BG,
+                anchor=anchor,
+                padx=14,
+                pady=8,
+            ).grid(row=0, column=i, sticky="nsew")
+        tk.Frame(table, bg=BORDER, height=1).grid(
+            row=1, column=0, columnspan=len(cols), sticky="ew"
+        )
 
         # Newest first: the session that just finished sits right under the
         # header, and the history scrolls away below it.
@@ -2028,17 +2425,27 @@ class Almathus(tk.Tk):
             cells = (
                 (s.day.strftime("%d/%m/%Y") if s.day else "—", TEXT),
                 (s.famille or "—", TEXT),
-                (resultslog.fmt_duration(s.seconds) if s.seconds is not None
-                 else (s.raw_time or "—"), ACCENT),
+                (
+                    resultslog.fmt_duration(s.seconds)
+                    if s.seconds is not None
+                    else (s.raw_time or "—"),
+                    ACCENT,
+                ),
                 (str(s.cards) if s.cards else "—", MUTED),
                 (resultslog.fmt_note(s.note) or "—", ACCENT),
                 (f"{s.avg:.1f} s" if s.avg is not None else "—", GOOD),
             )
             for i, ((text, fg), (_, anchor, _)) in enumerate(zip(cells, cols)):
-                tk.Label(table, text=text, font=self.f_small,
-                         fg=MUTED if text == "—" else fg,   # a blank is never a value
-                         bg=rowbg, anchor=anchor, padx=14, pady=7
-                         ).grid(row=r + 2, column=i, sticky="nsew")
+                tk.Label(
+                    table,
+                    text=text,
+                    font=self.f_small,
+                    fg=MUTED if text == "—" else fg,  # a blank is never a value
+                    bg=rowbg,
+                    anchor=anchor,
+                    padx=14,
+                    pady=7,
+                ).grid(row=r + 2, column=i, sticky="nsew")
 
         # Every cell scrolls the canvas it sits in: the canvas' path name is
         # appended to each row's bindtags, so a wheel event delivered to a Label

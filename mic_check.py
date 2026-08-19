@@ -74,7 +74,7 @@ def main():
         print("sounddevice/numpy manquants — installe le groupe voice.")
         return
 
-    sr, blk = s._pick_stream_params()
+    sr, _blk = s._pick_stream_params()
     if sr is None:
         print("❌ Aucun périphérique d'entrée utilisable (permission micro ?)")
         return

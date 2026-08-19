@@ -17,11 +17,12 @@ under the same name (see assets/README.md).
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 # Players in order of preference, each with the flags that make it play one file
 # and get out of the way: no window, no console output, exit at the end.
@@ -34,7 +35,7 @@ PLAYERS = (
 )
 
 
-def find_player() -> Optional[list[str]]:
+def find_player() -> list[str] | None:
     """The first player on PATH, as the command prefix to append a file to."""
     for exe, flags in PLAYERS:
         path = shutil.which(exe)
@@ -51,7 +52,7 @@ class Sound:
     def __init__(self, directory: Path | str):
         self.dir = Path(directory)
         self.player = find_player()
-        self._proc: Optional[subprocess.Popen] = None
+        self._proc: subprocess.Popen | None = None
         # Bumped by every stop() and every new sound, so a waiter thread can tell
         # "the sample finished" from "something cut it short" — see _wait_then.
         self._gen = 0
@@ -59,7 +60,7 @@ class Sound:
     def available(self) -> bool:
         return bool(self.player and self.dir.is_dir())
 
-    def play(self, name: str, then: Optional[Callable[[], None]] = None) -> None:
+    def play(self, name: str, then: Callable[[], None] | None = None) -> None:
         """Play a sample, cutting any still running. `then` runs when it ends.
 
         `then` is called from a worker thread, so a Tk caller has to marshal it
@@ -74,7 +75,7 @@ class Sound:
             return
         try:
             self._proc = subprocess.Popen(
-                self.player + [str(path)],
+                [*self.player, str(path)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -89,10 +90,8 @@ class Sound:
             ).start()
 
     def _wait_then(self, proc, gen, then):
-        try:
+        with contextlib.suppress(Exception):
             proc.wait()
-        except Exception:
-            pass
         # A sound that was cut short never earned its callback: terminate() makes
         # wait() return just the same, and the recap's spoken score must not fire
         # at the settings screen because a child clicked "Rejouer" mid-fanfare.
@@ -103,7 +102,5 @@ class Sound:
         self._gen += 1
         proc, self._proc = self._proc, None
         if proc and proc.poll() is None:
-            try:
+            with contextlib.suppress(OSError):
                 proc.terminate()
-            except OSError:
-                pass

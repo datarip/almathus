@@ -26,6 +26,7 @@ Environment overrides:
 
 from __future__ import annotations
 
+import contextlib
 import os
 import queue
 import re
@@ -37,7 +38,7 @@ import threading
 import time
 import unicodedata
 import wave
-from typing import Callable, Optional
+from collections.abc import Callable
 
 # Set ALMATHUS_VOICE_DEBUG=1 to trace the whole voice path on stderr.
 _DEBUG = os.environ.get("ALMATHUS_VOICE_DEBUG") not in (None, "", "0")
@@ -94,7 +95,7 @@ class TTS:
     def __init__(self, lang: str = "fr", rate: int = 180):
         self.lang = lang
         self.rate = rate
-        self._proc: Optional[subprocess.Popen] = None
+        self._proc: subprocess.Popen | None = None
         self._say = shutil.which("say")
         self._voice = self._pick_voice(lang)
         self._pyttsx = None
@@ -106,7 +107,7 @@ class TTS:
             except Exception:
                 self._pyttsx = False
 
-    def _pick_voice(self, lang: str) -> Optional[str]:
+    def _pick_voice(self, lang: str) -> str | None:
         if not shutil.which("say"):
             return None
         env = os.environ.get("ALMATHUS_TTS_VOICE")
@@ -137,7 +138,7 @@ class TTS:
     def available(self) -> bool:
         return bool(self._say or self._pyttsx)
 
-    def speak(self, text: str, on_done: Optional[Callable[[], None]] = None):
+    def speak(self, text: str, on_done: Callable[[], None] | None = None):
         """Speak asynchronously; interrupts any speech already in progress."""
         self.stop()
         if self._say:
@@ -187,10 +188,8 @@ class TTS:
 
     def stop(self):
         if self._proc and self._proc.poll() is None:
-            try:
+            with contextlib.suppress(Exception):
                 self._proc.terminate()
-            except Exception:
-                pass
         self._proc = None
 
 
@@ -329,7 +328,7 @@ def _tokenize(text: str, lang: str) -> list[str]:
     return low.split()
 
 
-def strict_numbers(text: str, lang: str = "fr") -> Optional[list[int]]:
+def strict_numbers(text: str, lang: str = "fr") -> list[int] | None:
     """The numbers in an utterance that is *only* numbers — else None.
 
     ``None`` and ``[]`` mean different things and both mean "no answer":
@@ -359,7 +358,7 @@ def strict_numbers(text: str, lang: str = "fr") -> Optional[list[int]]:
         return []
 
     out: list[int] = []
-    cur: Optional[int] = None
+    cur: int | None = None
     last = ""  # "unit" | "ten" | "scale" — what the previous token was
     last_val = 0
 
@@ -412,7 +411,7 @@ def numbers_in(text: str, lang: str = "fr") -> list[int]:
     return nums or []
 
 
-def parse_number(text: str, lang: str = "fr") -> Optional[int]:
+def parse_number(text: str, lang: str = "fr") -> int | None:
     """The single number a strictly-numeric transcript states, or None.
 
     The LAST one wins, which handles self-correction ("trois, quatre").
@@ -593,8 +592,8 @@ class SpeechInput:
     # -- capability probing ------------------------------------------------ #
     def _probe(self):
         try:
-            import sounddevice as sd
             import numpy as np
+            import sounddevice as sd
 
             self._sd, self._np = sd, np
         except Exception:
@@ -627,9 +626,9 @@ class SpeechInput:
     # -- public API -------------------------------------------------------- #
     def listen(
         self,
-        on_result: Callable[[Optional[int]], None],
-        on_state: Optional[Callable[[str], None]] = None,
-        pick: Optional[Callable[[list], Optional[int]]] = None,
+        on_result: Callable[[int | None], None],
+        on_state: Callable[[str], None] | None = None,
+        pick: Callable[[list], int | None] | None = None,
     ):
         """Record one utterance in a background thread, then call on_result(int|None).
 
@@ -687,10 +686,8 @@ class SpeechInput:
         if s is not None:
             _dbg("closing mic stream")
             for fn in ("abort", "close"):
-                try:
+                with contextlib.suppress(Exception):
                     getattr(s, fn)()
-                except Exception:
-                    pass
 
     def warmup(self):
         """Preload the recognizer on the STT thread so the first answer is instant."""
@@ -845,10 +842,8 @@ class SpeechInput:
             on_result(parsed)
         except Exception as e:
             _dbg("transcribe EXCEPTION:", repr(e))
-            try:
+            with contextlib.suppress(Exception):
                 on_result(None)
-            except Exception:
-                pass
         finally:
             self._busy = False
 
@@ -1103,8 +1098,7 @@ class SpeechInput:
                 continue
             starved = 0
             r = band_rms(block)
-            if r > st["peak"]:
-                st["peak"] = r
+            st["peak"] = max(st["peak"], r)
             preroll.append(block)  # always: a false start keeps its lead-in
             if not started:
                 if is_speech(block, r):
@@ -1229,10 +1223,8 @@ class SpeechInput:
         except Exception:
             return ""
         finally:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(path)
-            except OSError:
-                pass
 
     def _vosk_model_dir(self):
         env = os.environ.get("ALMATHUS_VOSK_MODEL")
@@ -1283,6 +1275,7 @@ class SpeechInput:
         the game heard nothing at all.
         """
         import json as _json
+
         from vosk import KaldiRecognizer
 
         rec = (

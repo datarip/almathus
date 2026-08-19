@@ -120,7 +120,7 @@ def test_keypad_flow():
             app.answer_var.set(junk)
             app.submit()
             app.update()
-        assert app.current is card, f"a junk submit skipped the card"
+        assert app.current is card, "a junk submit skipped the card"
 
         app.answer_var.set(str(card.answer))
         app.submit()

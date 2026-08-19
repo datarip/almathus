@@ -18,6 +18,7 @@ screen charts and tabulates (see results.py for the header definition).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import queue
@@ -706,10 +707,8 @@ class Tooltip:
 
     def _cancel(self):
         if self.job:
-            try:
+            with contextlib.suppress(tk.TclError):
                 self.widget.after_cancel(self.job)
-            except tk.TclError:
-                pass
             self.job = None
 
     def _show(self):
@@ -718,10 +717,8 @@ class Tooltip:
             return
         self.tip = tk.Toplevel(self.widget)
         self.tip.wm_overrideredirect(True)  # no title bar, no shadow frame
-        try:
+        with contextlib.suppress(tk.TclError):
             self.tip.wm_attributes("-topmost", True)
-        except tk.TclError:
-            pass
         tk.Label(
             self.tip,
             text=self.text,
@@ -793,10 +790,8 @@ class Dropdown(Btn):
         # manager places it before it hears where we want it — so an unhidden
         # popup flashes in the corner of the screen on its way under the button.
         top.wm_withdraw()
-        try:
+        with contextlib.suppress(tk.TclError):
             top.wm_attributes("-topmost", True)
-        except tk.TclError:
-            pass
         frame = tk.Frame(
             top, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER
         )
@@ -867,10 +862,8 @@ class Dropdown(Btn):
 
     def _close(self):
         if self._pop:
-            try:
+            with contextlib.suppress(tk.TclError):
                 self._pop.grab_release()
-            except tk.TclError:
-                pass
             self._pop.destroy()
             self._pop = None
 
@@ -1317,10 +1310,8 @@ class Almathus(tk.Tk):
         ):
             pending = getattr(self, job, None)
             if pending is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self.after_cancel(pending)
-                except Exception:
-                    pass
                 setattr(self, job, None)
         # The player is a child process: quitting through os._exit() leaves it
         # orphaned, still playing to an empty screen, unless it is killed here.
@@ -1331,10 +1322,8 @@ class Almathus(tk.Tk):
 
     def _on_quit(self):
         self._shutdown()
-        try:
+        with contextlib.suppress(Exception):
             self.destroy()
-        except Exception:
-            pass
         # Force the process to die so the OS reclaims the mic no matter what
         # (an open PortAudio stream can otherwise stall interpreter shutdown).
         os._exit(0)
@@ -1875,7 +1864,7 @@ class Almathus(tk.Tk):
         if kp and kp.winfo_exists() and not kp.winfo_manager():
             kp.grid(row=3, column=0)
 
-    def _speak_operation(self, card: "Card", then=None):
+    def _speak_operation(self, card: Card, then=None):
         if not (self.tts and self.tts.available()):
             if then:
                 then()
@@ -1976,7 +1965,10 @@ class Almathus(tk.Tk):
                 elif k == "✓":
                     cmd, col, fg = self.submit, GOOD, INK
                 else:
-                    cmd = lambda d=k: self.answer_var.set(self.answer_var.get() + d)
+
+                    def cmd(d=k):
+                        return self.answer_var.set(self.answer_var.get() + d)
+
                     col, fg = CARD_BG, TEXT
                 Btn(
                     pad,
@@ -2250,7 +2242,7 @@ class Almathus(tk.Tk):
         logged = resultslog.months(sessions)
         now = datetime.now()
         current = (now.year, now.month)
-        listed = logged if current in logged else [current] + logged
+        listed = logged if current in logged else [current, *logged]
         # Open on this month, or — if nothing has been played in it yet — on the
         # last month that was, so the screen never opens on an empty chart.
         self._month = (
@@ -2466,7 +2458,9 @@ class Almathus(tk.Tk):
                 (resultslog.fmt_note(s.note) or "—", ACCENT),
                 (f"{s.avg:.1f} s" if s.avg is not None else "—", GOOD),
             )
-            for i, ((text, fg), (_, anchor, _)) in enumerate(zip(cells, cols)):
+            for i, ((text, fg), (_, anchor, _)) in enumerate(
+                zip(cells, cols, strict=True)
+            ):
                 tk.Label(
                     table,
                     text=text,

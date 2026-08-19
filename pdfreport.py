@@ -468,8 +468,8 @@ class Pdf:
         for name in ("Helvetica", "Helvetica-Bold"):
             add(
                 (
-                    "<< /Type /Font /Subtype /Type1 /BaseFont /%s "
-                    "/Encoding /WinAnsiEncoding >>" % name
+                    f"<< /Type /Font /Subtype /Type1 /BaseFont /{name} "
+                    "/Encoding /WinAnsiEncoding >>"
                 ).encode("ascii")
             )
         for i, ops in enumerate(self.pages):
@@ -607,7 +607,7 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
     bottom = MARGIN + 16  # leave the footer its band
 
     def head(y_top: float) -> float:
-        for (x0, width), (key, align, _) in zip(edges, COLUMNS):
+        for (x0, width), (key, align, _) in zip(edges, COLUMNS, strict=True):
             tx = x0 + pad if align == "w" else x0 + width - pad
             pdf.text(
                 tx,
@@ -648,7 +648,9 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
             (f"{s.avg:.1f} s" if s.avg is not None else "—", palette["GOOD"]),
         )
         baseline = y - ROW_H + (ROW_H - FS_ROW) / 2 + 1.5
-        for (text, color), (x0, width), (_, align, _w) in zip(cells, edges, COLUMNS):
+        for (text, color), (x0, width), (_, align, _w) in zip(
+            cells, edges, COLUMNS, strict=True
+        ):
             color = palette["MUTED"] if text == "—" else color  # a blank is not a value
             tx = x0 + pad if align == "w" else x0 + width - pad
             pdf.clip_text(

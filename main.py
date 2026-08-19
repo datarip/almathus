@@ -115,6 +115,7 @@ STRINGS = {
         "col_cards": "Cartes",
         "col_note": "Note",
         "col_avg": "Temps moyen / carte",
+        "col_difficult": "Difficultés",
         "n_sessions": "{n} sessions",
         "month_all": "Tous les mois",
         "month_tip": "Filtrer par mois",
@@ -172,6 +173,7 @@ STRINGS = {
         "col_cards": "Cards",
         "col_note": "Grade",
         "col_avg": "Avg time / card",
+        "col_difficult": "Difficulty",
         "n_sessions": "{n} sessions",
         "month_all": "All months",
         "month_tip": "Filter by month",
@@ -484,6 +486,11 @@ COUNTDOWN_TICK = 1000  # ms one number stays on screen = the gap between beeps
 COUNTDOWN_GO_AT = 3485  # ms into the sample where the launch tone starts
 COUNTDOWN_GO_LEN = 975  # ms it rings for, after which the sample is silent
 
+# How many times a card carried over from the last session is dealt again. Twice
+# is what makes it stick: once is another draw of the same lottery, and a third
+# would eat the round.
+REPEAT_TIMES = 2
+
 
 def read_prefs() -> dict:
     """Everything remembered between runs. Anything unreadable reads as empty."""
@@ -544,6 +551,7 @@ class Card:
     answer: int
     # measurement / state
     time_taken: float = 0.0  # seconds spent on the first attempt
+    retry_time: float = 0.0  # ...and on the reinforcement round, if it came back
     attempts: int = 0
     correct_first_try: bool | None = None
     is_retry: bool = False
@@ -551,6 +559,16 @@ class Card:
     @property
     def text(self) -> str:
         return f"{self.a} {OP_SYMBOL[self.mode]} {self.b}"
+
+    @property
+    def total_time(self) -> float:
+        """Every second this card cost, both sittings added up.
+
+        A card that was missed is asked again at the end, and what it really
+        took to answer is the two goes together — grading it on the first alone
+        would make a card that was failed *fast* look like an easy one.
+        """
+        return self.time_taken + self.retry_time
 
 
 def spoken_answer(nums: list[int], card: Card) -> int | None:
@@ -622,8 +640,8 @@ def every_operation(mode: str, allowed: set[int]) -> list[tuple[int, int]]:
     return pairs
 
 
-def make_deck(mode: str, n: int, allowed: set[int] | None = None) -> list[Card]:
-    """Deal n cards as a shuffled bag: no operation comes back until every other
+def _deal(pool: list[tuple[int, int]], n: int) -> list[tuple[int, int]]:
+    """n operations as a shuffled bag: no operation comes back until every other
     one has been asked. Drawing each card independently meant the same easy sum
     could show up two or three times in a round.
 
@@ -631,16 +649,146 @@ def make_deck(mode: str, n: int, allowed: set[int] | None = None) -> list[Card]:
     for (7× has only 11 facts). The card count wins there — the bag is reshuffled
     and dealt again, so repeats start only once the kid has seen the whole set.
     """
+    out: list[tuple[int, int]] = []
+    while len(out) < n:
+        bag = random.sample(pool, len(pool))
+        if out and len(bag) > 1 and bag[0] == out[-1]:
+            bag.append(bag.pop(0))  # no repeat across the seam either
+        out += bag[: n - len(out)]
+    return out
+
+
+def _lone(seq: Sequence[tuple[int, int]], i: int) -> bool:
+    """Is the card at `i` different from both the cards either side of it?"""
+    return (i == 0 or seq[i] != seq[i - 1]) and (
+        i + 1 == len(seq) or seq[i] != seq[i + 1]
+    )
+
+
+def _spread(ops: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Shuffle, then push identical operations apart.
+
+    The bag deal already keeps its own repeats away from each other; this is for
+    the deck once revision cards have been mixed into it, where the same
+    operation is deliberately in the pile more than once. Asking it twice in a
+    row would test the child's short-term memory of the last answer rather than
+    the fact itself, which is the whole reason for repeating it.
+
+    Each pair that lands side by side trades one of its halves for the first
+    card, anywhere in the deck, that leaves both ends of the trade with
+    strangers for neighbours. Cards already behind the pair are candidates too:
+    a pair that lands on the last two slots has nothing ahead of it to trade
+    with. Revision is capped at half the deck, so there is always somewhere to go.
+    """
+    out = random.sample(ops, len(ops))
+    for i in range(1, len(out)):
+        if _lone(out, i):
+            continue
+        # Everything except this card's twin at i - 1, which it cannot fix.
+        for j in (*range(i + 1, len(out)), *range(i - 1)):
+            out[i], out[j] = out[j], out[i]
+            if _lone(out, i) and _lone(out, j):
+                break
+            out[i], out[j] = out[j], out[i]  # no good — put it back, try the next
+    return out
+
+
+def make_deck(
+    mode: str,
+    n: int,
+    allowed: set[int] | None = None,
+    repeat: Sequence[tuple[int, int]] = (),
+    times: int = REPEAT_TIMES,
+) -> list[Card]:
+    """Deal n cards, with `repeat` — last session's difficulties — dealt `times`
+    each so a fact that fought back is met again before it is forgotten.
+
+    Revision never takes more than half the round: the rest of the family still
+    has to get a turn, and a deck made only of yesterday's failures is a
+    punishment rather than a drill. Operations the current settings cannot ask
+    are dropped, so switching from −4 to ×2 quietly leaves the −4 revision behind
+    instead of dealing a card that does not belong to the session.
+    """
     pool = every_operation(mode, allowed or set(range(NUM_MIN, NUM_MAX + 1)))
     if not pool:
         return []
-    deck: list[Card] = []
-    while len(deck) < n:
-        bag = random.sample(pool, len(pool))
-        if deck and len(bag) > 1 and bag[0] == (deck[-1].a, deck[-1].b):
-            bag.append(bag.pop(0))  # no repeat across the seam either
-        deck += [make_card(mode, a, b) for a, b in bag[: n - len(deck)]]
-    return deck
+    askable = set(pool)
+    wanted = [op for op in repeat if op in askable][: max(0, n // (2 * times))]
+    forced = [op for op in wanted for _ in range(times)]
+    if not forced:
+        return [make_card(mode, a, b) for a, b in _deal(pool, n)]
+    # The rest of the deck is dealt from what is *left*: a revision card already
+    # has its turns, and letting the bag deal it a third one would drown the
+    # round in one fact. Falling back to the whole pool covers the case where
+    # revision has claimed every operation the settings can ask.
+    rest = [op for op in pool if op not in set(wanted)] or pool
+    ops = _spread(_deal(rest, max(0, n - len(forced))) + forced)
+    return [make_card(mode, a, b) for a, b in ops]
+
+
+def carry_over(
+    sessions: Sequence[resultslog.Session], mode: str, allowed: set[int]
+) -> list[tuple[int, int]]:
+    """The operations to drill again: the difficulties of the last day played.
+
+    Read back out of the log rather than carried in memory, so revision survives
+    the app being closed — and so a parent can type a card into the cell and
+    have it dealt tomorrow.
+
+    Only what this session can actually ask comes through: the same operation,
+    and a number that is switched on. Change family and the revision quietly
+    waits for the day you come back to it, rather than dealing a card that does
+    not belong to the round.
+    """
+    days = [s.day for s in sessions if s.day and s.difficultes]
+    if not days:
+        return []
+    last = max(days)
+    ops: list[tuple[int, int]] = []
+    for session in sessions:
+        if session.day != last:
+            continue
+        for text in session.difficultes:
+            parsed = resultslog.parse_operation(text)
+            if parsed is None:
+                continue
+            op_mode, a, b = parsed
+            if op_mode == mode and b in allowed and (a, b) not in ops:
+                ops.append((a, b))
+    return ops
+
+
+def difficult_cards(
+    cards: Sequence[Card], top: int = resultslog.TOP_DIFFICULT
+) -> list[Card]:
+    """The cards this session fought with, hardest first.
+
+    Two different things make a card hard, and the log wants both: getting it
+    wrong, and labouring over it. Wrong ranks first — a fact that was not known
+    is not made easy by a fast guess — and inside each group the slower card
+    comes first. Time is `total_time`, so a card that was missed *and* then
+    laboured over in the reinforcement round lands where it belongs.
+
+    One entry per operation: a short number selection deals the same fact twice
+    in a round, and the list is more useful five cards long than five copies of
+    one. A clean, quick session still fills it — these are the session's
+    *relatively* hardest cards, and worth another look tomorrow even on a good
+    day.
+    """
+    ranked = sorted(
+        cards, key=lambda c: (c.correct_first_try is not False, -c.total_time)
+    )
+    out: list[Card] = []
+    seen: set[tuple[str, int, int]] = set()
+    for card in ranked:
+        key = (card.mode, card.a, card.b)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(card)
+        if len(out) == top:
+            break
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -1834,7 +1982,9 @@ class Almathus(tk.Tk):
     def start_game(self, mode: str):
         self.mode = mode
         self.n_cards = self.count_var.get()
-        self.deck = make_deck(mode, self.n_cards, self.allowed)
+        # Yesterday's hard cards, dealt again before they are forgotten.
+        revision = carry_over(resultslog.load_sessions(), mode, self.allowed)
+        self.deck = make_deck(mode, self.n_cards, self.allowed, revision)
         self.results = []
         self.retry_queue = []
         self.retry_seen = set()
@@ -2273,6 +2423,10 @@ class Almathus(tk.Tk):
             if not is_correct and key not in self.retry_seen:
                 self.retry_seen.add(key)
                 self.retry_queue.append(card)
+        else:
+            # The same card, back for the reinforcement round. Its outcome is
+            # already written — only the time it cost is still being added up.
+            card.retry_time += self._card_elapsed()
 
         if is_correct:
             self.sfx.play("correct")
@@ -2596,6 +2750,7 @@ class Almathus(tk.Tk):
                     "cartes": T("col_cards"),
                     "note": T("col_note"),
                     "temps_moyen": T("col_avg"),
+                    "difficultes": T("col_difficult"),
                 },
                 when=stamp,
             )
@@ -2666,6 +2821,7 @@ class Almathus(tk.Tk):
             (T("col_cards"), "e", 2),
             (T("col_note"), "e", 2),
             (T("col_avg"), "e", 4),
+            (T("col_difficult"), "w", 6),
         )
         for i, (_, _, weight) in enumerate(cols):
             table.grid_columnconfigure(i, weight=weight)
@@ -2701,6 +2857,7 @@ class Almathus(tk.Tk):
                 (str(s.cards) if s.cards else "—", MUTED),
                 (resultslog.fmt_note(s.note) or "—", ACCENT),
                 (f"{s.avg:.1f} s" if s.avg is not None else "—", GOOD),
+                (", ".join(s.difficultes) or "—", MUTED),
             )
             for i, ((text, fg), (_, anchor, _)) in enumerate(
                 zip(cells, cols, strict=True)
@@ -2724,6 +2881,7 @@ class Almathus(tk.Tk):
 
     def _save_session(self, cards, total_time, correct):
         stamp = datetime.now().astimezone()
+        hardest = difficult_cards(cards)
 
         # One summary line in the CSV log — the file the progress screen reads
         # and the parent can edit by hand. `famille` records what was drilled:
@@ -2735,6 +2893,9 @@ class Almathus(tk.Tk):
             cards=len(cards),
             correct=correct,
             lang=LANG,
+            # The cards that fought back, for the parent to read and for the
+            # next session to deal again.
+            difficultes=[resultslog.fmt_operation(c.mode, c.a, c.b) for c in hardest],
         )
 
         # ...and the full per-card detail as JSON, for finer analysis later.
@@ -2753,6 +2914,10 @@ class Almathus(tk.Tk):
                         "correct": c.correct_first_try,
                         "attempts": c.attempts,
                         "time_s": round(c.time_taken, 2),
+                        # Only ever non-zero on a card that came back at the
+                        # end; `time_s` stays the first sitting alone, so older
+                        # files keep meaning what they meant.
+                        "retry_time_s": round(c.retry_time, 2),
                     }
                     for c in cards
                 ],

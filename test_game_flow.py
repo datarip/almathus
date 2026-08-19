@@ -188,6 +188,50 @@ def test_keypad_flow():
         app.destroy()
 
 
+def test_retry_time_adds_up():
+    """A card asked again at the end is timed over both goes.
+
+    The log ranks a session's hardest cards on that total, so a card missed in
+    half a second and then laboured over at the end has to read as the hard card
+    it is — not as the fastest answer of the round.
+    """
+    app = start(voice=False)
+    failed = app.current
+    try:
+        app.answer_var.set(str(failed.answer + 1))
+        app.submit()
+        assert wait_for(app, lambda: app.current is not failed, 5), (
+            "a wrong answer did not advance"
+        )
+        first_go = failed.time_taken
+        assert first_go > 0, "the first sitting was never timed"
+
+        # The rest of the deck, answered right, so the reinforcement round is
+        # reached with exactly one card in it.
+        while app.current is not None and not app.current.is_retry:
+            card = app.current
+            app.answer_var.set(str(card.answer))
+            app.submit()
+            if not wait_for(app, lambda c=card: app.current is not c, 5):
+                break
+        assert app.current is failed, "the failed card never came back"
+
+        pump(app, 1.0)  # a second go that costs measurable time
+        app.answer_var.set(str(failed.answer))
+        app.submit()
+        pump(app, 1.0)
+
+        assert failed.time_taken == first_go, "the first sitting was overwritten"
+        assert failed.retry_time > 0.9, f"second sitting not timed: {failed.retry_time}"
+        assert failed.total_time == first_go + failed.retry_time
+        assert almathus.difficult_cards(app.results)[0] is failed, (
+            "the hardest card of the session did not rank first"
+        )
+    finally:
+        app._shutdown()
+        app.destroy()
+
+
 def test_voice_flow():
     """Refused utterances never move the card, and the mic never goes deaf."""
     app = start(voice=True)
@@ -358,6 +402,7 @@ def main() -> int:
     tests = (
         test_spoken_answer,
         test_keypad_flow,
+        test_retry_time_adds_up,
         test_voice_flow,
         test_voice_wrong_answer,
         test_dictation_modes,

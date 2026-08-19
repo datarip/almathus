@@ -521,8 +521,14 @@ COLUMNS = (
     ("temps", "e", 3),
     ("cartes", "e", 2),
     ("note", "e", 2),
-    ("temps_moyen", "e", 4),
+    ("temps_moyen", "e", 5),
+    ("difficultes", "w", 6),
 )
+# The difficulties are a list of five operations in the width of one column, and
+# A4 is only so wide. Set a size smaller than the rest of the row — they are a
+# footnote to it, not part of the reading — and the five fit; at the row's own
+# size the page could hold three.
+FS_DIFFICULT = 7.0
 
 
 def default_filename(
@@ -644,18 +650,20 @@ def export_progress(path, sessions, chart, palette, labels, when=None) -> Path:
             (str(s.cards) if s.cards else "—", palette["MUTED"]),
             (resultslog.fmt_note(s.note) or "—", palette["ACCENT"]),
             (f"{s.avg:.1f} s" if s.avg is not None else "—", palette["GOOD"]),
+            (", ".join(s.difficultes) or "—", palette["MUTED"]),
         )
         baseline = y - ROW_H + (ROW_H - FS_ROW) / 2 + 1.5
-        for (text, color), (x0, width), (_, align, _w) in zip(
+        for (text, color), (x0, width), (key, align, _w) in zip(
             cells, edges, COLUMNS, strict=True
         ):
             ink = palette["MUTED"] if text == "—" else color  # a blank is not a value
+            size = FS_DIFFICULT if key == "difficultes" else FS_ROW
             tx = x0 + pad if align == "w" else x0 + width - pad
             pdf.clip_text(
                 tx,
                 baseline,
                 text,
-                FS_ROW,
+                size,
                 ink,
                 width - 2 * pad,
                 anchor="w" if align == "w" else "e",

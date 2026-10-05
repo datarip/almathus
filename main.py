@@ -2793,24 +2793,28 @@ class Almathus(tk.Tk):
 
         Kept deliberately small and tight to the top: it is decoration, and every
         pixel it takes is a pixel the menu's options below cannot use. On a short
-        window that is the difference between seeing them all and scrolling."""
+        window that is the difference between seeing them all and scrolling. The
+        wordmark is top-aligned with the drawing rather than centred on it, so it
+        sits up beside the character's head instead of low against its body."""
         row = tk.Frame(parent, bg=BG)
-        row.pack(pady=(2, 0))
+        row.pack()
         font = self.f_logo
         icon = self._title_image(font)
         if icon is not None:
             # Tk keeps no reference of its own to an image: drop ours and the
             # label goes blank the moment the garbage collector runs.
             self._title_icon = icon
-            tk.Label(row, image=icon, bg=BG).pack(side="left", padx=(0, 10))
+            tk.Label(row, image=icon, bg=BG).pack(side="left", padx=(0, 10), anchor="n")
         else:
             tk.Label(row, text=TITLE_ICON, font=font, fg=ACCENT, bg=BG).pack(
-                side="left", padx=(0, 8)
+                side="left", padx=(0, 8), anchor="n"
             )
-        tk.Label(row, text="Almathus", font=font, fg=ACCENT, bg=BG).pack(side="left")
+        tk.Label(row, text="Almathus", font=font, fg=ACCENT, bg=BG).pack(
+            side="left", anchor="n"
+        )
 
     def _title_image(self, font):
-        """This theme's drawing, rendered to about two lines of the title font.
+        """This theme's drawing, rendered to about 1.6 lines of the title font.
 
         Tk 9 rasterizes SVG itself and scales to a target height on the way in,
         so the drawing stays crisp on any screen — that is the whole reason the
@@ -2821,7 +2825,7 @@ class Almathus(tk.Tk):
         try:
             return tk.PhotoImage(
                 file=str(ASSETS_DIR / TITLE_SVG),
-                format=f"svg -scaletoheight {round(font.metrics('linespace') * 2)}",
+                format=f"svg -scaletoheight {round(font.metrics('linespace') * 1.6)}",
             )
         except tk.TclError:
             return None
@@ -2976,7 +2980,7 @@ class Almathus(tk.Tk):
         # 18px is the header bars' top pad; the extra centres the pill against
         # the shared title band, which is taller (the progress title's emoji).
         pad_top = 18 + max(0, (self._header_band - pill_h) // 2)
-        height = pill_h + pad_top + 6
+        height = pill_h + pad_top
         if self.topbar.winfo_height() != height:
             self.topbar.configure(height=height)
         self._progress_btn.place(x=inset, y=pad_top)

@@ -4386,6 +4386,10 @@ class Almathus(tk.Tk):
         vbar = tk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
         hbar = tk.Scrollbar(wrap, orient="horizontal", command=canvas.xview)
         canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
+        # The horizontal bar is always present: it is the only cue that there
+        # are more columns off the right, and the only handle for reaching them
+        # when the trackpad or a shift-wheel is not at hand.
+        hbar.pack(side="bottom", fill="x")
         vbar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
 
@@ -4398,22 +4402,12 @@ class Almathus(tk.Tk):
         # view used to squeeze the grid until the column labels overlapped on a
         # narrow screen; now the horizontal bar reaches the columns that do not
         # fit instead of crushing them.
-        xshown = [False]
-
         def fit_width(_event=None):
             if not canvas.winfo_exists():
                 return
-            need_x = table.winfo_reqwidth() > canvas.winfo_width()
             want = max(canvas.winfo_width(), table.winfo_reqwidth())
             if int(float(canvas.itemcget(window, "width") or 0)) != want:
                 canvas.itemconfigure(window, width=want)
-            # The bar only takes room when the columns actually overrun.
-            if need_x != xshown[0]:
-                xshown[0] = need_x
-                if need_x:
-                    hbar.pack(side="bottom", fill="x")
-                else:
-                    hbar.pack_forget()
 
         canvas.bind("<Configure>", lambda e: e.widget is canvas and fit_width())
 

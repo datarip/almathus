@@ -2011,11 +2011,54 @@ class Almathus(tk.Tk):
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
+        # The settings column scrolls when the window is too short to hold it.
+        # A packed column taller than its window is not shrunk, it is cut off —
+        # and what goes is whatever is packed last, the row of voice/dictation
+        # toggles. On a short display the canvas lets the whole column be
+        # reached (by wheel, trackpad or the scrollbar) instead of losing it.
+        canvas = tk.Canvas(f, bg=BG, highlightthickness=0, bd=0, yscrollincrement=1)
+        scrollbar = tk.Scrollbar(f, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        bind_wheel(canvas, lambda px: canvas.yview_scroll(px, "units"))
+
         # One packed column, top to bottom. Never .place() the content here: a
         # placed frame is not part of the packing flow, so it silently lands on
         # top of whatever comes after it (that's how the voice toggle ended up
         # covering the operation tiles).
-        col = tk.Frame(f, bg=BG)
+        col = tk.Frame(canvas, bg=BG)
+        window = canvas.create_window((0, 0), window=col, anchor="nw")
+
+        size = [(0, 0)]
+        shown = [False]
+
+        def fit_scrolled(_event=None):
+            """Size the scrolled window to the content (or the view) and show
+            the scrollbar only when there is something to scroll. The column is
+            held to the view's height when it fits, so its `expand` still
+            centers it; taller, it takes its natural height and scrolls."""
+            if not canvas.winfo_exists():
+                return
+            cw, ch = canvas.winfo_width(), canvas.winfo_height()
+            h = max(col.winfo_reqheight(), ch)
+            if size[0] != (cw, h):
+                size[0] = (cw, h)
+                canvas.itemconfigure(window, width=cw, height=h)
+                canvas.configure(scrollregion=(0, 0, cw, h))
+            first, last = canvas.yview()
+            need_bar = not (float(first) <= 0.0 and float(last) >= 1.0)
+            if need_bar != shown[0]:
+                shown[0] = need_bar
+                if need_bar:
+                    scrollbar.pack(side="right", fill="y")
+                else:
+                    scrollbar.pack_forget()
+                    canvas.yview_moveto(0)
+            scrollbar.set(first, last)
+
+        canvas.bind("<Configure>", fit_scrolled)
+        col.bind("<Configure>", fit_scrolled)
+
         col.pack(expand=True, padx=24, pady=16)
 
         self._build_title(col)
@@ -2132,6 +2175,18 @@ class Almathus(tk.Tk):
         ).pack(side="left", padx=8)
         self._wrap_footer(footer)
         self._fit_column(col)
+        # Tk delivers a wheel event to the widget under the pointer and its own
+        # bindtags only — it never walks up to a parent — so binding the canvas
+        # alone would scroll nothing unless the pointer is on bare canvas. Every
+        # descendant is bound too, so a wheel anywhere over the column scrolls it.
+        self._bind_settings_wheel(col, canvas)
+        fit_scrolled()  # measure now, not only on the first <Configure>
+
+    def _bind_settings_wheel(self, widget, canvas) -> None:
+        """Route every wheel gesture over the settings column to the canvas."""
+        bind_wheel(widget, lambda px: canvas.yview_scroll(px, "units"))
+        for child in widget.winfo_children():
+            self._bind_settings_wheel(child, canvas)
 
     def _fit_column(self, col) -> None:
         """Give up the gaps between the panels rather than the bottom of the column.

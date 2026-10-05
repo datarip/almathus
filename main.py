@@ -3070,6 +3070,7 @@ class Almathus(tk.Tk):
         same y as the top bar's, whichever page is showing."""
         bar.configure(height=self._header_band)
         bar.pack_propagate(False)
+        bar.grid_propagate(False)  # a header laid out with grid keeps the band too
 
     def show_language(self) -> None:
         """The app-language page — a screen of its own, not a popup.
@@ -3088,6 +3089,11 @@ class Almathus(tk.Tk):
         bar = tk.Frame(f, bg=BG)
         bar.pack(fill="x", padx=28, pady=(18, 6))
         self._size_header_bar(bar)
+        # Title centred, back button on its left — the same header shape as the
+        # stats page.
+        bar.columnconfigure(0, weight=1, uniform="side")
+        bar.columnconfigure(1, weight=0)
+        bar.columnconfigure(2, weight=1, uniform="side")
         Btn(
             bar,
             T("back"),
@@ -3097,10 +3103,10 @@ class Almathus(tk.Tk):
             fg=TEXT,
             padx=14,
             pady=7,
-        ).pack(side="left")
+        ).grid(row=0, column=0, sticky="w")
         tk.Label(
             bar, text=T("language_title"), font=self.f_title, fg=ACCENT, bg=BG
-        ).pack(side="left", padx=20)
+        ).grid(row=0, column=1)
 
         tk.Label(
             f,
@@ -4122,23 +4128,21 @@ class Almathus(tk.Tk):
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
-        # The title gets its own, centred line; the three controls — back, the
-        # month filter and PDF — share the row beneath it, with the count
-        # against the right edge; the chart's legend gets the row below that.
+        # Title centred, with the back button on its left — the same place it
+        # holds on every other screen. The month filter and the PDF report share
+        # the row beneath (filter left, report right), and the chart legend sits
+        # under that with the session count against the right.
         bar = tk.Frame(f, bg=BG)
         bar.pack(fill="x", padx=28, pady=(18, 6))
         title_row = tk.Frame(bar, bg=BG)
         title_row.pack(fill="x")
-        tk.Label(
-            title_row, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG
-        ).pack()
-        btn_row = tk.Frame(bar, bg=BG)
-        btn_row.pack(fill="x", pady=(8, 0))
-        legend_row = tk.Frame(bar, bg=BG)
-        legend_row.pack(fill="x", pady=(8, 0))
-
+        # Equal side columns keep the title centred with the back button in the
+        # left one, whatever the button's width.
+        title_row.columnconfigure(0, weight=1, uniform="side")
+        title_row.columnconfigure(1, weight=0)
+        title_row.columnconfigure(2, weight=1, uniform="side")
         Btn(
-            btn_row,
+            title_row,
             T("back"),
             command=self.show_settings,
             font=self.f_small,
@@ -4146,10 +4150,19 @@ class Almathus(tk.Tk):
             fg=TEXT,
             padx=14,
             pady=7,
-        ).pack(side="left")
+        ).grid(row=0, column=0, sticky="w")
+        tk.Label(
+            title_row, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG
+        ).grid(row=0, column=1)
+
+        btn_row = tk.Frame(bar, bg=BG)
+        btn_row.pack(fill="x", pady=(8, 0))
+        legend_row = tk.Frame(bar, bg=BG)
+        legend_row.pack(fill="x", pady=(8, 0))
+
         # Reconfigured on every filter change: the count belongs to what is shown.
         self._n_label = tk.Label(
-            btn_row,
+            legend_row,
             text=T("n_sessions", n=len(sessions)),
             font=self.f_small,
             fg=MUTED,

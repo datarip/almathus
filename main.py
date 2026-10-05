@@ -399,6 +399,10 @@ THEMES: dict[str, dict[str, Any]] = {
         "INK": "#10121f",  # text laid on top of a bright tile
         "SURFACE": "#191d3d",  # raised panel, one step above the page background
         "BORDER": "#2b3160",  # hairline outline for panels and chips
+        # The results table's shaded rows. It has to stand a clear step away
+        # from the CARD_BG rows beside it, or the zebra stripes vanish on the
+        # dark palette and the eye loses the line it is reading across.
+        "ROW_ALT": "#3a4380",
         "ENTRY_BG": "#12152e",  # the answer box, one step *below* the page
         # Soft, cheerful and deliberately gender-neutral: mint, sky, apricot,
         # lilac. All four are light enough to carry the same near-black text.
@@ -437,6 +441,7 @@ THEMES: dict[str, dict[str, Any]] = {
         "INK": "#3d0f26",
         "SURFACE": "#fff4f8",
         "BORDER": "#f3aecb",
+        "ROW_ALT": "#fff4f8",  # the shaded table rows: near-white against the pink
         "ENTRY_BG": "#fff4f8",
         "MODE_COLORS": {
             "addition": "#ff9ec7",
@@ -476,6 +481,7 @@ MUTED: str = _DEFAULT["MUTED"]
 INK: str = _DEFAULT["INK"]
 SURFACE: str = _DEFAULT["SURFACE"]
 BORDER: str = _DEFAULT["BORDER"]
+ROW_ALT: str = _DEFAULT["ROW_ALT"]
 ENTRY_BG: str = _DEFAULT["ENTRY_BG"]
 MODE_COLORS: dict[str, str] = _DEFAULT["MODE_COLORS"]
 NUM_ON_BG: str = _DEFAULT["NUM_ON_BG"]
@@ -4345,7 +4351,7 @@ class Almathus(tk.Tk):
         # Newest first: the session that just finished sits right under the
         # header, and the history scrolls away below it.
         for r, s in enumerate(reversed(sessions)):
-            rowbg = SURFACE if r % 2 else CARD_BG
+            rowbg = ROW_ALT if r % 2 else CARD_BG
             cells = (
                 (s.day.strftime("%d/%m/%Y") if s.day else "—", TEXT),
                 (s.famille or "—", TEXT),

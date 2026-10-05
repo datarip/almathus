@@ -2551,8 +2551,16 @@ class Almathus(tk.Tk):
         panel.canvas.pack(fill="x", pady=(14, 18))
         bar = tk.Frame(panel.inner, bg=SURFACE)
         bar.pack(pady=(4, 2))
+        # Two centred rows, always: the stepper on top and the quick picks
+        # below. On one row a narrow window pushed the last picks off the panel
+        # edge; folding them only sometimes left the two groups misaligned. Kept
+        # apart, the panel reads the same at every width.
+        stepper_row = tk.Frame(bar, bg=SURFACE)
+        stepper_row.pack()
         stepper: list[tk.Widget] = [
-            tk.Label(bar, text=T("how_many"), font=self.f_body, fg=MUTED, bg=SURFACE)
+            tk.Label(
+                stepper_row, text=T("how_many"), font=self.f_body, fg=MUTED, bg=SURFACE
+            )
         ]
 
         def bump(d):
@@ -2560,7 +2568,7 @@ class Almathus(tk.Tk):
 
         stepper.append(
             Btn(
-                bar,
+                stepper_row,
                 "−",
                 command=lambda: bump(-1),
                 font=self.f_mode,
@@ -2572,7 +2580,7 @@ class Almathus(tk.Tk):
         )
         stepper.append(
             tk.Label(
-                bar,
+                stepper_row,
                 textvariable=self.count_var,
                 font=self.f_mode,
                 fg=ACCENT,
@@ -2582,7 +2590,7 @@ class Almathus(tk.Tk):
         )
         stepper.append(
             Btn(
-                bar,
+                stepper_row,
                 "+",
                 command=lambda: bump(1),
                 font=self.f_mode,
@@ -2597,10 +2605,12 @@ class Almathus(tk.Tk):
             w.pack(side="left", padx=6)
 
         # quick picks double as a segmented control: the live value stays lit
+        chips_row = tk.Frame(bar, bg=SURFACE)
+        chips_row.pack(pady=(8, 0))
         chips: dict[int, Btn] = {}
         for q in (5, 10, 20, 30, 50):
             chips[q] = Btn(
-                bar,
+                chips_row,
                 str(q),
                 command=lambda v=q: self.count_var.set(v),
                 font=self.f_chip,
@@ -2610,7 +2620,7 @@ class Almathus(tk.Tk):
                 active_bg=ACCENT,
                 active_fg=INK,
             )
-            chips[q].pack(side="left", padx=(18 if q == 5 else 5, 0))
+            chips[q].pack(side="left", padx=5)
 
         def lit(*_):
             v = self.count_var.get()
@@ -2619,7 +2629,6 @@ class Almathus(tk.Tk):
 
         self.count_var.trace_add("write", lit)
         lit()
-        self._wrap_count(panel, bar, stepper, list(chips.values()))
 
         # -- which numbers (step 1) ---------------------------------------- #
         self._build_number_row(col)
@@ -2754,60 +2763,6 @@ class Almathus(tk.Tk):
     def _page_room(self) -> int:
         """Usable width of the page box, less the column's own padding."""
         return max(720, min(self.winfo_width(), CONTENT_MAX)) - 96
-
-    def _wrap_count(self, panel, bar, stepper, chips) -> None:
-        """Fold the quick picks under the stepper when the row is too wide.
-
-        The stepper and the five chips are one row on a roomy screen; on a
-        narrow one the picks fold onto a second line inside the panel rather
-        than running off the edge. The decision is re-made on every width
-        change, because the window is built maximized: checked only once at
-        startup, the row stayed on one line however far the window was later
-        dragged in, and the last chips were simply cut off.
-        """
-        widgets = (*stepper, *chips)
-        # The external padding the pack layout would add, so the row's true
-        # width is known without laying it out to measure it.
-        gaps = 54 + 18 + 5 * (len(chips) - 1)
-        state: list[str | None] = [None]
-
-        def clear() -> None:
-            for w in widgets:
-                w.pack_forget()
-                w.grid_forget()
-
-        def one_row() -> None:
-            clear()
-            stepper[0].pack(side="left", padx=(0, 18))
-            for w in stepper[1:]:
-                w.pack(side="left", padx=6)
-            for c, w in enumerate(chips):
-                w.pack(side="left", padx=(18 if c == 0 else 5, 0))
-
-        def two_rows() -> None:
-            clear()
-            for c, w in enumerate(stepper):
-                w.grid(row=0, column=c, padx=6, pady=4)
-            for c, w in enumerate(chips):
-                w.grid(row=1, column=c, padx=6, pady=4)
-
-        def refit(_event=None) -> None:
-            if not bar.winfo_exists():
-                return
-            # The panel's inner frame, not `bar`: `bar` hugs its content and so
-            # does not fire `<Configure>` when only the window gets narrower.
-            avail = panel.inner.winfo_width()
-            if avail <= 1:  # first build, before the window has mapped
-                avail = self._page_room()
-            need = sum(w.winfo_reqwidth() for w in widgets) + gaps
-            want = "two" if need > avail else "one"
-            if want == state[0]:
-                return
-            state[0] = want
-            (two_rows if want == "two" else one_row)()
-
-        panel.canvas.bind("<Configure>", refit, add="+")
-        refit()
 
     def _build_title(self, parent):
         """'<drawing> Almathus' — Mario normally, Peach in girly mode.

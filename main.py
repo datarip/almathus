@@ -4348,37 +4348,55 @@ class Almathus(tk.Tk):
 
         # `yscrollincrement=1` makes a `yview_scroll` unit one pixel: a canvas
         # left at 0 scrolls a tenth of its own height per unit instead, so a
-        # single nudge of the wheel would jump most of the table at a time.
-        canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0, bd=0, yscrollincrement=1)
-        bar = tk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=bar.set)
-        bar.pack(side="right", fill="y")
+        # single nudge of the wheel would jump most of the table at a time. The
+        # same for `x`, so the horizontal bar moves a pixel at a time.
+        canvas = tk.Canvas(
+            wrap,
+            bg=BG,
+            highlightthickness=0,
+            bd=0,
+            yscrollincrement=1,
+            xscrollincrement=1,
+        )
+        vbar = tk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
+        hbar = tk.Scrollbar(wrap, orient="horizontal", command=canvas.xview)
+        canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
+        vbar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
 
         table = tk.Frame(canvas, bg=BG)
         window = canvas.create_window((0, 0), window=table, anchor="nw")
-        # Size the scrolled window to the canvas *before* the rows go in. The
-        # window is already at its final size here (the screen is built after
-        # the child taps the button, not during startup), so the width is known
-        # — and doing it now means the first paint is already the full-width
-        # layout. Left to the <Configure> event below, the rows were laid out at
-        # the table's natural width and visibly jumped out to full width a beat
-        # after the screen appeared.
-        canvas.update_idletasks()
-        width = canvas.winfo_width()
-        if width > 1:
-            canvas.itemconfig(window, width=width)
-        # `e.widget is canvas`: the rows carry the canvas as an extra bindtag (see
-        # below), so this binding is also consulted for *their* <Configure> — and
-        # widening the scrolled window to a single cell's width would collapse the
-        # whole table, one feedback pass at a time.
-        canvas.bind(
-            "<Configure>",
-            lambda e: e.widget is canvas and canvas.itemconfig(window, width=e.width),
-        )
-        table.bind(
-            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
+
+        # The scrolled window tracks the *wider* of the canvas and the table's
+        # natural width: as wide as the view when the columns fit (so the rows
+        # span it), and its natural width when they do not. Forcing it to the
+        # view used to squeeze the grid until the column labels overlapped on a
+        # narrow screen; now the horizontal bar reaches the columns that do not
+        # fit instead of crushing them.
+        xshown = [False]
+
+        def fit_width(_event=None):
+            if not canvas.winfo_exists():
+                return
+            need_x = table.winfo_reqwidth() > canvas.winfo_width()
+            want = max(canvas.winfo_width(), table.winfo_reqwidth())
+            if int(float(canvas.itemcget(window, "width") or 0)) != want:
+                canvas.itemconfigure(window, width=want)
+            # The bar only takes room when the columns actually overrun.
+            if need_x != xshown[0]:
+                xshown[0] = need_x
+                if need_x:
+                    hbar.pack(side="bottom", fill="x")
+                else:
+                    hbar.pack_forget()
+
+        canvas.bind("<Configure>", lambda e: e.widget is canvas and fit_width())
+
+        def fit_region(_event=None):
+            fit_width()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        table.bind("<Configure>", fit_region)
 
         # Wheel and trackpad. The pointer is nearly always over a row Label, not
         # over the canvas, and Tk hands an event to the widget's own bindtags
@@ -4394,6 +4412,24 @@ class Almathus(tk.Tk):
                 canvas.yview_scroll(pixels, "units")
 
         bind_wheel(canvas, wheel)
+
+        # Sideways: shift + wheel, and the horizontal axis of a trackpad swipe.
+        # `bind_wheel` already handles the vertical axis; these add to it.
+        def xwheel(ev):
+            if canvas.winfo_exists():
+                canvas.xview_scroll(wheel_pixels(ev), "units")
+
+        def touchpad_x(ev):
+            if not canvas.winfo_exists():
+                return
+            # dx rides in the high 16 bits, dy in the low (see touchpad_pixels).
+            raw = (ev.delta >> 16) & 0xFFFF
+            dx = raw if raw < 0x8000 else raw - 0x10000
+            canvas.xview_scroll(-dx, "units")
+
+        canvas.bind("<Shift-MouseWheel>", xwheel)
+        with contextlib.suppress(tk.TclError):
+            canvas.bind("<TouchpadScroll>", touchpad_x, add="+")
 
         cols: tuple[tuple[str, Anchor, int], ...] = (
             (T("col_date"), "w", 3),
@@ -4459,6 +4495,11 @@ class Almathus(tk.Tk):
         # is looked up on the canvas too, and `wheel` above sees it.
         for w in (table, *table.winfo_children()):
             w.bindtags((*w.bindtags(), str(canvas)))
+
+        # The natural width is only known once the rows exist; fit now so the
+        # first paint is already the settled layout (wide rows, or the bar).
+        self.update_idletasks()
+        fit_region()
 
     def _save_session(self, cards, total_time, correct):
         # Record only a session that ran to the size the child chose. A game cut

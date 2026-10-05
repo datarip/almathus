@@ -4409,12 +4409,23 @@ class Almathus(tk.Tk):
             if int(float(canvas.itemcget(window, "width") or 0)) != want:
                 canvas.itemconfigure(window, width=want)
 
-        canvas.bind("<Configure>", lambda e: e.widget is canvas and fit_width())
+        yshown = [True]
 
         def fit_region(_event=None):
             fit_width()
             canvas.configure(scrollregion=canvas.bbox("all"))
+            # The vertical bar is not shown until the rows actually overrun the
+            # view: a short history sat in a mostly empty panel with a bar down
+            # the side that still moved, which read as a scroll that went nowhere.
+            need_y = table.winfo_reqheight() > canvas.winfo_height()
+            if need_y != yshown[0]:
+                yshown[0] = need_y
+                if need_y:
+                    vbar.pack(side="right", fill="y")
+                else:
+                    vbar.pack_forget()
 
+        canvas.bind("<Configure>", lambda e: e.widget is canvas and fit_region())
         table.bind("<Configure>", fit_region)
 
         # Wheel and trackpad. The pointer is nearly always over a row Label, not

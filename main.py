@@ -1029,7 +1029,7 @@ class RoundedPanel:
         self.canvas = tk.Canvas(parent, bg=page or BG, highlightthickness=0, bd=0)
         self.inner = tk.Frame(self.canvas, bg=self.fill)
         self._win = self.canvas.create_window(pad, pad, window=self.inner, anchor="nw")
-        self._size = (0, 0, 0)
+        self._size = (0, 0)
         # Tracked from the events rather than re-asked: `winfo_reqheight` inside
         # a `<Configure>` handler forces a fresh layout pass each time, and that
         # is what made dragging a window edge stutter.
@@ -1042,30 +1042,27 @@ class RoundedPanel:
     def _fit(self, event=None) -> None:
         if event is not None and event.widget is self.inner:
             self._inner_h = event.height
-            self._inner_w = event.width
         w = event.width if event is not None and event.widget is self.canvas else None
         if w is None:
             w = self.canvas.winfo_width()
         if w <= 1:
             w = self._inner_w + 2 * self.pad
         h = self._inner_h + 2 * self.pad
-        # The content keeps its natural width and is centred, instead of being
-        # stretched to the panel's: restretching it would re-lay out every child
-        # on every pixel of the drag, which is the other half of the stutter.
-        inner_w = min(self._inner_w, max(1, w - 2 * self.pad))
-        if (w, h, inner_w) == self._size:
+        inner_w = max(1, w - 2 * self.pad)
+        if (w, h) == self._size:
             return
         # Only touch the canvas height when it moved: setting the same height
         # still re-lays out the whole page, and during a width drag it never does.
         if h != self._size[1]:
             self.canvas.configure(height=h)
-        # Only its own width, and only when it moved — a repack of the inner
-        # frame is what relayouts the children.
+        # Restretch the content only when its width moved — that is what lays
+        # the children out again, so leaving it alone the rest of the time is
+        # what keeps a drag smooth.
         if inner_w != self._win_w:
             self.canvas.itemconfigure(self._win, width=inner_w)
             self._win_w = inner_w
-        self._size = (w, h, inner_w)
-        self.canvas.coords(self._win, (w - inner_w) // 2, self.pad)
+        self._size = (w, h)
+        self.canvas.coords(self._win, self.pad, self.pad)
         self._img = rounded_photo(w, h, self.radius, self.fill, self.border, 1)
         self.canvas.delete("bg")
         self.canvas.create_image(0, 0, anchor="nw", image=self._img, tags="bg")

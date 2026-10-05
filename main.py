@@ -4120,11 +4120,17 @@ class Almathus(tk.Tk):
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
+        # Two stacked rows: the title line first, the buttons and filters under
+        # it. One row held everything side by side, and on a narrow window the
+        # title and the month filter overpainted each other. The title keeps the
+        # top line — flush with where the menu's own title sits — and the
+        # controls share the line below.
         bar = tk.Frame(f, bg=BG)
         bar.pack(fill="x", padx=28, pady=(18, 6))
-        self._size_header_bar(bar)
+        top = tk.Frame(bar, bg=BG)
+        top.pack(fill="x")
         Btn(
-            bar,
+            top,
             T("back"),
             command=self.show_settings,
             font=self.f_small,
@@ -4134,11 +4140,14 @@ class Almathus(tk.Tk):
             pady=7,
         ).pack(side="left")
         tk.Label(
-            bar, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG
+            top, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG
         ).pack(side="left", padx=20)
+
+        controls = tk.Frame(bar, bg=BG)
+        controls.pack(fill="x", pady=(8, 0))
         # Reconfigured on every filter change: the count belongs to what is shown.
         self._n_label = tk.Label(
-            bar,
+            controls,
             text=T("n_sessions", n=len(sessions)),
             font=self.f_small,
             fg=MUTED,
@@ -4152,10 +4161,9 @@ class Almathus(tk.Tk):
             )
             return
 
-        # Export lives next to the session count: same corner, same weight as the
-        # rest of the header. Its result is reported in the label beside it.
+        # Export lives on the title line, against its right edge.
         pdf_btn = Btn(
-            bar,
+            top,
             T("pdf_button"),
             command=self._export_pdf,
             font=self.f_small,
@@ -4166,14 +4174,14 @@ class Almathus(tk.Tk):
         )
         pdf_btn.pack(side="right", padx=(0, 14))
         Tooltip(pdf_btn, T("pdf_tip"), self.f_hint)
-        self._pdf_status = tk.Label(bar, text="", font=self.f_small, fg=MUTED, bg=BG)
+        self._pdf_status = tk.Label(top, text="", font=self.f_small, fg=MUTED, bg=BG)
         self._pdf_status.pack(side="right", padx=(0, 12))
 
-        # The month filter, next to the title. Every month the log covers, newest
-        # first, plus the current one even when it is still empty — a parent
-        # opening the screen on the 1st wants to see that this month has begun.
-        # "Tous les mois" stays at the top: it is the whole history, the view
-        # this screen had before there was anything to filter.
+        # The month filter, on the controls line. Every month the log covers,
+        # newest first, plus the current one even when it is still empty — a
+        # parent opening the screen on the 1st wants to see that this month has
+        # begun. "Tous les mois" stays at the top: it is the whole history, the
+        # view this screen had before there was anything to filter.
         logged = resultslog.months(sessions)
         now = datetime.now().astimezone()
         current = (now.year, now.month)
@@ -4185,7 +4193,7 @@ class Almathus(tk.Tk):
         )
         self._all_sessions = sessions
         picker = Dropdown(
-            bar,
+            controls,
             [(None, T("month_all"))] + [(ym, month_label(ym)) for ym in listed],
             self._month,
             self._select_month,
@@ -4201,7 +4209,7 @@ class Almathus(tk.Tk):
         # The chart's key, beside the filter: which colour is which curve. The
         # grade key only appears while the month on show has a grade to draw, so
         # a legend never promises a line that is not there.
-        legend = tk.Frame(bar, bg=BG)
+        legend = tk.Frame(controls, bg=BG)
         legend.pack(side="left", padx=(20, 0))
         self._legend_key(legend, ACCENT, T("legend_time")).pack(side="left")
         self._legend_grade = self._legend_key(legend, CHART_GRADE, T("legend_grade"))

@@ -2401,36 +2401,45 @@ class Almathus(tk.Tk):
         holder = tk.Frame(canvas, bg=BG)
         window = canvas.create_window((0, 0), window=holder, anchor="nw")
 
-        size: list[int] = [0, 0]
+        size: list[int] = [0, 0, 0]
         shown = [False]
-        holder_h = [holder.winfo_reqheight()]
+        # The content's natural height, measured once after the column is built
+        # (and on every rebuild). It is not derived from the holder's Configure:
+        # we set that height ourselves, so measuring it back would only echo it.
+        holder_h = [0]
 
-        def fit_scrolled(event=None):
+        def fit_scrolled(_event=None):
             """Size the scrolled window to the content (or the view) and show
             the scrollbar only when there is something to scroll. The holder is
-            held to the view's height when the content fits, so the column's
-            `expand` still centers it; taller, it takes its natural height and
-            scrolls. Horizontally it is the page box: no wider than CONTENT_MAX,
-            centred, and shrunk to the view when the window is narrower."""
+            the content's own height; when that fits it is centred in the view,
+            and when it does not the view scrolls over it. Horizontally it is
+            the page box: no wider than CONTENT_MAX, centred, and shrunk to the
+            view when the window is narrower."""
             if not canvas.winfo_exists():
                 return
-            if event is not None and event.widget is holder:
-                holder_h[0] = event.height  # no reqheight: that forces a layout
             cw, ch = canvas.winfo_width(), canvas.winfo_height()
             box = min(cw, CONTENT_MAX)
-            h = max(holder_h[0], ch)
+            # The holder is kept at the *content's* height, never stretched to
+            # the view: stretching it made the measured height equal the view,
+            # so a page that fit still looked like it overflowed and the bar
+            # stayed on. When it fits it is centred instead.
+            h = holder_h[0]
+            y = max(0, (ch - h) // 2)
             # The width changes on every drag step, but the scrollregion only
             # depends on the *height*: leaving it alone while only the width
             # moved spares the canvas a full-area repaint each step.
-            if box != size[0] or h != size[1]:
+            if box != size[0] or h != size[1] or y != size[2]:
                 canvas.itemconfigure(window, width=box)
-                canvas.coords(window, (cw - box) // 2, 0)
+                canvas.coords(window, (cw - box) // 2, y)
                 if h != size[1]:
                     canvas.itemconfigure(window, height=h)
-                    canvas.configure(scrollregion=(0, 0, cw, h))
-                size[0], size[1] = box, h
-            # Decide from the measured heights, not from `canvas.yview()`: the
-            # view fraction is only recomputed once Tk processes the geometry
+                    # Width is pinned so the region depends on height alone:
+                    # there is no horizontal scrolling, and a width that tracked
+                    # the view would mean a repaint on every drag step.
+                    canvas.configure(scrollregion=(0, 0, CONTENT_MAX, h))
+                size[0], size[1], size[2] = box, h, y
+            # Decide from the measured heights, not from `canvas.yview()`:
+            # the view fraction is only recomputed once Tk processes the geometry
             # set just above, so reading it here returns the previous state and
             # the bar would never appear the first time it is needed.
             need_bar = h > ch
@@ -2444,7 +2453,6 @@ class Almathus(tk.Tk):
             scrollbar.set(*canvas.yview())
 
         canvas.bind("<Configure>", fit_scrolled)
-        holder.bind("<Configure>", fit_scrolled)
 
         # One packed column, top to bottom. Never .place() the content here: a
         # placed frame is not part of the packing flow, so it silently lands on
@@ -2570,6 +2578,10 @@ class Almathus(tk.Tk):
         # alone would scroll nothing unless the pointer is on bare canvas. Every
         # descendant is bound too, so a wheel anywhere over the column scrolls it.
         self._bind_settings_wheel(col, canvas)
+        # Measure the finished column once here (this is the one layout pass
+        # that is worth forcing), then only ever shrink the gaps or re-centre.
+        self.update_idletasks()
+        holder_h[0] = holder.winfo_reqheight()
         fit_scrolled()  # measure now, not only on the first <Configure>
 
     def _bind_settings_wheel(self, widget, canvas) -> None:
@@ -2662,25 +2674,28 @@ class Almathus(tk.Tk):
             w.grid(row=1, column=c, padx=6, pady=4)
 
     def _build_title(self, parent):
-        """'<drawing> Almathus' — Mario normally, Peach in girly mode."""
+        """'<drawing> Almathus' — Mario normally, Peach in girly mode.
+
+        Kept deliberately small and tight to the top: it is decoration, and every
+        pixel it takes is a pixel the menu's options below cannot use. On a short
+        window that is the difference between seeing them all and scrolling."""
         row = tk.Frame(parent, bg=BG)
-        row.pack()
-        icon = self._title_image()
+        row.pack(pady=(2, 0))
+        font = self.f_title
+        icon = self._title_image(font)
         if icon is not None:
             # Tk keeps no reference of its own to an image: drop ours and the
             # label goes blank the moment the garbage collector runs.
             self._title_icon = icon
-            tk.Label(row, image=icon, bg=BG).pack(side="left", padx=(0, 16))
+            tk.Label(row, image=icon, bg=BG).pack(side="left", padx=(0, 10))
         else:
-            tk.Label(row, text=TITLE_ICON, font=self.f_big, fg=ACCENT, bg=BG).pack(
-                side="left", padx=(0, 12)
+            tk.Label(row, text=TITLE_ICON, font=font, fg=ACCENT, bg=BG).pack(
+                side="left", padx=(0, 8)
             )
-        tk.Label(row, text="Almathus", font=self.f_big, fg=ACCENT, bg=BG).pack(
-            side="left"
-        )
+        tk.Label(row, text="Almathus", font=font, fg=ACCENT, bg=BG).pack(side="left")
 
-    def _title_image(self):
-        """This theme's drawing, rendered to about two lines of title text.
+    def _title_image(self, font):
+        """This theme's drawing, rendered to about two lines of the title font.
 
         Tk 9 rasterizes SVG itself and scales to a target height on the way in,
         so the drawing stays crisp on any screen — that is the whole reason the
@@ -2691,7 +2706,7 @@ class Almathus(tk.Tk):
         try:
             return tk.PhotoImage(
                 file=str(ASSETS_DIR / TITLE_SVG),
-                format=f"svg -scaletoheight {self.f_big.metrics('linespace') * 2}",
+                format=f"svg -scaletoheight {round(font.metrics('linespace') * 2)}",
             )
         except tk.TclError:
             return None

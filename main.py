@@ -2022,31 +2022,35 @@ class Almathus(tk.Tk):
         canvas.pack(side="left", fill="both", expand=True)
         bind_wheel(canvas, lambda px: canvas.yview_scroll(px, "units"))
 
-        # One packed column, top to bottom. Never .place() the content here: a
-        # placed frame is not part of the packing flow, so it silently lands on
-        # top of whatever comes after it (that's how the voice toggle ended up
-        # covering the operation tiles).
-        col = tk.Frame(canvas, bg=BG)
-        window = canvas.create_window((0, 0), window=col, anchor="nw")
+        # The canvas window is a holder, not the column itself: a widget cannot
+        # be both a canvas item and managed by pack (which is where the column's
+        # padding comes from), so the column lives packed inside the holder and
+        # the holder is the one placed on the canvas.
+        holder = tk.Frame(canvas, bg=BG)
+        window = canvas.create_window((0, 0), window=holder, anchor="nw")
 
         size = [(0, 0)]
         shown = [False]
 
         def fit_scrolled(_event=None):
             """Size the scrolled window to the content (or the view) and show
-            the scrollbar only when there is something to scroll. The column is
-            held to the view's height when it fits, so its `expand` still
-            centers it; taller, it takes its natural height and scrolls."""
+            the scrollbar only when there is something to scroll. The holder is
+            held to the view's height when the content fits, so the column's
+            `expand` still centers it; taller, it takes its natural height and
+            scrolls."""
             if not canvas.winfo_exists():
                 return
             cw, ch = canvas.winfo_width(), canvas.winfo_height()
-            h = max(col.winfo_reqheight(), ch)
+            h = max(holder.winfo_reqheight(), ch)
             if size[0] != (cw, h):
                 size[0] = (cw, h)
                 canvas.itemconfigure(window, width=cw, height=h)
                 canvas.configure(scrollregion=(0, 0, cw, h))
-            first, last = canvas.yview()
-            need_bar = not (float(first) <= 0.0 and float(last) >= 1.0)
+            # Decide from the measured heights, not from `canvas.yview()`: the
+            # view fraction is only recomputed once Tk processes the geometry
+            # set just above, so reading it here returns the previous state and
+            # the bar would never appear the first time it is needed.
+            need_bar = h > ch
             if need_bar != shown[0]:
                 shown[0] = need_bar
                 if need_bar:
@@ -2054,11 +2058,16 @@ class Almathus(tk.Tk):
                 else:
                     scrollbar.pack_forget()
                     canvas.yview_moveto(0)
-            scrollbar.set(first, last)
+            scrollbar.set(*canvas.yview())
 
         canvas.bind("<Configure>", fit_scrolled)
-        col.bind("<Configure>", fit_scrolled)
+        holder.bind("<Configure>", fit_scrolled)
 
+        # One packed column, top to bottom. Never .place() the content here: a
+        # placed frame is not part of the packing flow, so it silently lands on
+        # top of whatever comes after it (that's how the voice toggle ended up
+        # covering the operation tiles).
+        col = tk.Frame(holder, bg=BG)
         col.pack(expand=True, padx=24, pady=16)
 
         self._build_title(col)

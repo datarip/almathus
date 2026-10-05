@@ -2512,10 +2512,10 @@ class Almathus(tk.Tk):
         def fit_scrolled(_event=None):
             """Size the scrolled window to the content (or the view) and show
             the scrollbar only when there is something to scroll. The holder is
-            the content's own height; when that fits it is centred in the view,
-            and when it does not the view scrolls over it. Horizontally it is
-            the page box: no wider than CONTENT_MAX, centred, and shrunk to the
-            view when the window is narrower."""
+            the content's own height; when that fits it sits at the top of the
+            view, and when it does not the view scrolls over it. Horizontally it
+            is the page box: no wider than CONTENT_MAX, centred, and shrunk to
+            the view when the window is narrower."""
             if not canvas.winfo_exists():
                 return
             cw, ch = canvas.winfo_width(), canvas.winfo_height()
@@ -2523,9 +2523,11 @@ class Almathus(tk.Tk):
             # The holder is kept at the *content's* height, never stretched to
             # the view: stretching it made the measured height equal the view,
             # so a page that fit still looked like it overflowed and the bar
-            # stayed on. When it fits it is centred instead.
+            # stayed on. When it fits it is pinned to the top, not centred: a
+            # centred page left a gap under the logo and a matching one below
+            # the footer, and the slack read as scrollable.
             h = holder_h[0]
-            y = max(0, (ch - h) // 2)
+            y = 0
             # The width changes on every drag step, but the scrollregion only
             # depends on the *height*: leaving it alone while only the width
             # moved spares the canvas a full-area repaint each step.
@@ -2560,12 +2562,12 @@ class Almathus(tk.Tk):
         # top of whatever comes after it (that's how the voice toggle ended up
         # covering the operation tiles).
         col = tk.Frame(holder, bg=BG)
-        col.pack(fill="x", expand=True, padx=24, pady=16)
+        col.pack(fill="x", expand=True, padx=24, pady=(6, 16))
 
         # -- how many cards (one compact toolbar row) ----------------------- #
         self.count_var = tk.IntVar(value=self.n_cards)
         panel = RoundedPanel(col)
-        panel.canvas.pack(fill="x", pady=(14, 18))
+        panel.canvas.pack(fill="x", pady=(6, 18))
         bar = tk.Frame(panel.inner, bg=SURFACE)
         bar.pack(pady=(4, 2))
         # Two centred rows, always: the stepper on top and the quick picks

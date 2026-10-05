@@ -2571,11 +2571,12 @@ class Almathus(tk.Tk):
                 stepper_row,
                 "−",
                 command=lambda: bump(-1),
-                font=self.f_mode,
+                font=self.f_body,
                 bg=CARD_BG,
                 fg=TEXT,
-                width=2,
-                pady=0,
+                width=1,
+                padx=10,
+                pady=4,
             )
         )
         stepper.append(
@@ -2593,11 +2594,12 @@ class Almathus(tk.Tk):
                 stepper_row,
                 "+",
                 command=lambda: bump(1),
-                font=self.f_mode,
+                font=self.f_body,
                 bg=CARD_BG,
                 fg=TEXT,
-                width=2,
-                pady=0,
+                width=1,
+                padx=10,
+                pady=4,
             )
         )
         stepper[0].pack(side="left", padx=(0, 18))

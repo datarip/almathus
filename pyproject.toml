@@ -36,7 +36,7 @@ build-backend = "hatchling.build"
 include = ["main.py"]
 
 [dependency-groups]
-# Quality gate. See CLAUDE.md — both must be clean before a commit.
+# Quality gate. See AGENTS.md — both must be clean before a commit.
 dev = ["mypy", "ruff"]
 
 # --------------------------------------------------------------------------- #
@@ -94,7 +94,7 @@ ignore = [
 "main.py" = ["ARG005"]
 # voice.py wraps four optional native stacks — PortAudio, WebRTC VAD, Vosk and
 # MLX — each of which raises whatever its C layer feels like. Catching Exception
-# and falling back to the keypad *is* this module's contract (see CLAUDE.md:
+# and falling back to the keypad *is* this module's contract (see AGENTS.md:
 # "the game stays fully playable ... if voice deps/models are absent"), so the
 # rule is off here rather than waived 25 times. Every such handler logs through
 # _dbg(); a silent one is still a bug, and S110/S112 still catch those.

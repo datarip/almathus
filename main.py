@@ -3587,76 +3587,101 @@ class Almathus(tk.Tk):
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
+        # The action row is anchored first so the result block below it is
+        # centred in whatever height is left — the buttons are the fixed base
+        # and the score is the thing that breathes.
+        btns = tk.Frame(f, bg=BG)
+        btns.pack(side="bottom", pady=(0, 28))
+        Btn(
+            btns,
+            T("again"),
+            command=self.show_settings,
+            font=self.f_body,
+            bg=GOOD,
+            fg=INK,
+            padx=26,
+            pady=12,
+        ).pack(side="left", padx=10)
+        Btn(
+            btns,
+            T("progress"),
+            command=self.show_progress,
+            font=self.f_body,
+            bg=CARD_BG,
+            fg=TEXT,
+            padx=26,
+            pady=12,
+        ).pack(side="left", padx=10)
+        Btn(
+            btns,
+            T("quit"),
+            command=self._on_quit,
+            font=self.f_body,
+            bg=CARD_BG,
+            fg=TEXT,
+            active_bg=BAD,
+            padx=26,
+            pady=12,
+        ).pack(side="left", padx=10)
+
         col = tk.Frame(f, bg=BG)
-        col.place(relx=0.5, rely=0.5, anchor="center")
+        col.pack(expand=True)
 
-        tk.Label(col, text=emoji, font=self.f_giant, bg=BG, fg=ACCENT).pack(pady=(4, 0))
-        tk.Label(col, text=msg, font=self.f_big, fg=TEXT, bg=BG).pack(pady=(0, 8))
-
+        # One scale of spacing between the blocks, and a size step per level of
+        # importance: the face, the cheer, the score, the detail.
+        tk.Label(col, text=emoji, font=self.f_huge, bg=BG, fg=ACCENT).pack()
+        tk.Label(col, text=msg, font=self.f_big, fg=TEXT, bg=BG).pack(pady=(2, 14))
         tk.Label(
             col,
             text=f"{T('score')} : {correct}/{n}  ({pct:.0f}%)",
             font=self.f_title,
             fg=GOOD if pct >= 80 else ACCENT,
             bg=BG,
-        ).pack(pady=4)
+        ).pack(pady=(0, 6))
         tk.Label(
             col,
             text=f"{T('total_time')} : {self._fmt(total_time)}",
             font=self.f_body,
-            fg=TEXT,
+            fg=MUTED,
             bg=BG,
-        ).pack(pady=2)
+        ).pack(pady=1)
         tk.Label(
             col, text=f"{T('avg_time')} : {avg:.1f}s", font=self.f_body, fg=MUTED, bg=BG
-        ).pack(pady=2)
+        ).pack()
 
-        # slowest / struggled operations, for reinforcement
+        # slowest / struggled operations, for reinforcement — a rounded card
+        # like everything else, with the three columns on a grid so the times
+        # line up instead of being spaced by hand.
         slow = sorted(cards, key=lambda c: c.time_taken, reverse=True)[:5]
         if slow:
             tk.Label(col, text=T("slowest"), font=self.f_body, fg=ACCENT, bg=BG).pack(
-                pady=(16, 4)
+                pady=(22, 8)
             )
-            box = tk.Frame(col, bg=CARD_BG)
-            box.pack(pady=4)
-            for c in slow:
+            panel = RoundedPanel(col, pad=14, radius=16)
+            panel.canvas.pack()
+            rows = tk.Frame(panel.inner, bg=SURFACE)
+            rows.pack()
+            for r, c in enumerate(slow):
                 mark = "✅" if c.correct_first_try else "❌"
+                tk.Label(rows, text=mark, font=self.f_body, bg=SURFACE).grid(
+                    row=r, column=0, padx=(2, 10), pady=4
+                )
                 tk.Label(
-                    box,
-                    text=f"{mark}  {c.text} = {c.answer}    {c.time_taken:.1f}s",
-                    font=self.f_small,
+                    rows,
+                    text=f"{c.text} = {c.answer}",
+                    font=self.f_body,
                     fg=TEXT,
-                    bg=CARD_BG,
+                    bg=SURFACE,
                     anchor="w",
-                ).pack(fill="x", padx=16, pady=2)
-
-        btns = tk.Frame(f, bg=BG)
-        btns.pack(side="bottom", pady=28)
-        Btn(
-            btns,
-            T("again"),
-            command=self.show_settings,
-            font=self.f_mode,
-            bg=GOOD,
-            fg=INK,
-        ).pack(side="left", padx=12)
-        Btn(
-            btns,
-            T("progress"),
-            command=self.show_progress,
-            font=self.f_mode,
-            bg=CARD_BG,
-            fg=TEXT,
-        ).pack(side="left", padx=12)
-        Btn(
-            btns,
-            T("quit"),
-            command=self._on_quit,
-            font=self.f_mode,
-            bg=CARD_BG,
-            fg=TEXT,
-            active_bg=BAD,
-        ).pack(side="left", padx=12)
+                ).grid(row=r, column=1, sticky="w", pady=4)
+                tk.Label(
+                    rows,
+                    text=f"{c.time_taken:.1f}s",
+                    font=self.f_body,
+                    fg=MUTED,
+                    bg=SURFACE,
+                    anchor="e",
+                ).grid(row=r, column=2, sticky="e", padx=(24, 2), pady=4)
 
         # The winner's music, once — then, over the silence it leaves, the same
         # encouragement that is on screen, spoken in a warm voice. Chained rather

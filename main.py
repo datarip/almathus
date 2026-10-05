@@ -522,6 +522,7 @@ COUNTDOWN_STEPS = 3  # 3-2-1, then GO!
 COUNTDOWN_TICK = 1000  # ms one number stays on screen = the gap between beeps
 COUNTDOWN_GO_AT = 3485  # ms into the sample where the launch tone starts
 COUNTDOWN_GO_LEN = 975  # ms it rings for, after which the sample is silent
+GO_FLASH_MS = 500  # how long GO! holds the question pill before the question returns
 
 # How many times a card carried over from the last session is dealt again. Twice
 # is what makes it stick: once is another draw of the same lottery, and a third
@@ -2801,7 +2802,7 @@ class Almathus(tk.Tk):
         if not pill.winfo_exists():
             return
         pill.config(text=T("go"), fg=GOOD)
-        self.after(1200, lambda: self._restore_question(card))
+        self.after(GO_FLASH_MS, lambda: self._restore_question(card))
 
     def _restore_question(self, card: Card) -> None:
         # Only restore the pill that belongs to the card still on screen: a late

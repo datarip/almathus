@@ -4187,7 +4187,7 @@ class Almathus(tk.Tk):
             padx=14,
             pady=7,
         )
-        pdf_btn.pack(side="right", padx=(0, 14))
+        pdf_btn.pack(side="right")
         Tooltip(pdf_btn, T("pdf_tip"), self.f_hint)
         self._pdf_status = tk.Label(
             btn_row, text="", font=self.f_small, fg=MUTED, bg=BG
@@ -4220,7 +4220,7 @@ class Almathus(tk.Tk):
             padx=14,
             pady=7,
         )
-        picker.pack(side="left", padx=(12, 0))
+        picker.pack(side="left")
         Tooltip(picker, T("month_tip"), self.f_hint)
 
         # The chart's key, on its own line under the controls: which colour is

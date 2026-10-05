@@ -27,6 +27,7 @@ import queue
 import random
 import signal
 import struct
+import sys
 import threading
 import time
 import tkinter as tk
@@ -2095,6 +2096,52 @@ class LanguagePicker:
         return self.result
 
 
+def _running_in_app_bundle() -> bool:
+    """Is this process the executable inside a real macOS ``.app`` bundle?
+
+    Used to decide whether the Dock-icon workaround applies. A packaged build
+    (py2app, PyInstaller, a hand-made bundle) has its own bundle identifier, so
+    macOS gives it a normal, single, correct Dock icon that disappears when the
+    app quits — exactly what we want, and exactly what the workaround below
+    would take away.
+    """
+    if getattr(sys, "frozen", False):  # PyInstaller and friends
+        return True
+    # A .app's executable is always Foo.app/Contents/MacOS/foo.
+    return ".app/Contents/MacOS/" in sys.executable
+
+
+def suppress_dock_icon_when_unbundled() -> None:
+    """Keep editors from piling up stale Dock tiles while developing.
+
+    Running a bare Tk app from an integrated terminal (Zed, Ghostty, iTerm...)
+    makes this process register with macOS LaunchServices under the *host*
+    app's bundle, because a plain script has no bundle of its own. On macOS 26+
+    each such run leaves a stale tile behind, so a day of running the game from
+    Zed's terminal fills the Dock with Zed icons (zed-industries/zed#64810).
+
+    Making the process an *accessory* app means it never claims a Dock tile at
+    all, so there is nothing to go stale. The trade-off is that an accessory app
+    has no macOS menu bar; the game's own screens are the whole UI, so nothing
+    is lost. A packaged ``.app`` is left alone by ``_running_in_app_bundle``.
+
+    No-op off macOS and when PyObjC is absent: this is a desktop nicety, never
+    a requirement to play.
+    """
+    if sys.platform != "darwin" or _running_in_app_bundle():
+        return
+    try:
+        # pyobjc-framework-Cocoa; macOS-only, and optional on purpose.
+        from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+    except ImportError:
+        return
+    app = NSApplication.sharedApplication()
+    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+    # An accessory app is not activated for us; bring its window forward so the
+    # game still opens in front of the editor rather than behind it.
+    app.activateIgnoringOtherApps_(True)
+
+
 def choose_language_at_startup() -> str | None:
     """Ask for a language when no model is installed; a no-op on later launches.
 
@@ -2105,6 +2152,7 @@ def choose_language_at_startup() -> str | None:
     if not needs_language_setup():
         return None
     root = tk.Tk()
+    suppress_dock_icon_when_unbundled()  # Tk has just created NSApp; tame it
     root.withdraw()
     try:
         picker = LanguagePicker(
@@ -4339,6 +4387,7 @@ def main():
     choose_language_at_startup()  # asks only when no speech model is installed
     resolve_language()  # sets the module's LANG before any widget reads it
     app = Almathus()
+    suppress_dock_icon_when_unbundled()  # again once the real window owns NSApp
     try:
         app.mainloop()
     finally:

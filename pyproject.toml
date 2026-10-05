@@ -4,7 +4,13 @@ version = "0.1.0"
 description = "A kid-friendly mental-math game (Tkinter)"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    # macOS only, and only so the game can claim an accessory activation policy
+    # instead of a Dock tile while run from an editor's integrated terminal
+    # (see main.suppress_dock_icon_when_unbundled). Imported defensively, so a
+    # build that drops it still runs.
+    "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
+]
 
 [project.optional-dependencies]
 # Voice answering (STT). TTS uses macOS `say` and needs nothing installed.
@@ -132,9 +138,11 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_unused_configs = true
 
-# Optional voice extras ship no type stubs.
+# Optional voice extras ship no type stubs; AppKit is macOS-only and imported
+# defensively at runtime.
 [[tool.mypy.overrides]]
 module = [
+    "AppKit",
     "sounddevice",
     "numpy",
     "num2words",

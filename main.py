@@ -18,16 +18,20 @@ screen charts and tabulates (see results.py for the header definition).
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
+import math
 import os
 import queue
 import random
 import signal
+import struct
 import threading
 import time
 import tkinter as tk
 import traceback
+import zlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -879,46 +883,152 @@ BTN_GAP = 8  # px between an icon and its label
 CONTENT_MAX = 1400
 
 
-def _round_rect(canvas, x1, y1, x2, y2, r, **kw):
-    """A rounded rectangle as one smoothed polygon.
+_ROUND_CACHE: dict[tuple, tk.PhotoImage] = {}
 
-    Tk's `smooth=True` treats the points as spline *control* points, so a corner
-    is drawn as two duplicated points either side of the arc plus the corner
-    itself — that is what bends it into a quarter circle instead of a bulge."""
-    pts = [
-        x1 + r,
-        y1,
-        x2 - r,
-        y1,
-        x2,
-        y1,
-        x2,
-        y1 + r,
-        x2,
-        y2 - r,
-        x2,
-        y2,
-        x2 - r,
-        y2,
-        x1 + r,
-        y2,
-        x1,
-        y2,
-        x1,
-        y2 - r,
-        x1,
-        y1 + r,
-        x1,
-        y1,
-    ]
-    return canvas.create_polygon(pts, smooth=True, **kw)
+
+def _hex_rgb(color: str) -> tuple[int, int, int]:
+    color = color.lstrip("#")
+    if len(color) == 3:
+        color = "".join(c * 2 for c in color)
+    return int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16)
+
+
+def _rrect_alpha(x: int, y: int, w: int, h: int, r: float, ox: int, oy: int) -> float:
+    """Coverage of one pixel by a rounded rectangle, from its signed distance.
+
+    The rectangle is `w` by `h` with corner radius `r`, its top-left at (`ox`,
+    `oy`). A distance of 0 is the edge, so `0.5 - d` is a one-pixel smooth band
+    across it — the antialiasing a canvas polygon cannot give."""
+    cx, cy = x - ox + 0.5, y - oy + 0.5
+    qx = abs(cx - w / 2) - (w / 2 - r)
+    qy = abs(cy - h / 2) - (h / 2 - r)
+    d = math.hypot(max(qx, 0.0), max(qy, 0.0)) + min(max(qx, qy), 0.0) - r
+    return min(1.0, max(0.0, 0.5 - d))
+
+
+def _png_bytes(w: int, h: int, pixels: bytearray) -> bytes:
+    """A minimal RGBA PNG, so Tk can show the shape with its own transparency."""
+    raw = bytearray()
+    for y in range(h):
+        raw.append(0)  # filter: none
+        raw += pixels[y * w * 4 : (y + 1) * w * 4]
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        body = tag + data
+        return (
+            struct.pack(">I", len(data))
+            + body
+            + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + chunk(b"IEND", b"")
+    )
+
+
+def rounded_photo(
+    w: int,
+    h: int,
+    radius: int,
+    fill: str,
+    border: str | None = None,
+    border_width: int = 0,
+) -> tk.PhotoImage:
+    """An antialiased rounded rectangle as a Tk image, cached per shape/colour.
+
+    Buttons redraw on every hover and panels on every resize, so the raster is
+    kept: a colour called for again is served from `_ROUND_CACHE`."""
+    key = (w, h, radius, fill, border, border_width)
+    cached = _ROUND_CACHE.get(key)
+    if cached is not None:
+        return cached
+    if len(_ROUND_CACHE) > 512:
+        _ROUND_CACHE.clear()
+    fill_rgb = _hex_rgb(fill)
+    border_rgb = _hex_rgb(border) if border else fill_rgb
+    r = max(0, min(radius, w // 2, h // 2))
+    bw = max(0, min(border_width, w // 2, h // 2))
+    px = bytearray(w * h * 4)
+    for y in range(h):
+        base = y * w * 4
+        for x in range(w):
+            a_out = _rrect_alpha(x, y, w, h, r, 0, 0)
+            if a_out <= 0.0:
+                continue
+            if bw > 0:
+                a_in = _rrect_alpha(
+                    x, y, w - 2 * bw, h - 2 * bw, max(0, r - bw), bw, bw
+                )
+                t = a_in / a_out
+                rgb = (
+                    round(fill_rgb[0] * t + border_rgb[0] * (1 - t)),
+                    round(fill_rgb[1] * t + border_rgb[1] * (1 - t)),
+                    round(fill_rgb[2] * t + border_rgb[2] * (1 - t)),
+                )
+            else:
+                rgb = fill_rgb
+            i = base + x * 4
+            px[i] = rgb[0]
+            px[i + 1] = rgb[1]
+            px[i + 2] = rgb[2]
+            px[i + 3] = round(a_out * 255)
+    img = tk.PhotoImage(data=base64.b64encode(_png_bytes(w, h, px)), format="png")
+    _ROUND_CACHE[key] = img
+    return img
+
+
+class RoundedPanel:
+    """A rounded, bordered panel drawn behind an inner frame.
+
+    A Tk frame is square, so the panel is a canvas carrying the rounded raster;
+    the content lives in a frame set *inside* it, far enough from the edges that
+    its own square corners sit over the rounded fill and never show."""
+
+    def __init__(
+        self,
+        parent,
+        fill: str | None = None,
+        border: str | None = None,
+        radius: int = 18,
+        pad: int = 16,
+        page: str | None = None,
+    ):
+        # Resolved here, not in the signature: a default argument is evaluated
+        # once at import, which would nail the panel to the theme loaded first.
+        self.fill = fill or SURFACE
+        self.border = border or BORDER
+        self.radius, self.pad = radius, pad
+        self.canvas = tk.Canvas(parent, bg=page or BG, highlightthickness=0, bd=0)
+        self.inner = tk.Frame(self.canvas, bg=self.fill)
+        self._win = self.canvas.create_window(pad, pad, window=self.inner, anchor="nw")
+        self._size = (0, 0)
+        self.canvas.bind("<Configure>", self._fit)
+        self.inner.bind("<Configure>", self._fit)
+
+    def _fit(self, _event=None) -> None:
+        w = self.canvas.winfo_width()
+        if w <= 1:
+            w = self.inner.winfo_reqwidth() + 2 * self.pad
+        h = self.inner.winfo_reqheight() + 2 * self.pad
+        if (w, h) == self._size:
+            return
+        self._size = (w, h)
+        self.canvas.configure(height=h)
+        self.canvas.itemconfigure(self._win, width=max(1, w - 2 * self.pad))
+        self._img = rounded_photo(w, h, self.radius, self.fill, self.border, 1)
+        self.canvas.delete("bg")
+        self.canvas.create_image(0, 0, anchor="nw", image=self._img, tags="bg")
+        self.canvas.tag_lower("bg")
 
 
 class Btn(tk.Canvas):
     """A rounded button, drawn on a canvas.
 
-    A Tk widget has square corners, so the shape is a smoothed polygon with the
-    text (and optional icon) painted on top. The `tk.Label`-like surface the game
+    A Tk widget has square corners, so the shape is an antialiased raster with
+    the text (and optional icon) painted on top. The `tk.Label`-like surface the game
     used before is kept — `text`, `bg`, `fg`, `set_colors`, `anchor`, an icon with
     `compound` — so no caller cares how it is drawn.
 
@@ -1066,7 +1176,8 @@ class Btn(tk.Canvas):
         fill = self._abg if self._hover else self._fill
         fg = self._afg if self._hover else self._fg
         self.delete("all")
-        _round_rect(self, 0, 0, w, h, self._corner(w, h), fill=fill, outline="")
+        self._bg_photo = rounded_photo(w, h, self._corner(w, h), fill)
+        self.create_image(0, 0, anchor="nw", image=self._bg_photo)
         cy = h / 2
         if self._image is not None:
             iw = self._image.width()
@@ -1943,6 +2054,10 @@ def choose_language_at_startup() -> str | None:
 class Almathus(tk.Tk):
     def __init__(self):
         super().__init__()
+        # Rasters belong to the Tcl interpreter that made them: a fresh run may
+        # share this module with a torn-down one (the tests do, one window per
+        # case), so the cache starts empty rather than handing back a dead image.
+        _ROUND_CACHE.clear()
         apply_theme(load_theme())  # before any widget reads a color
         self.title(T("title"))
         self.configure(bg=BG)
@@ -2253,12 +2368,10 @@ class Almathus(tk.Tk):
 
         # -- how many cards (one compact toolbar row) ----------------------- #
         self.count_var = tk.IntVar(value=self.n_cards)
-        panel = tk.Frame(
-            col, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER
-        )
-        panel.pack(fill="x", pady=(14, 18))
-        bar = tk.Frame(panel, bg=SURFACE)
-        bar.pack(pady=12)
+        panel = RoundedPanel(col)
+        panel.canvas.pack(fill="x", pady=(14, 18))
+        bar = tk.Frame(panel.inner, bg=SURFACE)
+        bar.pack(pady=(4, 2))
         stepper: list[tk.Widget] = [
             tk.Label(bar, text=T("how_many"), font=self.f_body, fg=MUTED, bg=SURFACE)
         ]
@@ -2498,17 +2611,16 @@ class Almathus(tk.Tk):
 
     def _build_number_row(self, parent):
         """Row of [1]..[10] toggles: the numbers every operation is played with."""
-        panel = tk.Frame(
-            parent, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER
-        )
-        panel.pack(fill="x", pady=(0, 22), ipady=10)
+        panel = RoundedPanel(parent)
+        panel.canvas.pack(fill="x", pady=(0, 22))
+        body = panel.inner
         tk.Label(
-            panel, text=T("choose_numbers"), font=self.f_body, fg=MUTED, bg=SURFACE
-        ).pack(pady=(6, 2))
+            body, text=T("choose_numbers"), font=self.f_body, fg=MUTED, bg=SURFACE
+        ).pack(pady=(4, 2))
 
         # The row hugs its chips instead of stretching: slack is what Tk hands
         # out a pixel at a time, and that is what made the chips uneven.
-        strip = tk.Frame(panel, bg=SURFACE)
+        strip = tk.Frame(body, bg=SURFACE)
         strip.pack(pady=(2, 4))
         boxes: dict[int, Btn] = {}
 
@@ -2558,7 +2670,7 @@ class Almathus(tk.Tk):
             paint(n)
 
         tk.Label(
-            panel, text=T("numbers_hint"), font=self.f_hint, fg=MUTED, bg=SURFACE
+            body, text=T("numbers_hint"), font=self.f_hint, fg=MUTED, bg=SURFACE
         ).pack(pady=(2, 6))
 
     def _show_topbar(self) -> None:
@@ -2985,16 +3097,10 @@ class Almathus(tk.Tk):
         pill.grid(row=1, column=0, pady=(0, 8))
         # Rounded like the buttons; the rule itself stays a plain sized canvas so
         # the width is fixed and the shorter GO! cannot make the pill retract.
-        _round_rect(
-            pill,
-            0,
-            0,
-            width,
-            height,
-            min(BTN_RADIUS * 2, height // 2),
-            fill=CARD_BG,
-            outline="",
+        self._pill_img = rounded_photo(
+            width, height, min(BTN_RADIUS * 2, height // 2), CARD_BG
         )
+        pill.create_image(0, 0, anchor="nw", image=self._pill_img)
         self.question_lbl = tk.Label(
             pill, text=card.text, font=self.f_huge, fg=TEXT, bg=CARD_BG
         )
@@ -3003,18 +3109,30 @@ class Almathus(tk.Tk):
         inputs = tk.Frame(body, bg=BG)
         inputs.grid(row=2, column=0, pady=(0, 8))
         self.answer_var = tk.StringVar()
+        # The entry sits on a rounded raster: a plain Entry is a square box, and
+        # the one thing a child aims at on this screen should not be the only
+        # sharp-cornered thing on it.
+        entry_box = tk.Canvas(inputs, bg=BG, highlightthickness=0, bd=0)
         entry = tk.Entry(
-            inputs,
+            entry_box,
             textvariable=self.answer_var,
             font=self.f_big,
             justify="center",
             width=6,
             bd=0,
+            highlightthickness=0,
             bg=ENTRY_BG,
             fg=ACCENT,
             insertbackground=ACCENT,
         )
-        entry.pack(pady=(2, 2), ipady=6)
+        entry.update_idletasks()
+        ew = entry.winfo_reqwidth() + 52
+        eh = entry.winfo_reqheight() + 20
+        entry_box.configure(width=ew, height=eh)
+        self._entry_img = rounded_photo(ew, eh, 18, ENTRY_BG, BORDER, 1)
+        entry_box.create_image(0, 0, anchor="nw", image=self._entry_img)
+        entry_box.create_window(ew // 2, eh // 2, window=entry)
+        entry_box.pack(pady=(2, 2))
         entry.focus_set()
         entry.bind("<Return>", lambda e: self.submit())
         self.feedback = tk.Label(inputs, text="", font=self.f_body, fg=GOOD, bg=BG)

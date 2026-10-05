@@ -988,6 +988,12 @@ class Btn(tk.Canvas):
         if "font" in kw:
             self._font = self._norm_font(kw.pop("font"))
             redraw = True
+        if "image" in kw:
+            self._image = kw.pop("image")
+            redraw = True
+        if "compound" in kw:
+            self._compound = kw.pop("compound")
+            redraw = True
         if redraw:
             self._reqw, self._reqh = self._measure()
             super().configure(width=self._reqw, height=self._reqh)
@@ -2330,22 +2336,14 @@ class Almathus(tk.Tk):
                 pady=10,
             ).grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="nsew")
 
+        # The footer holds the in-game switches only. Language and progress live
+        # in the top bar, where they are reachable from every screen and shown
+        # once: a flag for the language, a chart for the stats.
         footer = tk.Frame(col, bg=BG)
         footer.pack(pady=(18, 4))
         self._build_voice_toggle(footer)
         self._build_dictation_toggle(footer)
         self._build_girly_toggle(footer)
-        self._build_language_toggle(footer)
-        Btn(
-            footer,
-            T("progress"),
-            command=self.show_progress,
-            font=self.f_body,
-            bg=CARD_BG,
-            fg=MUTED,
-            padx=22,
-            pady=10,
-        ).pack(side="left", padx=8)
         self._wrap_footer(footer)
         self._fit_column(col)
         # Tk delivers a wheel event to the widget under the pointer and its own
@@ -2524,55 +2522,47 @@ class Almathus(tk.Tk):
         ).pack(pady=(2, 6))
 
     def _build_topbar(self) -> None:
-        """A slim bar above every screen, holding the language chip on the right.
+        """A slim bar above every screen: stats on the left, language on the right.
 
-        A real packed row rather than a .place()d overlay: a placed widget is not
-        part of the layout and would float on top of the settings tiles.
+        Both are global — reachable while the menu, a game or the recap is up —
+        and named by an icon so a child reads them at a glance: a chart for the
+        stats, the country's own flag for the language. A real packed row rather
+        than a .place()d overlay: a placed widget is not part of the layout and
+        would float on top of the settings tiles.
         """
         self.topbar = tk.Frame(self, bg=BG)
         self.topbar.pack(side="top", fill="x")
-        self._lang_chip = tk.Frame(
+        Btn(
             self.topbar,
+            T("progress"),
+            command=self.show_progress,
+            font=self.f_body,
             bg=SURFACE,
-            highlightthickness=1,
-            highlightbackground=BORDER,
-            cursor="hand2",
-        )
-        self._lang_chip.pack(side="right", padx=12, pady=6)
+            fg=TEXT,
+            padx=14,
+            pady=6,
+        ).pack(side="left", padx=12, pady=6)
         self._chip_image: tk.PhotoImage | None = None
+        self._lang_btn = Btn(
+            self.topbar,
+            "",
+            command=self._open_language_picker,
+            font=self.f_body,
+            bg=SURFACE,
+            fg=TEXT,
+            padx=12,
+            pady=6,
+            compound="left",
+        )
+        self._lang_btn.pack(side="right", padx=12, pady=6)
         self._refresh_lang_chip()
 
     def _refresh_lang_chip(self) -> None:
         """Redraw the chip as flag + language name for the current language."""
-        for child in self._lang_chip.winfo_children():
-            child.destroy()
         lang = languages.BY_CODE.get(LANG)
         name = lang.endonym if lang is not None else LANG
         self._chip_image = flag_image(LANG, 18)
-        if self._chip_image is not None:
-            tk.Label(self._lang_chip, image=self._chip_image, bg=SURFACE).pack(
-                side="left", padx=(8, 4), pady=3
-            )
-        tk.Label(
-            self._lang_chip, text=name, font=self.f_body, fg=TEXT, bg=SURFACE
-        ).pack(side="left", padx=(0, 8), pady=3)
-        for widget in (self._lang_chip, *self._lang_chip.winfo_children()):
-            widget.bind("<Button-1>", self._chip_click)
-
-    def _chip_click(self, _event: Any) -> None:
-        self._open_language_picker()
-
-    def _build_language_toggle(self, parent: tk.Misc) -> None:
-        lang = languages.BY_CODE.get(LANG)
-        name = lang.endonym if lang is not None else LANG
-        Btn(
-            parent,
-            f"{T('language_toggle')} : {name}",
-            command=self._open_language_picker,
-            font=self.f_body,
-            padx=22,
-            pady=10,
-        ).pack(side="left", padx=8)
+        self._lang_btn.config(image=self._chip_image, text=name)
 
     def _open_language_picker(self) -> None:
         code = LanguagePicker(

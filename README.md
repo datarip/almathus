@@ -356,6 +356,61 @@ uv sync --extra voice --group dev   # sounddevice + numpy + num2words + vosk + w
 Both TTS and STT degrade to no-ops if unavailable — the game stays fully playable
 with the keypad, and voice input layers on top when it's ready.
 
+### 🌍 Supported languages
+
+On first run you pick one of these, and only that language's model is downloaded
+(it is reused on later launches). Add or switch languages any time from the
+settings screen or the chip in the top-right corner.
+
+| Language | English | Vosk model | Size | Voice |
+|---|---|---|---|---|
+| العربية | Arabic | `vosk-model-small-ar-0.3` | 104 MB | 🔊 Voice |
+| العربية (تونس) | Arabic (Tunisian) | `vosk-model-small-ar-tn-0.1-linto` | 166 MB | 🔊 Voice |
+| Català | Catalan | `vosk-model-small-ca-0.4` | 43 MB | 🔊 Voice |
+| 中文 | Chinese | `vosk-model-small-cn-0.22` | 44 MB | ⌨️ Keypad only |
+| Čeština | Czech | `vosk-model-small-cs-0.4-rhasspy` | 46 MB | 🔊 Voice |
+| Nederlands | Dutch | `vosk-model-small-nl-0.22` | 40 MB | 🔊 Voice |
+| Esperanto | Esperanto | `vosk-model-small-eo-0.42` | 44 MB | 🔊 Voice |
+| فارسی | Farsi | `vosk-model-small-fa-0.42` | 53 MB | 🔊 Voice |
+| Français | French | `vosk-model-small-fr-0.22` | 42 MB | ✅ Tested |
+| ქართული | Georgian | `vosk-model-small-ka-0.42` | 46 MB | ⌨️ Keypad only |
+| Deutsch | German | `vosk-model-small-de-0.15` | 46 MB | 🔊 Voice |
+| ગુજરાતી | Gujarati | `vosk-model-small-gu-0.42` | 108 MB | ⌨️ Keypad only |
+| हिन्दी | Hindi | `vosk-model-small-hi-0.22` | 44 MB | ⌨️ Keypad only |
+| English (India) | Indian English | `vosk-model-small-en-in-0.4` | 38 MB | ✅ Tested |
+| Italiano | Italian | `vosk-model-small-it-0.22` | 50 MB | 🔊 Voice |
+| 日本語 | Japanese | `vosk-model-small-ja-0.22` | 50 MB | 🔊 Voice |
+| Қазақша | Kazakh | `vosk-model-small-kz-0.42` | 60 MB | 🔊 Voice |
+| 한국어 | Korean | `vosk-model-small-ko-0.22` | 87 MB | 🔊 Voice |
+| Кыргызча | Kyrgyz | `vosk-model-small-ky-0.42` | 51 MB | ⌨️ Keypad only |
+| Polski | Polish | `vosk-model-small-pl-0.22` | 53 MB | 🔊 Voice |
+| Português | Portuguese | `vosk-model-small-pt-0.3` | 32 MB | 🔊 Voice |
+| Русский | Russian | `vosk-model-small-ru-0.22` | 46 MB | 🔊 Voice |
+| Español | Spanish | `vosk-model-small-es-0.42` | 40 MB | 🔊 Voice |
+| Svenska | Swedish | `vosk-model-small-sv-rhasspy-0.15` | 304 MB | 🔊 Voice |
+| Тоҷикӣ | Tajik | `vosk-model-small-tg-0.22` | 52 MB | 🔊 Voice |
+| తెలుగు | Telugu | `vosk-model-small-te-0.42` | 61 MB | 🔊 Voice |
+| Türkçe | Turkish | `vosk-model-small-tr-0.3` | 37 MB | 🔊 Voice |
+| English (UK) | UK English | `vosk-model-small-en-gb-0.15` | 43 MB | ✅ Tested |
+| Українська | Ukrainian | `vosk-model-small-uk-v3-small` | 144 MB | 🔊 Voice |
+| English (US) | US English | `vosk-model-small-en-us-0.15` | 41 MB | ✅ Tested |
+| Oʻzbekcha | Uzbek | `vosk-model-small-uz-0.22` | 51 MB | ⌨️ Keypad only |
+| Tiếng Việt | Vietnamese | `vosk-model-small-vn-0.4` | 34 MB | 🔊 Voice |
+
+**Voice status.** ✅ **Tested** — French and English (US/UK/India) are the only
+languages tested end to end, on a real microphone. 🔊 **Voice** — the number
+words are generated automatically and the language *should* work, but it has not
+been tried yet. ⌨️ **Keypad only** — no number words exist for this language, so
+voice answering stays off and the game is played on the keypad. The interface is
+only translated for French and English; every other language falls back to
+English labels until a translation is added.
+
+**Feedback is very welcome.** Real-mic reports are the only way the untested
+languages get verified, and the quickest way to fix one. If a spoken number is
+misheard or refused, please open an issue saying which language you picked, what
+you said, and what happened — `ALMATHUS_VOICE_DEBUG=1` (below) prints the
+recognizer's raw output to include.
+
 ### 🐛 Debugging the voice path — `ALMATHUS_VOICE_DEBUG`
 
 An **environment variable**, not a command-line flag (the app takes no arguments).

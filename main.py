@@ -1472,6 +1472,14 @@ class TimeChart(tk.Canvas):
 _DOWNLOAD_POLL_MS = 80
 
 
+def ordered_languages(current: str | None) -> list[languages.Language]:
+    """The picker's order: the current language first, then the rest by endonym."""
+    return sorted(
+        languages.LANGUAGES,
+        key=lambda lang: (lang.code != current, lang.endonym.lower()),
+    )
+
+
 def flag_image(code: str, height: int) -> tk.PhotoImage | None:
     """A language's flag as a Tk image, or None when the asset is not there.
 
@@ -1501,9 +1509,17 @@ class LanguagePicker:
     no Tk call may run off the main thread.
     """
 
-    def __init__(self, parent: tk.Misc, title: str, intro: str, skip_label: str):
+    def __init__(
+        self,
+        parent: tk.Misc,
+        title: str,
+        intro: str,
+        skip_label: str,
+        current: str | None = None,
+    ):
         self._queue: queue.Queue = queue.Queue()
         self._images: list[tk.PhotoImage] = []  # Tk drops unreferenced images
+        self._current = current  # pinned to the top of the list
         self._installed: set[str] = set(languages.installed())
         self._polling = False
         self._bar: ttk.Progressbar | None = None
@@ -1569,7 +1585,7 @@ class LanguagePicker:
             "<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
         bind_wheel(canvas, lambda px: canvas.yview_scroll(px, "units"))
-        for lang in sorted(languages.LANGUAGES, key=lambda item: item.endonym.lower()):
+        for lang in ordered_languages(self._current):
             self._language_row(inner, lang)
 
     def _language_row(self, parent: tk.Misc, lang: languages.Language) -> None:
@@ -2315,7 +2331,11 @@ class Almathus(tk.Tk):
 
     def _open_language_picker(self) -> None:
         code = LanguagePicker(
-            self, T("language_title"), T("language_intro"), T("language_skip")
+            self,
+            T("language_title"),
+            T("language_intro"),
+            T("language_skip"),
+            current=LANG,
         ).show()
         if code and code != LANG:
             self._apply_language(code)

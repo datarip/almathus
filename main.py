@@ -2138,8 +2138,14 @@ def suppress_dock_icon_when_unbundled() -> None:
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     # An accessory app is not activated for us; bring its window forward so the
-    # game still opens in front of the editor rather than behind it.
-    app.activateIgnoringOtherApps_(True)
+    # game still opens in front of the editor rather than behind it. `activate`
+    # is the macOS 14+ spelling; older systems only have the deprecated variant,
+    # which is exactly why it is still the fallback here.
+    activate = getattr(app, "activate", None)
+    if activate is not None:
+        activate()
+    else:
+        app.activateIgnoringOtherApps_(True)
 
 
 def choose_language_at_startup() -> str | None:

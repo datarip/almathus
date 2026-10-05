@@ -12,11 +12,14 @@ dependencies = []
 #   Needs a model in ./models — see README (download vosk-model-small-fr-0.22).
 # parakeet-mlx targets Apple Silicon; on other platforms set ALMATHUS_PARAKEET_CMD.
 #   It is the recognizer for languages with no Vosk model (English out of the box).
+# num2words generates 0..100 number words for the installed language, from which
+#   voice derives the Vosk grammar and the parser tables. fr/en stay hand-tuned.
 # Spoken numbers are parsed by voice.strict_numbers — no library, on purpose: the
 #   rule has to be "numbers and nothing else", which a general parser will not do.
 voice = [
     "sounddevice",
     "numpy",
+    "num2words",
     "parakeet-mlx",
     # vosk 0.3.45 ships no macOS wheel (0.3.44 is the last universal2 build), so
     # resolving to it silently drops the primary French recognizer on a Mac.
@@ -124,6 +127,7 @@ warn_unused_configs = true
 module = [
     "sounddevice",
     "numpy",
+    "num2words",
     "vosk",
     "parakeet_mlx",
     "webrtcvad",

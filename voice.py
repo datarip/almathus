@@ -36,6 +36,8 @@ Environment overrides:
 from __future__ import annotations
 
 import contextlib
+import functools
+import json
 import os
 import queue
 import re
@@ -326,8 +328,20 @@ def _strip_accents(s: str) -> str:
     )
 
 
-def _lang_key(lang: str) -> str:
-    return "fr" if lang == "fr" else "en"
+def _hand_key(lang: str) -> str | None:
+    """The key into the hand-tuned tables, or None for a generated language.
+
+    French and English (and their regional variants) are hand-written because
+    they encode what num2words cannot: the French 70/80/90 arithmetic and the
+    Belgian forms. Every other language is built from num2words instead, so this
+    returns None to say "generate it".
+    """
+    base = lang.split("-", 1)[0].lower()
+    if base == "fr":
+        return "fr"
+    if base == "en":
+        return "en"
+    return None
 
 
 def _tokenize(text: str, lang: str) -> list[str]:
@@ -336,44 +350,96 @@ def _tokenize(text: str, lang: str) -> list[str]:
     Hyphens and apostrophes split ("dix-sept" -> dix, sept); sentence punctuation
     the recognizer adds ("huit." / "Eight?") is dropped; anything else is kept as
     a token so the caller can refuse it.
+
+    The French rewrites (``_PRESUB``) run only on the hand-tuned path; a
+    generated language is compared against its own num2words spelling verbatim.
     """
     low = _strip_accents(text.lower())
     low = re.sub(r"[.,;:!?…\"'`’\-–—/]+", " ", low)
     # ...only then the rewrites, so they see "quatre vingt dix" whether it was
     # written hyphenated or spaced.
-    for pattern, repl in _PRESUB[_lang_key(lang)]:
-        low = re.sub(pattern, repl, low)
+    key = _hand_key(lang)
+    if key is not None:
+        for pattern, repl in _PRESUB[key]:
+            low = re.sub(pattern, repl, low)
     return low.split()
 
 
-def strict_numbers(text: str, lang: str = "fr") -> list[int] | None:
-    """The numbers in an utterance that is *only* numbers — else None.
+@functools.cache
+def _generated(lang: str) -> tuple[dict[tuple[str, ...], int], str] | None:
+    """Canonical 0..100 phrases and the Vosk grammar for a generated language.
 
-    ``None`` and ``[]`` mean different things and both mean "no answer":
-    ``None`` is "this was speech, but not a number" (refuse it), ``[]`` is
-    "nothing was said". Callers treat both the same; the distinction is kept
-    because it is what the debug log needs to explain a refusal.
+    Returns ``None`` when the language has no num2words converter — the six the
+    library lacks (Hindi, Gujarati, Chinese, Georgian, Kyrgyz, Uzbek) — or when
+    num2words is not installed at all. Those languages simply run keypad-only,
+    the same contract as a missing voice stack everywhere else.
 
-    >>> strict_numbers("huit", "fr")
-    [8]
-    >>> strict_numbers("vingt et un", "fr")
-    [21]
-    >>> strict_numbers("quinze moins quatre", "fr") is None
-    True
-    >>> strict_numbers("one hundred and five", "en")
-    [105]
-    >>> strict_numbers("i don't know", "en") is None
-    True
+    Cached: the tables are built once per language per process, on the STT
+    thread, from a library that is pure Python and quick to call.
     """
-    if not text or not text.strip():
-        return []
-    key = _lang_key(lang)
+    entry = languages.BY_CODE.get(lang)
+    n2w = entry.num2words if entry is not None else None
+    if n2w is None:
+        return None
+    try:
+        from num2words import num2words
+    except Exception:
+        return None
+    phrases: dict[tuple[str, ...], int] = {}
+    words: set[str] = set()
+    try:
+        for n in range(101):
+            tokens = tuple(_tokenize(num2words(n, lang=n2w), lang))
+            if tokens:
+                phrases[tokens] = n
+                words.update(tokens)
+    except Exception:
+        return None
+    if not phrases:
+        return None
+    # Vosk reads the grammar as one space-joined word list, plus "[unk]" for
+    # "that was speech, but not a word I have".
+    grammar = json.dumps([" ".join(sorted(words)), "[unk]"])
+    return phrases, grammar
+
+
+def _strict_generated(
+    tokens: list[str], phrases: dict[tuple[str, ...], int], longest: int
+) -> list[int] | None:
+    """Numbers from a token list, matched against whole canonical phrases.
+
+    A generated language has no unit/ten grammar to accumulate: num2words gives
+    one exact spelling per number, so the utterance is read left to right,
+    taking the longest canonical phrase that starts here. A token that begins no
+    phrase is a non-number word and refuses the whole utterance — the same
+    "numbers and nothing else" rule, matched instead of accumulated.
+    """
+    out: list[int] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        tok = tokens[i]
+        if tok in _UNKNOWN_TOKENS:
+            return None
+        if re.fullmatch(r"\d+", tok):
+            out.append(int(tok))
+            i += 1
+            continue
+        for length in range(min(longest, n - i), 0, -1):
+            value = phrases.get(tuple(tokens[i : i + length]))
+            if value is not None:
+                out.append(value)
+                i += length
+                break
+        else:
+            return None  # a word that is not a number: refuse it all
+    return out
+
+
+def _hand_numbers(tokens: list[str], key: str) -> list[int] | None:
+    """The hand-tuned accumulator over French/English number words."""
     units, tens = _UNIT_WORDS[key], _TEN_WORDS[key]
     scales, glue = _SCALE_WORDS[key], _GLUE_WORDS[key]
-
-    tokens = _tokenize(text, lang)
-    if not tokens:
-        return []
 
     out: list[int] = []
     cur: int | None = None
@@ -417,6 +483,41 @@ def strict_numbers(text: str, lang: str = "fr") -> list[int] | None:
         last, last_val = kind, val
     flush()
     return out
+
+
+def strict_numbers(text: str, lang: str = "fr") -> list[int] | None:
+    """The numbers in an utterance that is *only* numbers — else None.
+
+    ``None`` and ``[]`` mean different things and both mean "no answer":
+    ``None`` is "this was speech, but not a number" (refuse it), ``[]`` is
+    "nothing was said". Callers treat both the same; the distinction is kept
+    because it is what the debug log needs to explain a refusal.
+
+    >>> strict_numbers("huit", "fr")
+    [8]
+    >>> strict_numbers("vingt et un", "fr")
+    [21]
+    >>> strict_numbers("quinze moins quatre", "fr") is None
+    True
+    >>> strict_numbers("one hundred and five", "en")
+    [105]
+    >>> strict_numbers("i don't know", "en") is None
+    True
+    """
+    if not text or not text.strip():
+        return []
+    tokens = _tokenize(text, lang)
+    if not tokens:
+        return []
+    key = _hand_key(lang)
+    if key is not None:
+        return _hand_numbers(tokens, key)
+    generated = _generated(lang)
+    if generated is None:
+        return None  # no number words for this language: nothing can match
+    phrases, _ = generated
+    longest = max(len(phrase) for phrase in phrases)
+    return _strict_generated(tokens, phrases, longest)
 
 
 def numbers_in(text: str, lang: str = "fr") -> list[int]:
@@ -612,6 +713,21 @@ _VOSK_GRAMMAR = {
     ),
 }
 
+
+def _grammar_for(lang: str) -> str | None:
+    """The Vosk number grammar for a language, or None if it has no number words.
+
+    fr/en return their hand-tuned list; every other language gets one generated
+    from num2words (0..100). None means there is nothing to constrain the
+    recognizer to, so voice is off for that language and the keypad is used.
+    """
+    key = _hand_key(lang)
+    if key is not None:
+        return _VOSK_GRAMMAR[key]
+    generated = _generated(lang)
+    return generated[1] if generated is not None else None
+
+
 # --- how sure Vosk has to be that it heard numbers and only numbers ---------- #
 # With a number-only grammar Vosk always *can* map a sound onto number words, so
 # its N-best list is read the strict way: the winning hypothesis has to be one
@@ -708,6 +824,11 @@ class SpeechInput:
         self._active_stream: Any = None
         self._stopped = False  # latched on quit: no more captures
         self._probe()
+        # A language with no number words (num2words lacks a converter, or the
+        # library is absent) cannot be answered by voice; say so rather than
+        # arming a mic that would never score a card. The keypad still works.
+        if self._sd and self._np and _grammar_for(self.lang) is None:
+            self._reason = "reconnaissance vocale indisponible pour cette langue"
 
     # -- capability probing ------------------------------------------------ #
     def _probe(self):
@@ -735,6 +856,8 @@ class SpeechInput:
     def available(self) -> bool:
         if not (self._sd and self._np):
             return False
+        if _grammar_for(self.lang) is None:
+            return False  # no number words for this language: keypad only
         # usable with either a parakeet backend OR a Vosk model (Vosk is primary now)
         return bool(self._backend) or self._vosk_model_dir() is not None
 
@@ -1701,8 +1824,10 @@ class SpeechInput:
         """
         if not self._load_vosk():
             return []
+        grammar = _grammar_for(self.lang)
+        if grammar is None:
+            return []
         try:
-            grammar = _VOSK_GRAMMAR.get(self.lang, _VOSK_GRAMMAR["fr"])
             nums = []
             for res in self._vosk_decode(audio, grammar=grammar, alts=_VOSK_ALTS):
                 nums += self._vosk_best(res)

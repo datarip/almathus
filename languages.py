@@ -32,6 +32,39 @@ from pathlib import Path
 _BASE_URL = "https://alphacephei.com/vosk/models/"
 _APP_DIR = "Almathus"
 
+# How each language is spelled out by num2words, where the library can do it.
+# Two names differ from ours (en-in -> en_IN; Chinese has no converter). A
+# language absent here runs keypad-only for voice, which is the documented
+# degradation for the six num2words cannot spell: hi, gu, cn, ka, ky, uz.
+_NUM2WORDS: dict[str, str] = {
+    "fr": "fr",
+    "en-us": "en",
+    "en-gb": "en",
+    "en-in": "en_IN",
+    "es": "es",
+    "de": "de",
+    "it": "it",
+    "pt": "pt",
+    "nl": "nl",
+    "pl": "pl",
+    "ru": "ru",
+    "uk": "uk",
+    "cs": "cs",
+    "sv": "sv",
+    "tr": "tr",
+    "ar": "ar",
+    "ar-tn": "ar",
+    "fa": "fa",
+    "te": "te",
+    "ja": "ja",
+    "ko": "ko",
+    "vi": "vi",
+    "ca": "ca",
+    "eo": "eo",
+    "kz": "kz",
+    "tg": "tg",
+}
+
 Progress = Callable[[int, int], None]
 """Called as (bytes_done, bytes_total) while a model downloads."""
 
@@ -49,6 +82,11 @@ class Language:
     @property
     def url(self) -> str:
         return f"{_BASE_URL}{self.model}.zip"
+
+    @property
+    def num2words(self) -> str | None:
+        """num2words' code for this language, or None when it has no converter."""
+        return _NUM2WORDS.get(self.code)
 
 
 # Frozen copy of Vosk's small-model catalog. Ordered roughly by speaker count,

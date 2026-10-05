@@ -2682,21 +2682,32 @@ class Almathus(tk.Tk):
         # once: a flag for the language, a chart for the stats.
         footer = tk.Frame(col, bg=BG)
         footer.pack(fill="x", pady=(18, 2))
+
+        def resync() -> None:
+            """Re-measure the column and update the scroll region.
+
+            The footer can fold onto more rows *after* the first measurement,
+            when the window maps and the real width is known; without this the
+            region kept the old, shorter height and the new rows could not be
+            scrolled to.
+            """
+            if not canvas.winfo_exists():
+                return
+            self.update_idletasks()
+            holder_h[0] = holder.winfo_reqheight()
+            fit_scrolled()
+
         self._build_voice_toggle(footer)
         self._build_dictation_toggle(footer)
         self._build_girly_toggle(footer)
-        self._layout_footer(footer)
+        self._layout_footer(footer, resync)
         self._fit_column(col, canvas)
         # Tk delivers a wheel event to the widget under the pointer and its own
         # bindtags only — it never walks up to a parent — so binding the canvas
         # alone would scroll nothing unless the pointer is on bare canvas. Every
         # descendant is bound too, so a wheel anywhere over the column scrolls it.
         self._bind_wheel_tree(col, canvas)
-        # Measure the finished column once here (this is the one layout pass
-        # that is worth forcing), then only ever shrink the gaps or re-centre.
-        self.update_idletasks()
-        holder_h[0] = holder.winfo_reqheight()
-        fit_scrolled()  # measure now, not only on the first <Configure>
+        resync()  # measure now, not only on the first <Configure>
 
     def _bind_wheel_tree(self, widget, canvas) -> None:
         """Route every wheel gesture anywhere over `widget` to `canvas`.
@@ -2755,7 +2766,7 @@ class Almathus(tk.Tk):
                 )
             self.update_idletasks()
 
-    def _layout_footer(self, footer) -> None:
+    def _layout_footer(self, footer, on_relayout=None) -> None:
         """Lay the switches out in as many columns as their labels fit.
 
         They used to be a packed, content-sized row centred under the panels, so
@@ -2766,6 +2777,11 @@ class Almathus(tk.Tk):
         A fixed two-per-row split clipped the long "Répondre à la voix : ON" and
         "Mode princesse : ON" on a narrow screen; measuring the labels first
         means a button only shares a row when sharing still leaves it room.
+
+        `on_relayout` is called after the columns change: the screen's height is
+        measured once when it is built, and a later fold onto more rows makes
+        the content taller — without a nudge the scroll region stayed at the old
+        height and the extra rows could not be reached.
         """
         buttons = footer.winfo_children()
         if not buttons:
@@ -2807,6 +2823,9 @@ class Almathus(tk.Tk):
                 b.grid(
                     row=i // per_row, column=i % per_row, sticky="ew", padx=pad, pady=6
                 )
+            if on_relayout is not None:
+                self.update_idletasks()
+                on_relayout()
 
         # Re-decide when the window is resized, not only at build time.
         footer.bind("<Configure>", relayout, add="+")

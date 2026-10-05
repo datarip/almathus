@@ -1550,9 +1550,9 @@ class TimeChart(tk.Canvas):
         self.PAD_B = font.metrics("linespace") + 16
         # Both axes are headed inside the canvas, on one line above the plot, so
         # the two titles sit level with each other however the fonts scale. The
-        # band is a little taller than the text needs, so the headings are not
-        # jammed against the top edge.
-        self.PAD_T = font.metrics("linespace") + 26
+        # band leaves a clear gap between those headings and the first gridline,
+        # so the title is not sitting on top of the plot.
+        self.PAD_T = font.metrics("linespace") + 34
         if self.deck:
             # Room for the grade axis: its labels, `20/20` at their widest, and
             # the title above them saying what they count.
@@ -1665,7 +1665,7 @@ class TimeChart(tk.Canvas):
         # one to the other.
         self.create_text(
             8,
-            y0 - 10,
+            y0 - 18,
             text=T("chart_title"),
             anchor="sw",
             font=self.font,
@@ -1674,7 +1674,7 @@ class TimeChart(tk.Canvas):
         if self.deck:
             self.create_text(
                 x1 + 10,
-                y0 - 10,
+                y0 - 18,
                 text=T("axis_grade"),
                 anchor="sw",
                 font=self.font,
@@ -4122,52 +4122,33 @@ class Almathus(tk.Tk):
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
-        # On a phone or tablet the title takes the top line and every control
-        # drops below it; on a laptop the back button and title share the top
-        # line and only the filters wrap under. A width test, not a measured
-        # one: the title's emoji is not counted by `font.measure`, so a measured
-        # threshold read the header as fitting on a screen where it did not.
-        stacked = self._page_room() < 780
-
+        # The title and the two buttons share the top line — back on the left,
+        # title beside it, PDF and the session count against the right — and
+        # only the month filter and legend wrap onto the line below. It is the
+        # filters that do not fit beside the title, not the buttons.
         bar = tk.Frame(f, bg=BG)
         bar.pack(fill="x", padx=28, pady=(18, 6))
         title_row = tk.Frame(bar, bg=BG)
         title_row.pack(fill="x")
-        if stacked:
-            buttons = tk.Frame(bar, bg=BG)
-            buttons.pack(fill="x", pady=(8, 0))
-        else:
-            buttons = title_row
         filters = tk.Frame(bar, bg=BG)
         filters.pack(fill="x", pady=(8, 0))
 
-        def back_btn(parent) -> Btn:
-            return Btn(
-                parent,
-                T("back"),
-                command=self.show_settings,
-                font=self.f_small,
-                bg=CARD_BG,
-                fg=TEXT,
-                padx=14,
-                pady=7,
-            )
-
-        if not stacked:
-            back_btn(title_row).pack(side="left")
-        else:
-            back_btn(buttons).pack(side="left")
-        tk.Label(
+        Btn(
             title_row,
-            text=T("progress_title"),
-            font=self.f_title,
-            fg=ACCENT,
-            bg=BG,
-        ).pack(side="left", padx=0 if stacked else 20)
-
+            T("back"),
+            command=self.show_settings,
+            font=self.f_small,
+            bg=CARD_BG,
+            fg=TEXT,
+            padx=14,
+            pady=7,
+        ).pack(side="left")
+        tk.Label(
+            title_row, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG
+        ).pack(side="left", padx=20)
         # Reconfigured on every filter change: the count belongs to what is shown.
         self._n_label = tk.Label(
-            buttons,
+            title_row,
             text=T("n_sessions", n=len(sessions)),
             font=self.f_small,
             fg=MUTED,
@@ -4181,9 +4162,9 @@ class Almathus(tk.Tk):
             )
             return
 
-        # Export lives against the right edge of the button line.
+        # Export lives against the right edge of the title line.
         pdf_btn = Btn(
-            buttons,
+            title_row,
             T("pdf_button"),
             command=self._export_pdf,
             font=self.f_small,
@@ -4195,7 +4176,7 @@ class Almathus(tk.Tk):
         pdf_btn.pack(side="right", padx=(0, 14))
         Tooltip(pdf_btn, T("pdf_tip"), self.f_hint)
         self._pdf_status = tk.Label(
-            buttons, text="", font=self.f_small, fg=MUTED, bg=BG
+            title_row, text="", font=self.f_small, fg=MUTED, bg=BG
         )
         self._pdf_status.pack(side="right", padx=(0, 12))
 

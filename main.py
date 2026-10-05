@@ -2899,10 +2899,10 @@ class Almathus(tk.Tk):
 
         Named by an icon so a child reads them at a glance: a chart for the
         stats, the country's own flag for the language. The two buttons are
-        placed rather than packed so they can sit on the *page box* the menu
-        below uses — flush with its edges, not the window's. That is safe here
-        because the bar is its own frame with nothing but these two buttons:
-        they cannot float over the screen the way a placed settings tile did.
+        placed rather than packed so they can take exactly the edge inset the
+        page headers use; the bar is its own frame with nothing but these two
+        buttons, so they cannot float over the screen the way a placed settings
+        tile once did.
         """
         self.topbar = tk.Frame(self, bg=BG)
         self.topbar.pack(side="top", fill="x")
@@ -2945,35 +2945,31 @@ class Almathus(tk.Tk):
         self._place_topbar()
 
     def _place_topbar(self, _event=None) -> None:
-        """Put the two buttons on the page box, aligned with the menu below."""
+        """Put the two buttons exactly where a page header puts its pills.
+
+        Same edge inset and same top offset as the header's Retour and PDF, so
+        the navigation stays put — sideways as well as vertically — when the
+        child moves between the menu and the progress or language screens.
+        """
         btn = getattr(self, "_progress_btn", None)
         if btn is None or not btn.winfo_exists():
             return
         w = self.topbar.winfo_width()
         if w <= 1:  # not mapped yet (or hidden); re-placed on <Configure>
             return
-        box = min(w, CONTENT_MAX)
-        left = (w - box) // 2
-        # 24 is the column's own padding, so the buttons line up with the panel
-        # edges rather than with the box, which is a hair wider.
-        inset = 24
+        inset = 28  # the header bars' own padx
         pill_h = max(
             self._progress_btn.winfo_reqheight(),
             self._lang_btn.winfo_reqheight(),
         )
-        # Sit the two buttons exactly where a page header's pills sit: same 18px
-        # top offset, and the same centring against the title band, so the
-        # navigation does not jump when the child moves between the menu and the
-        # progress or language screens.
+        # 18px is the header bars' top pad; the extra centres the pill against
+        # the shared title band, which is taller (the progress title's emoji).
         pad_top = 18 + max(0, (self._header_band - pill_h) // 2)
-        pad_bottom = 6
-        height = pill_h + pad_top + pad_bottom
+        height = pill_h + pad_top + 6
         if self.topbar.winfo_height() != height:
             self.topbar.configure(height=height)
-        self._progress_btn.place(x=left + inset, y=pad_top)
-        self._lang_btn.place(
-            x=left + box - inset - self._lang_btn.winfo_reqwidth(), y=pad_top
-        )
+        self._progress_btn.place(x=inset, y=pad_top)
+        self._lang_btn.place(x=w - inset - self._lang_btn.winfo_reqwidth(), y=pad_top)
 
     def _refresh_lang_chip(self) -> None:
         """Redraw the chip as flag + language name for the current language."""

@@ -2487,9 +2487,11 @@ class Almathus(tk.Tk):
         def show_bar():
             # Overlaid, not packed: a packed bar steals 15 px from the canvas,
             # which re-centres the whole page and flips the bar on and off at
-            # the threshold — a width wobble on every drag.
+            # the threshold — a width wobble on every drag. Lifted so it is not
+            # drawn under the canvas it belongs to.
             if not scrollbar.winfo_ismapped():
                 scrollbar.place(relx=1.0, rely=0.0, anchor="ne", relheight=1.0)
+            scrollbar.lift()
 
         def hide_bar():
             if scrollbar.winfo_ismapped():
@@ -2526,7 +2528,11 @@ class Almathus(tk.Tk):
             # stayed on. When it fits it is pinned to the top, not centred: a
             # centred page left a gap under the logo and a matching one below
             # the footer, and the slack read as scrollable.
-            h = holder_h[0]
+            #
+            # The height is read fresh, not from the cached measurement: the
+            # footer can fold onto more rows after the first pass, and a stale
+            # height left the new rows outside the scroll region.
+            h = holder.winfo_reqheight() or holder_h[0]
             y = 0
             # The width changes on every drag step, but the scrollregion only
             # depends on the *height*: leaving it alone while only the width
@@ -2704,9 +2710,10 @@ class Almathus(tk.Tk):
         self._fit_column(col, canvas)
         # Tk delivers a wheel event to the widget under the pointer and its own
         # bindtags only — it never walks up to a parent — so binding the canvas
-        # alone would scroll nothing unless the pointer is on bare canvas. Every
-        # descendant is bound too, so a wheel anywhere over the column scrolls it.
-        self._bind_wheel_tree(col, canvas)
+        # alone would scroll nothing unless the pointer is on bare canvas.
+        # Binding the whole screen means a gesture anywhere — panels, down the
+        # gaps, even over the fixed title — reaches the canvas.
+        self._bind_wheel_tree(f, canvas)
         resync()  # measure now, not only on the first <Configure>
 
     def _bind_wheel_tree(self, widget, canvas) -> None:

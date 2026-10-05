@@ -58,11 +58,6 @@ except Exception:  # noqa: BLE001 - keep the game usable if voice.py is absent/b
 
 DEFAULT_CARDS = 20
 
-# The card counts a game may be played (and logged) with. Only whole, documented
-# decks are offered, so a stray press of the stepper cannot leave the child on a
-# four-card "session" that means nothing in the log — see `_save_session`.
-DECK_CHOICES = (5, 10, 20, 30, 50)
-
 MODES = ("addition", "subtraction", "multiplication", "division")
 
 # Operand ranges per mode. Addition/subtraction stay in 0..20 as requested;
@@ -2561,21 +2556,7 @@ class Almathus(tk.Tk):
         ]
 
         def bump(d):
-            # Step between the documented deck sizes only: a held "−" used to
-            # walk down to any number at all, and a 4-card game is not a deck.
-            cur = self.count_var.get()
-            if cur in DECK_CHOICES:
-                i = DECK_CHOICES.index(cur) + d
-            else:
-                i = (
-                    min(
-                        range(len(DECK_CHOICES)),
-                        key=lambda j: abs(DECK_CHOICES[j] - cur),
-                    )
-                    + d
-                )
-            i = max(0, min(len(DECK_CHOICES) - 1, i))
-            self.count_var.set(DECK_CHOICES[i])
+            self.count_var.set(max(1, min(99, self.count_var.get() + d)))
 
         stepper.append(
             Btn(
@@ -2617,7 +2598,7 @@ class Almathus(tk.Tk):
 
         # quick picks double as a segmented control: the live value stays lit
         chips: dict[int, Btn] = {}
-        for q in DECK_CHOICES:
+        for q in (5, 10, 20, 30, 50):
             chips[q] = Btn(
                 bar,
                 str(q),
@@ -4370,11 +4351,11 @@ class Almathus(tk.Tk):
             w.bindtags((*w.bindtags(), str(canvas)))
 
     def _save_session(self, cards, total_time, correct):
-        # Only a whole, documented deck is worth a line in the log. A game left
-        # part-way through — or one played on a count that is not a real deck —
-        # would write a row whose `cartes` is not the deck the child sat down
-        # to, and the progress screen would chart and grade that fragment.
-        if self.n_cards not in DECK_CHOICES or len(cards) != self.n_cards:
+        # Record only a session that ran to the size the child chose. A game cut
+        # short — or one that ended on a different count for any reason — writes
+        # a row whose `cartes` is not the deck that was set up, and the progress
+        # screen would chart and grade that fragment as if it were a whole deck.
+        if len(cards) != self.n_cards:
             return
         stamp = datetime.now().astimezone()
         hardest = difficult_cards(cards)

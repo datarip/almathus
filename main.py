@@ -27,6 +27,7 @@ import queue
 import random
 import signal
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -2127,41 +2128,38 @@ def _running_in_app_bundle() -> bool:
     return ".app/Contents/MacOS/" in sys.executable
 
 
-def suppress_dock_icon_when_unbundled() -> None:
-    """Keep editors from piling up stale Dock tiles while developing.
+def relaunch_as_app_bundle() -> bool:
+    """Hand the game off to its own macOS app bundle, if there is one to use.
 
-    Running a bare Tk app from an integrated terminal (Zed, Ghostty, iTerm...)
-    makes this process register with macOS LaunchServices under the *host*
-    app's bundle, because a plain script has no bundle of its own. On macOS 26+
-    each such run leaves a stale tile behind, so a day of running the game from
-    Zed's terminal fills the Dock with Zed icons (zed-industries/zed#64810).
+    Running a bare Tk app from an editor's integrated terminal (Zed, Ghostty...)
+    registers it with macOS LaunchServices under the *host* app's bundle,
+    because a plain script has no bundle of its own. On macOS 26+ every such run
+    leaves a stale Dock tile behind, so a morning of running the game from Zed
+    fills the Dock with Zed icons (zed-industries/zed#64810). Changing the
+    process's activation policy afterwards does not help: Tk already claimed a
+    regular policy inside ``tk.Tk()``, before any of our code runs.
 
-    Making the process an *accessory* app means it never claims a Dock tile at
-    all, so there is nothing to go stale. The trade-off is that an accessory app
-    has no macOS menu bar; the game's own screens are the whole UI, so nothing
-    is lost. A packaged ``.app`` is left alone by ``_running_in_app_bundle``.
+    Launching the sibling ``Almathus.app`` through ``open`` does help: the
+    bundle is started by launchd, so it carries its own identity, and the game
+    gets one ordinary Dock icon that disappears when it quits.
 
-    No-op off macOS and when PyObjC is absent: this is a desktop nicety, never
-    a requirement to play.
+    Returns True when a bundle took over and this process should stop. Off
+    macOS, inside a real bundle, or with no bundle beside the source, it is a
+    no-op and the game runs here as usual.
     """
     if sys.platform != "darwin" or _running_in_app_bundle():
-        return
+        return False
+    if os.environ.get("ALMATHUS_IN_APP") == "1":  # the bundled copy starting up
+        return False
+    bundle = Path(__file__).resolve().parent / "Almathus.app"
+    if not bundle.is_dir():
+        return False
     try:
-        # pyobjc-framework-Cocoa; macOS-only, and optional on purpose.
-        from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
-    except ImportError:
-        return
-    app = NSApplication.sharedApplication()
-    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-    # An accessory app is not activated for us; bring its window forward so the
-    # game still opens in front of the editor rather than behind it. `activate`
-    # is the macOS 14+ spelling; older systems only have the deprecated variant,
-    # which is exactly why it is still the fallback here.
-    activate = getattr(app, "activate", None)
-    if activate is not None:
-        activate()
-    else:
-        app.activateIgnoringOtherApps_(True)
+        # Fixed argv, only ever the game's own bundle: nothing user-supplied.
+        subprocess.Popen(["/usr/bin/open", str(bundle)])  # noqa: S603
+    except OSError:
+        return False
+    return True
 
 
 def choose_language_at_startup() -> str | None:
@@ -2174,7 +2172,6 @@ def choose_language_at_startup() -> str | None:
     if not needs_language_setup():
         return None
     root = tk.Tk()
-    suppress_dock_icon_when_unbundled()  # Tk has just created NSApp; tame it
     root.withdraw()
     try:
         picker = LanguagePicker(
@@ -4595,10 +4592,11 @@ class Almathus(tk.Tk):
 
 
 def main():
+    if relaunch_as_app_bundle():  # macOS: let the bundle own the process, not Zed
+        return
     choose_language_at_startup()  # asks only when no speech model is installed
     resolve_language()  # sets the module's LANG before any widget reads it
     app = Almathus()
-    suppress_dock_icon_when_unbundled()  # again once the real window owns NSApp
     try:
         app.mainloop()
     finally:

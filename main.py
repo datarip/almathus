@@ -28,7 +28,7 @@ import threading
 import time
 import tkinter as tk
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -481,17 +481,6 @@ THEME: str = "default"
 Anchor = Literal["nw", "n", "ne", "w", "center", "e", "sw", "s", "se"]
 
 
-def _for_key(n: int, fn: Callable[[int], object]) -> Callable[[tk.Event], None]:
-    """A Tk event handler that calls fn(n). Binding `lambda e, k=n: fn(k)` in a
-    loop works, but a default argument is the only thing holding the value and
-    it cannot be typed; this closes over n explicitly instead."""
-
-    def handler(_event: tk.Event) -> None:
-        fn(n)
-
-    return handler
-
-
 def apply_theme(name: str) -> None:
     """Rebind the palette globals to one of THEMES. Widgets that already exist
     keep the colors they were built with, so callers redraw the screen after."""
@@ -882,7 +871,57 @@ def difficult_cards(
 # --------------------------------------------------------------------------- #
 
 
-class Btn(tk.Label):
+BTN_RADIUS = 12  # px; clamped to half the height so short buttons stay sane
+BTN_GAP = 8  # px between an icon and its label
+
+
+def _round_rect(canvas, x1, y1, x2, y2, r, **kw):
+    """A rounded rectangle as one smoothed polygon.
+
+    Tk's `smooth=True` treats the points as spline *control* points, so a corner
+    is drawn as two duplicated points either side of the arc plus the corner
+    itself — that is what bends it into a quarter circle instead of a bulge."""
+    pts = [
+        x1 + r,
+        y1,
+        x2 - r,
+        y1,
+        x2,
+        y1,
+        x2,
+        y1 + r,
+        x2,
+        y2 - r,
+        x2,
+        y2,
+        x2 - r,
+        y2,
+        x1 + r,
+        y2,
+        x1,
+        y2,
+        x1,
+        y2 - r,
+        x1,
+        y1 + r,
+        x1,
+        y1,
+    ]
+    return canvas.create_polygon(pts, smooth=True, **kw)
+
+
+class Btn(tk.Canvas):
+    """A rounded button, drawn on a canvas.
+
+    A Tk widget has square corners, so the shape is a smoothed polygon with the
+    text (and optional icon) painted on top. The `tk.Label`-like surface the game
+    used before is kept — `text`, `bg`, `fg`, `set_colors`, `anchor`, an icon with
+    `compound` — so no caller cares how it is drawn.
+
+    `bg` is the button's *fill*; the canvas behind it takes the parent's colour,
+    so the corners blend into the page instead of showing a box around them.
+    """
+
     def __init__(
         self,
         parent,
@@ -895,45 +934,167 @@ class Btn(tk.Label):
         active_fg=None,
         padx=14,
         pady=10,
+        width=None,
+        anchor="center",
+        image=None,
+        compound="left",
+        radius=None,
         **kw,
     ):
         # The palette defaults are filled in here rather than in the signature:
         # default arguments are evaluated once at import, which would nail every
         # unstyled button to whichever theme happened to be loaded first.
-        bg = bg or CARD_BG
-        fg = fg or TEXT
-        active_bg = active_bg or ACCENT
-        active_fg = active_fg or INK
-        super().__init__(
-            parent,
-            text=text,
-            bg=bg,
-            fg=fg,
-            font=font,
-            padx=padx,
-            pady=pady,
-            cursor="hand2",
-            **kw,
-        )
-        self._bg, self._fg, self._abg, self._afg = bg, fg, active_bg, active_fg
+        self._fill = bg or CARD_BG
+        self._fg = fg or TEXT
+        self._abg = active_bg or ACCENT
+        self._afg = active_fg or INK
+        self._text = str(text)
+        self._font = self._norm_font(font)
         self._command = command
-        self.bind("<Enter>", lambda e: self._paint(self._abg, self._afg))
-        self.bind("<Leave>", lambda e: self._paint(self._bg, self._fg))
-        self.bind("<Button-1>", lambda e: self._paint(self._abg, self._afg))
-        self.bind("<ButtonRelease-1>", self._release)
+        self._padx, self._pady = padx, pady
+        self._width = width
+        self._anchor = anchor
+        self._image = image
+        self._compound = compound
+        self._radius = radius
+        self._hover = False
+        page = self._parent_bg(parent)
+        super().__init__(
+            parent, highlightthickness=0, bd=0, bg=page, cursor="hand2", **kw
+        )
+        self._reqw, self._reqh = self._measure()
+        super().configure(width=self._reqw, height=self._reqh)
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<Button-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
+        self.bind("<Configure>", self._redraw)
+        self._redraw()
 
-    def _paint(self, bg, fg):
-        self.config(bg=bg, fg=fg)
+    # -- compatible, Label-like surface ------------------------------------ #
+    def configure(self, cnf=None, **kw):
+        if cnf is not None:
+            kw.update(cnf)
+        redraw = False
+        if "text" in kw:
+            self._text = str(kw.pop("text"))
+            redraw = True
+        if "bg" in kw:
+            self._fill = kw.pop("bg")
+            redraw = True
+        if "fg" in kw:
+            self._fg = kw.pop("fg")
+            redraw = True
+        if "font" in kw:
+            self._font = self._norm_font(kw.pop("font"))
+            redraw = True
+        if redraw:
+            self._reqw, self._reqh = self._measure()
+            super().configure(width=self._reqw, height=self._reqh)
+        if kw:
+            super().configure(**kw)
+        if redraw:
+            self._redraw()
 
-    def _release(self, e):
-        inside = 0 <= e.x < self.winfo_width() and 0 <= e.y < self.winfo_height()
-        self._paint(*((self._abg, self._afg) if inside else (self._bg, self._fg)))
-        if inside and self._command:
-            self._command()
+    config = configure
+
+    def cget(self, key):
+        if key == "text":
+            return self._text
+        if key == "bg":
+            return self._fill
+        if key == "fg":
+            return self._fg
+        return super().cget(key)
 
     def set_colors(self, bg, fg):
-        self._bg, self._fg = bg, fg
-        self.config(bg=bg, fg=fg)
+        self._fill, self._fg = bg, fg
+        self._redraw()
+
+    # -- geometry + painting ------------------------------------------------ #
+    @staticmethod
+    def _norm_font(font):
+        if isinstance(font, tkfont.Font):
+            return font
+        return (
+            tkfont.Font(family="Helvetica", size=12)
+            if font is None
+            else tkfont.Font(font=font)
+        )
+
+    @staticmethod
+    def _parent_bg(parent):
+        try:
+            return parent.cget("bg")
+        except (tk.TclError, AttributeError):
+            return BG
+
+    def _measure(self) -> tuple[int, int]:
+        th = self._font.metrics("linespace")
+        tw = self._font.measure(self._text)
+        iw = self._image.width() if self._image is not None else 0
+        ih = self._image.height() if self._image is not None else 0
+        content = tw + (iw + BTN_GAP if iw else 0)
+        if self._width is not None:
+            content = max(content, self._width * self._font.measure("0"))
+        return content + 2 * self._padx, max(th, ih) + 2 * self._pady
+
+    def _corner(self, w, h) -> int:
+        r = (
+            self._radius
+            if self._radius is not None
+            else min(BTN_RADIUS, max(6, h // 3))
+        )
+        return max(0, min(r, w // 2, h // 2))
+
+    def _redraw(self, _event=None):
+        w, h = self.winfo_width(), self.winfo_height()
+        if w <= 1:
+            w = self._reqw
+        if h <= 1:
+            h = self._reqh
+        fill = self._abg if self._hover else self._fill
+        fg = self._afg if self._hover else self._fg
+        self.delete("all")
+        _round_rect(self, 0, 0, w, h, self._corner(w, h), fill=fill, outline="")
+        cy = h / 2
+        if self._image is not None:
+            iw = self._image.width()
+            gap = BTN_GAP if self._text else 0
+            content = iw + gap + self._font.measure(self._text)
+            x = self._padx if self._anchor == "w" else (w - content) / 2
+            self.create_image(x, cy, image=self._image, anchor="w")
+            self.create_text(
+                x + iw + gap, cy, text=self._text, font=self._font, fill=fg, anchor="w"
+            )
+        elif self._anchor == "w":
+            self.create_text(
+                self._padx, cy, text=self._text, font=self._font, fill=fg, anchor="w"
+            )
+        else:
+            self.create_text(
+                w / 2, cy, text=self._text, font=self._font, fill=fg, anchor="center"
+            )
+
+    # -- interaction -------------------------------------------------------- #
+    def _on_enter(self, _e):
+        self._hover = True
+        self._redraw()
+
+    def _on_leave(self, _e):
+        self._hover = False
+        self._redraw()
+
+    def _on_press(self, _e):
+        self._hover = True
+        self._redraw()
+
+    def _on_release(self, e):
+        inside = 0 <= e.x < self.winfo_width() and 0 <= e.y < self.winfo_height()
+        self._hover = False
+        self._redraw()
+        if inside and self._command:
+            self._command()
 
 
 class Tooltip:
@@ -2011,6 +2172,11 @@ class Almathus(tk.Tk):
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
+        # The title is a fixed header, not part of the scrolling column: it is
+        # taller than any single row, and half a drawing clipped at the canvas
+        # edge as it scrolls away reads as a rendering fault rather than motion.
+        self._build_title(f)
+
         # The settings column scrolls when the window is too short to hold it.
         # A packed column taller than its window is not shrunk, it is cut off —
         # and what goes is whatever is packed last, the row of voice/dictation
@@ -2069,8 +2235,6 @@ class Almathus(tk.Tk):
         # covering the operation tiles).
         col = tk.Frame(holder, bg=BG)
         col.pack(expand=True, padx=24, pady=16)
-
-        self._build_title(col)
 
         # -- how many cards (one compact toolbar row) ----------------------- #
         self.count_var = tk.IntVar(value=self.n_cards)
@@ -2163,7 +2327,7 @@ class Almathus(tk.Tk):
                 active_bg=TILE_HOVER_BG,
                 active_fg=TILE_HOVER_FG,
                 padx=20,
-                pady=22,
+                pady=10,
             ).grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="nsew")
 
         footer = tk.Frame(col, bg=BG)
@@ -2308,13 +2472,12 @@ class Almathus(tk.Tk):
         # out a pixel at a time, and that is what made the chips uneven.
         strip = tk.Frame(panel, bg=SURFACE)
         strip.pack(pady=(2, 4))
-        boxes: dict[int, tk.Label] = {}
+        boxes: dict[int, Btn] = {}
 
-        def paint(n: int, hover: bool = False):
+        def paint(n: int):
             on = n in self.allowed
-            boxes[n].config(
-                bg=NUM_ON_BG if on else (NUM_HOVER_BG if hover else NUM_OFF_BG),
-                fg=NUM_ON_FG if on else (TEXT if hover else NUM_OFF_FG),
+            boxes[n].set_colors(
+                NUM_ON_BG if on else NUM_OFF_BG, NUM_ON_FG if on else NUM_OFF_FG
             )
 
         def toggle(n: int):
@@ -2324,27 +2487,35 @@ class Almathus(tk.Tk):
                 self.allowed.discard(n)
             else:
                 self.allowed.add(n)
-            paint(n, hover=True)
+            paint(n)
             # write on every tap: quitting goes through os._exit(), so there is
             # no exit hook late enough to be trusted with this
             save_allowed(self.allowed)
 
+        def command_for(n: int):
+            return lambda: toggle(n)
+
         for n in range(NUM_MIN, NUM_MAX + 1):
             # width in characters, identical for every chip, so "10" does not
             # request more room than "1" and the uniform columns can all match
-            lbl = tk.Label(
-                strip, text=str(n), font=self.f_num, width=2, pady=8, cursor="hand2"
+            lbl = Btn(
+                strip,
+                str(n),
+                command=command_for(n),
+                font=self.f_num,
+                width=2,
+                padx=10,
+                pady=8,
+                radius=8,
+                active_bg=NUM_HOVER_BG,
+                active_fg=TEXT,
             )
             lbl.grid(
                 row=0,
                 column=n - NUM_MIN,
-                sticky="nsew",
                 pady=8,
                 padx=(8 if n == NUM_MIN else 4, 8 if n == NUM_MAX else 4),
             )
-            lbl.bind("<Button-1>", _for_key(n, toggle))
-            lbl.bind("<Enter>", _for_key(n, lambda k: paint(k, hover=True)))
-            lbl.bind("<Leave>", _for_key(n, paint))
             boxes[n] = lbl
             paint(n)
 
@@ -2717,13 +2888,26 @@ class Almathus(tk.Tk):
         # the reading ends it shows GO! in place and then the question again, so
         # the child's eyes — already on the card — see the moment to answer.
         width, height = self._pill_px()
-        pill = tk.Frame(body, bg=CARD_BG, width=width, height=height)
+        pill = tk.Canvas(
+            body, width=width, height=height, bg=BG, highlightthickness=0, bd=0
+        )
         pill.grid(row=1, column=0, pady=(0, 8))
-        pill.pack_propagate(False)  # stay this size whatever the text
+        # Rounded like the buttons; the rule itself stays a plain sized canvas so
+        # the width is fixed and the shorter GO! cannot make the pill retract.
+        _round_rect(
+            pill,
+            0,
+            0,
+            width,
+            height,
+            min(BTN_RADIUS * 2, height // 2),
+            fill=CARD_BG,
+            outline="",
+        )
         self.question_lbl = tk.Label(
             pill, text=card.text, font=self.f_huge, fg=TEXT, bg=CARD_BG
         )
-        self.question_lbl.pack(expand=True)
+        pill.create_window(width // 2, height // 2, window=self.question_lbl)
 
         inputs = tk.Frame(body, bg=BG)
         inputs.grid(row=2, column=0, pady=(0, 8))

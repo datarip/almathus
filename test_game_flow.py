@@ -342,21 +342,26 @@ def test_voiced_intro_tip():
 
 
 def test_card_hint_waits_then_go():
-    """A dictated card says wait, then cues GO when the question ends."""
+    """A dictated card says wait, flashes GO in the pill, then shows the question."""
     app = start(voice=True, dictation=True)
+    card = app.current
     try:
-        assert app.card_hint is not None, "no wait/GO cue on a dictated card"
+        assert app.card_hint is not None, "no wait cue on a dictated card"
         assert app.card_hint.cget("text") == almathus.T("wait_answer")
+        assert app.question_lbl.cget("text") == card.text
         assert not app.stt.listening(), "the mic opened before the question ended"
 
         app.tts.finish()  # the question has finished being read
-        assert wait_for(app, app.stt.listening, 5), (
-            "the mic never opened after the question"
+        assert wait_for(
+            app, lambda: app.question_lbl.cget("text") == almathus.T("go"), 5
+        ), "the pill never showed GO"
+        assert str(app.question_lbl.cget("fg")) == almathus.GOOD
+        assert app.card_hint.cget("text") == "", "the wait cue was not cleared"
+        assert app.stt.listening(), "the mic did not open with GO"
+
+        assert wait_for(app, lambda: app.question_lbl.cget("text") == card.text, 3), (
+            "the question did not come back after GO"
         )
-        assert app.card_hint.cget("text") == almathus.T("go"), (
-            "no GO cue after the question"
-        )
-        assert str(app.card_hint.cget("fg")) == almathus.GOOD
     finally:
         app._shutdown()
         app.destroy()

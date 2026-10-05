@@ -2646,7 +2646,10 @@ class Almathus(tk.Tk):
         body.rowconfigure(0, weight=1)  # top spacer
         body.rowconfigure(4, weight=1)  # bottom spacer (equal -> group centered)
 
-        tk.Label(
+        # The question pill. It also carries the GO! cue: when the reading ends
+        # the pill flashes GO! in place and then shows the question again, so the
+        # child's eyes — already on the card — see the moment to answer.
+        self.question_lbl = tk.Label(
             body,
             text=card.text,
             font=self.f_huge,
@@ -2654,7 +2657,8 @@ class Almathus(tk.Tk):
             bg=CARD_BG,
             padx=80,
             pady=12,
-        ).grid(row=1, column=0, pady=(0, 8))
+        )
+        self.question_lbl.grid(row=1, column=0, pady=(0, 8))
 
         inputs = tk.Frame(body, bg=BG)
         inputs.grid(row=2, column=0, pady=(0, 8))
@@ -2789,21 +2793,21 @@ class Almathus(tk.Tk):
         self._voice_arm(card)
 
     def _show_go_hint(self, card: Card) -> None:
-        """Turn the wait-instruction into a big green GO!, then let it fade."""
-        lbl = self.card_hint
-        if lbl is None or not lbl.winfo_exists():
+        """Flash GO! in the question pill, then put the question back."""
+        hint = self.card_hint
+        if hint is not None and hint.winfo_exists():
+            hint.config(text="")  # the wait is over; the pill carries the cue now
+        pill = self.question_lbl
+        if not pill.winfo_exists():
             return
-        # Same size and colour as the countdown's GO!, so the two read as the
-        # same cue: the moment it is the child's turn.
-        lbl.config(text=T("go"), fg=GOOD, font=self.f_giant)
-        self.after(1500, lambda: self._clear_hint(card))
+        pill.config(text=T("go"), fg=GOOD)
+        self.after(1200, lambda: self._restore_question(card))
 
-    def _clear_hint(self, card: Card) -> None:
-        # Only clear the hint that belongs to the card still on screen: a late
-        # timer must not wipe the instruction off the card that replaced it.
-        lbl = self.card_hint
-        if self.current is card and lbl is not None and lbl.winfo_exists():
-            lbl.config(text="")
+    def _restore_question(self, card: Card) -> None:
+        # Only restore the pill that belongs to the card still on screen: a late
+        # timer must not overwrite the question of the card that replaced it.
+        if self.current is card and self.question_lbl.winfo_exists():
+            self.question_lbl.config(text=card.text, fg=TEXT)
 
     def _voice_arm(self, target: Card) -> None:
         """Listen for one spoken answer; re-arms itself until the card changes."""

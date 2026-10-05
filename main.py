@@ -2289,6 +2289,9 @@ class Almathus(tk.Tk):
         self._ui_queue: queue.Queue = queue.Queue()
         self._pump()
 
+        # Measured before the top bar places itself: it needs the band to put
+        # its buttons on the same line as the page headers.
+        self._header_band = self._measure_header_band()
         self._build_topbar()  # the always-visible language chip
         self.container = tk.Frame(self, bg=BG)
         self.container.pack(fill="both", expand=True)
@@ -2920,22 +2923,22 @@ class Almathus(tk.Tk):
             self.topbar,
             T("progress"),
             command=self.show_progress,
-            font=self.f_body,
+            font=self.f_small,
             bg=SURFACE,
             fg=TEXT,
             padx=14,
-            pady=6,
+            pady=7,
         )
         self._chip_image: tk.PhotoImage | None = None
         self._lang_btn = Btn(
             self.topbar,
             "",
             command=self.show_language,
-            font=self.f_body,
+            font=self.f_small,
             bg=SURFACE,
             fg=TEXT,
-            padx=12,
-            pady=6,
+            padx=14,
+            pady=7,
             compound="left",
         )
         self._refresh_lang_chip()
@@ -2954,19 +2957,22 @@ class Almathus(tk.Tk):
         # 24 is the column's own padding, so the buttons line up with the panel
         # edges rather than with the box, which is a hair wider.
         inset = 24
-        pad = 8
-        height = (
-            max(
-                self._progress_btn.winfo_reqheight(),
-                self._lang_btn.winfo_reqheight(),
-            )
-            + 2 * pad
+        pill_h = max(
+            self._progress_btn.winfo_reqheight(),
+            self._lang_btn.winfo_reqheight(),
         )
+        # Sit the two buttons exactly where a page header's pills sit: same 18px
+        # top offset, and the same centring against the title band, so the
+        # navigation does not jump when the child moves between the menu and the
+        # progress or language screens.
+        pad_top = 18 + max(0, (self._header_band - pill_h) // 2)
+        pad_bottom = 6
+        height = pill_h + pad_top + pad_bottom
         if self.topbar.winfo_height() != height:
             self.topbar.configure(height=height)
-        self._progress_btn.place(x=left + inset, y=pad)
+        self._progress_btn.place(x=left + inset, y=pad_top)
         self._lang_btn.place(
-            x=left + box - inset - self._lang_btn.winfo_reqwidth(), y=pad
+            x=left + box - inset - self._lang_btn.winfo_reqwidth(), y=pad_top
         )
 
     def _refresh_lang_chip(self) -> None:
@@ -2976,6 +2982,27 @@ class Almathus(tk.Tk):
         self._chip_image = flag_image(LANG, 18)
         self._lang_btn.config(image=self._chip_image, text=name)
         self._place_topbar()
+
+    def _measure_header_band(self) -> int:
+        """Height of a page header's content row.
+
+        The tallest thing in a header is its title, so that is the band the
+        pills centre against. Measured from the progress title once, at startup,
+        because it carries an emoji that lifts the line above the font's own
+        line height — the number the top bar needs to place its buttons on the
+        same line the page headers will use.
+        """
+        probe = tk.Label(self, text=T("progress_title"), font=self.f_title)
+        probe.update_idletasks()
+        band = probe.winfo_reqheight()
+        probe.destroy()
+        return band
+
+    def _size_header_bar(self, bar: tk.Frame) -> None:
+        """Give a page header the shared band height so its pills sit at the
+        same y as the top bar's, whichever page is showing."""
+        bar.configure(height=self._header_band)
+        bar.pack_propagate(False)
 
     def show_language(self) -> None:
         """The app-language page — a screen of its own, not a popup.
@@ -2993,6 +3020,7 @@ class Almathus(tk.Tk):
 
         bar = tk.Frame(f, bg=BG)
         bar.pack(fill="x", padx=28, pady=(18, 6))
+        self._size_header_bar(bar)
         Btn(
             bar,
             T("back"),
@@ -4029,6 +4057,7 @@ class Almathus(tk.Tk):
 
         bar = tk.Frame(f, bg=BG)
         bar.pack(fill="x", padx=28, pady=(18, 6))
+        self._size_header_bar(bar)
         Btn(
             bar,
             T("back"),

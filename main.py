@@ -2319,6 +2319,7 @@ class Almathus(tk.Tk):
         self.f_giant = scaled(120, "bold")
         self.f_huge = scaled(90, "bold")
         self.f_big = scaled(48, "bold")
+        self.f_logo = scaled(36, "bold")  # the menu's wordmark: between big and title
         self.f_mode = scaled(30, "bold")
         self.f_title = scaled(28, "bold")
         self.f_body = scaled(20)
@@ -2567,11 +2568,11 @@ class Almathus(tk.Tk):
         # in the top bar, where they are reachable from every screen and shown
         # once: a flag for the language, a chart for the stats.
         footer = tk.Frame(col, bg=BG)
-        footer.pack(pady=(18, 4))
+        footer.pack(fill="x", pady=(18, 2))
         self._build_voice_toggle(footer)
         self._build_dictation_toggle(footer)
         self._build_girly_toggle(footer)
-        self._wrap_footer(footer)
+        self._layout_footer(footer)
         self._fit_column(col)
         # Tk delivers a wheel event to the widget under the pointer and its own
         # bindtags only — it never walks up to a parent — so binding the canvas
@@ -2630,26 +2631,36 @@ class Almathus(tk.Tk):
                 )
             self.update_idletasks()
 
-    def _wrap_footer(self, footer) -> None:
-        """Fold the footer onto a second row when one row is wider than the screen.
+    def _layout_footer(self, footer) -> None:
+        """Lay the switches out on the page box, sharing its width evenly.
 
-        A packed row that does not fit is not shrunk, it is cut off at both ends
-        — the outermost options simply stop being there, with nothing to say they
-        ever were. How wide the row comes out cannot be predicted: the labels are
-        translated and the fonts are scaled to the display, so it is measured and
-        folded only when it has to be.
+        They used to be a packed, content-sized row centred under the panels, so
+        they floated in the middle at their own width while everything else met
+        the box's edges. They now divide the same width in equal columns — and
+        fold onto a second row when the box is too narrow to hold them — so the
+        footer reads as the third row of the same grid as the tiles above it.
         """
         buttons = footer.winfo_children()
-        footer.update_idletasks()
-        if len(buttons) < 2 or footer.winfo_reqwidth() <= self._page_room():
+        if not buttons:
             return
+        footer.update_idletasks()
+        if len(buttons) == 1:
+            buttons[0].pack_forget()
+            buttons[0].pack(side="left", padx=8)
+            return
+        per_row = (
+            len(buttons)
+            if footer.winfo_reqwidth() <= self._page_room()
+            else (len(buttons) + 1) // 2
+        )
         # Pack and grid cannot share a parent, so the row is unpacked first and
         # every button re-placed; both geometry managers are the frame's own.
-        per_row = (len(buttons) + 1) // 2
-        for b in buttons:  # every one of them, before the first grid() call
+        for b in buttons:
             b.pack_forget()
+        for c in range(per_row):
+            footer.grid_columnconfigure(c, weight=1, uniform="foot")
         for i, b in enumerate(buttons):
-            b.grid(row=i // per_row, column=i % per_row, padx=8, pady=4, sticky="ew")
+            b.grid(row=i // per_row, column=i % per_row, sticky="ew", padx=10, pady=6)
 
     def _page_room(self) -> int:
         """Usable width of the page box, less the column's own padding."""
@@ -2681,7 +2692,7 @@ class Almathus(tk.Tk):
         window that is the difference between seeing them all and scrolling."""
         row = tk.Frame(parent, bg=BG)
         row.pack(pady=(2, 0))
-        font = self.f_title
+        font = self.f_logo
         icon = self._title_image(font)
         if icon is not None:
             # Tk keeps no reference of its own to an image: drop ours and the

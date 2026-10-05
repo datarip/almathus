@@ -4122,19 +4122,23 @@ class Almathus(tk.Tk):
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
-        # The title and the two buttons share the top line — back on the left,
-        # title beside it, PDF and the session count against the right — and
-        # only the month filter and legend wrap onto the line below. It is the
-        # filters that do not fit beside the title, not the buttons.
+        # The title gets its own, centred line; the three controls — back, the
+        # month filter and PDF — share the row beneath it, with the count
+        # against the right edge; the chart's legend gets the row below that.
         bar = tk.Frame(f, bg=BG)
         bar.pack(fill="x", padx=28, pady=(18, 6))
         title_row = tk.Frame(bar, bg=BG)
         title_row.pack(fill="x")
-        filters = tk.Frame(bar, bg=BG)
-        filters.pack(fill="x", pady=(8, 0))
+        tk.Label(
+            title_row, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG
+        ).pack()
+        btn_row = tk.Frame(bar, bg=BG)
+        btn_row.pack(fill="x", pady=(8, 0))
+        legend_row = tk.Frame(bar, bg=BG)
+        legend_row.pack(fill="x", pady=(8, 0))
 
         Btn(
-            title_row,
+            btn_row,
             T("back"),
             command=self.show_settings,
             font=self.f_small,
@@ -4143,12 +4147,9 @@ class Almathus(tk.Tk):
             padx=14,
             pady=7,
         ).pack(side="left")
-        tk.Label(
-            title_row, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG
-        ).pack(side="left", padx=20)
         # Reconfigured on every filter change: the count belongs to what is shown.
         self._n_label = tk.Label(
-            title_row,
+            btn_row,
             text=T("n_sessions", n=len(sessions)),
             font=self.f_small,
             fg=MUTED,
@@ -4162,9 +4163,9 @@ class Almathus(tk.Tk):
             )
             return
 
-        # Export lives against the right edge of the title line.
+        # Export lives against the right edge of the controls line.
         pdf_btn = Btn(
-            title_row,
+            btn_row,
             T("pdf_button"),
             command=self._export_pdf,
             font=self.f_small,
@@ -4176,7 +4177,7 @@ class Almathus(tk.Tk):
         pdf_btn.pack(side="right", padx=(0, 14))
         Tooltip(pdf_btn, T("pdf_tip"), self.f_hint)
         self._pdf_status = tk.Label(
-            title_row, text="", font=self.f_small, fg=MUTED, bg=BG
+            btn_row, text="", font=self.f_small, fg=MUTED, bg=BG
         )
         self._pdf_status.pack(side="right", padx=(0, 12))
 
@@ -4196,7 +4197,7 @@ class Almathus(tk.Tk):
         )
         self._all_sessions = sessions
         picker = Dropdown(
-            filters,
+            btn_row,
             [(None, T("month_all"))] + [(ym, month_label(ym)) for ym in listed],
             self._month,
             self._select_month,
@@ -4206,14 +4207,14 @@ class Almathus(tk.Tk):
             padx=14,
             pady=7,
         )
-        picker.pack(side="left")
+        picker.pack(side="left", padx=(12, 0))
         Tooltip(picker, T("month_tip"), self.f_hint)
 
-        # The chart's key, beside the filter: which colour is which curve. The
-        # grade key only appears while the month on show has a grade to draw, so
-        # a legend never promises a line that is not there.
-        legend = tk.Frame(filters, bg=BG)
-        legend.pack(side="left", padx=(20, 0))
+        # The chart's key, on its own line under the controls: which colour is
+        # which curve. The grade key only appears while the month on show has a
+        # grade to draw, so a legend never promises a line that is not there.
+        legend = tk.Frame(legend_row, bg=BG)
+        legend.pack(side="left")
         self._legend_key(legend, ACCENT, T("legend_time")).pack(side="left")
         self._legend_grade = self._legend_key(legend, CHART_GRADE, T("legend_grade"))
 

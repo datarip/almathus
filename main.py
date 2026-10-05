@@ -978,12 +978,22 @@ def rounded_photo(
         if 0 <= ox0 <= ox1 < w:
             start = base + ox0 * 4
             px[start : start + (ox1 - ox0 + 1) * 4] = border4 * (ox1 - ox0 + 1)
-        ix0, ix1 = math.ceil(left_i), math.ceil(right_i) - 1
+        # The inner rounded rect only exists between the top and bottom border
+        # bands: painting fill on those rows would erase the horizontal borders
+        # and leave only the corners and side edges — a half-drawn outline.
+        inner_row = not bw or bw <= y <= h - bw - 1
+        ix0, ix1 = (math.ceil(left_i), math.ceil(right_i) - 1) if inner_row else (1, 0)
         if 0 <= ix0 <= ix1 < w:
             start = base + ix0 * 4
             px[start : start + (ix1 - ix0 + 1) * 4] = fill4 * (ix1 - ix0 + 1)
         # the antialiased columns at the (up to four) vertical edges of the runs
-        edges = (left_o, right_o) if not bw else (left_o, left_i, right_i, right_o)
+        edges: tuple[float, ...]
+        if not bw:
+            edges = (left_o, right_o)
+        elif inner_row:
+            edges = (left_o, left_i, right_i, right_o)
+        else:
+            edges = (left_o, right_o)
         for edge in edges:
             for x in range(max(0, math.floor(edge) - 1), min(w, math.ceil(edge) + 2)):
                 a_out = _rrect_alpha(x, y, w, h, r, 0, 0)

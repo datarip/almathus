@@ -1270,9 +1270,17 @@ class Btn(tk.Canvas):
                 self._padx, cy, text=self._text, font=self._font, fill=fg, anchor="w"
             )
         else:
-            self.create_text(
+            item = self.create_text(
                 w / 2, cy, text=self._text, font=self._font, fill=fg, anchor="center"
             )
+            # Anchor "center" centres the text's *layout* box, which leaves a
+            # lone glyph like "+" or "−" a pixel or two off: the em box has more
+            # ascent than descent, and the glyph does not fill it. Nudge by the
+            # ink box so the mark the child sees sits dead in the middle.
+            box = self.bbox(item)
+            if box is not None:
+                x0, y0, x1, y1 = box
+                self.move(item, w / 2 - (x0 + x1) / 2, cy - (y0 + y1) / 2)
 
     # -- interaction -------------------------------------------------------- #
     def _on_enter(self, _e):

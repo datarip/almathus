@@ -108,6 +108,10 @@ STRINGS = {
         "voice_off_hint": "🎤 Voix indisponible : {reason}",
         "listening": "🎧 à l'écoute…",
         "thinking": "🤔 …",
+        "wait_answer": "Attends la fin de la question, puis réponds…",
+        "articulate_tip_title": "🗣️ Avant de commencer",
+        "articulate_tip": "Parle fort et articule bien, comme si tu parlais à quelqu'un juste à côté de toi.",
+        "articulate_tip_go": "Attends d'entendre « GO ! » avant de répondre.",
         "didnt_get": "Je n'ai pas compris, réessaie 🎤",
         "too_quiet": "🔊 Plus fort ! Je t'entends à peine",
         "mic_denied": "Micro non autorisé — Réglages ▸ Confidentialité ▸ Microphone",
@@ -173,6 +177,10 @@ STRINGS = {
         "voice_off_hint": "🎤 Voice unavailable: {reason}",
         "listening": "🎧 listening…",
         "thinking": "🤔 …",
+        "wait_answer": "Wait for the question to end, then answer…",
+        "articulate_tip_title": "🗣️ Before you start",
+        "articulate_tip": "Speak up and say each number clearly, as if talking to someone right beside you.",
+        "articulate_tip_go": "Wait until you hear \u201cGO!\u201d before answering.",
         "didnt_get": "I didn't catch that, try again 🎤",
         "too_quiet": "🔊 Louder! I can barely hear you",
         "mic_denied": "Mic not allowed — Settings ▸ Privacy ▸ Microphone",
@@ -2462,6 +2470,50 @@ class Almathus(tk.Tk):
             # what it was then. Re-measured here, it lands well inside the
             # countdown; the room keeps being tracked between answers after that.
             self.stt.calibrate()
+            # Answering by voice: remind the child to speak clearly before the
+            # countdown, while the mic is already warming up in the background.
+            self.show_articulation_tip()
+        else:
+            self._begin_countdown()
+
+    def show_articulation_tip(self) -> None:
+        """One screen telling the child to speak clearly, before a voiced game.
+
+        Shown only when answers are captured by voice; the countdown starts when
+        they tap GO, so the reminder is read at the child's own pace.
+        """
+        self._clear()
+        f = self.tip_frame = tk.Frame(self.container, bg=BG)
+        f.pack(fill="both", expand=True)
+        tk.Label(
+            f, text=T("articulate_tip_title"), font=self.f_title, fg=ACCENT, bg=BG
+        ).pack(pady=(70, 14))
+        # The "wait for GO" line is only true when the card is read aloud; with
+        # dictation off there is no per-question cue to wait for.
+        tip = T("articulate_tip")
+        if self.dictation_enabled.get() and self.tts and self.tts.available():
+            tip = f"{tip} {T('articulate_tip_go')}"
+        tk.Label(
+            f,
+            text=tip,
+            font=self.f_body,
+            fg=TEXT,
+            bg=BG,
+            wraplength=560,
+            justify="center",
+        ).pack(padx=40)
+        Btn(
+            f,
+            T("go"),
+            command=self._begin_countdown,
+            font=self.f_mode,
+            bg=ACCENT,
+            fg=INK,
+            padx=30,
+            pady=14,
+        ).pack(pady=38)
+
+    def _begin_countdown(self) -> None:
         # Both the count and the sample have a run-up to their GO! — three ticks
         # on screen, COUNTDOWN_GO_AT in the file — and lining the two up is a
         # matter of making the shorter one wait for the longer. This sample opens
@@ -2549,6 +2601,11 @@ class Almathus(tk.Tk):
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
+        voice_on = bool(self.voice_enabled.get() and self.stt and self.stt.available())
+        dictation_on = bool(
+            self.dictation_enabled.get() and self.tts and self.tts.available()
+        )
+
         # header (pinned top)
         header = (
             T("retry_round")
@@ -2558,6 +2615,18 @@ class Almathus(tk.Tk):
         tk.Label(
             f, text=header, font=self.f_title, fg=ACCENT if in_retry else MUTED, bg=BG
         ).pack(side="top", pady=(20, 0))
+
+        # The child answers too early, while the question is still being read.
+        # This cue sits above the question and says what to do: wait for the end
+        # of the question, then a green GO! once the mic opens. Shown only when
+        # the question is read aloud into a live mic; without dictation there is
+        # nothing to wait for.
+        self.card_hint = None
+        if voice_on and dictation_on:
+            self.card_hint = tk.Label(
+                f, text=T("wait_answer"), font=self.f_small, fg=MUTED, bg=BG
+            )
+            self.card_hint.pack(side="top", pady=(6, 0))
 
         # timers (pinned bottom, always fully visible)
         bar = tk.Frame(f, bg=BG)
@@ -2586,11 +2655,6 @@ class Almathus(tk.Tk):
             padx=80,
             pady=12,
         ).grid(row=1, column=0, pady=(0, 8))
-
-        voice_on = bool(self.voice_enabled.get() and self.stt and self.stt.available())
-        dictation_on = bool(
-            self.dictation_enabled.get() and self.tts and self.tts.available()
-        )
 
         inputs = tk.Frame(body, bg=BG)
         inputs.grid(row=2, column=0, pady=(0, 8))
@@ -2643,7 +2707,7 @@ class Almathus(tk.Tk):
         # only shown, so there is nothing to wait for — arm the mic on the spot.
         if voice_on:
             if dictation_on:
-                self._speak_operation(card, then=lambda: self._voice_arm(card))
+                self._speak_operation(card, then=lambda: self._after_question(card))
             else:
                 self._voice_arm(card)
             self._voice_watch(card)
@@ -2716,6 +2780,28 @@ class Almathus(tk.Tk):
         if self.card_start is None:
             return 0.0
         return max(0.0, time.perf_counter() - self.card_start)
+
+    def _after_question(self, card: Card) -> None:
+        """The question has finished being read: cue GO! and open the mic."""
+        if self.current is not card:
+            return  # the reading was cut off by the next card; nothing to cue
+        self._show_go_hint(card)
+        self._voice_arm(card)
+
+    def _show_go_hint(self, card: Card) -> None:
+        """Turn the wait-instruction into a green GO!, then let it fade."""
+        lbl = self.card_hint
+        if lbl is None or not lbl.winfo_exists():
+            return
+        lbl.config(text=T("go"), fg=GOOD)
+        self.after(1500, lambda: self._clear_hint(card))
+
+    def _clear_hint(self, card: Card) -> None:
+        # Only clear the hint that belongs to the card still on screen: a late
+        # timer must not wipe the instruction off the card that replaced it.
+        lbl = self.card_hint
+        if self.current is card and lbl is not None and lbl.winfo_exists():
+            lbl.config(text="")
 
     def _voice_arm(self, target: Card) -> None:
         """Listen for one spoken answer; re-arms itself until the card changes."""

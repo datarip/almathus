@@ -121,7 +121,7 @@ class FakeTTS:
         self._on_done = None
 
 
-def start(voice: bool, dictation: bool = False):
+def start(voice: bool, dictation: bool = False, tip: bool = False):
     app = almathus.Almathus()
     # Speech synthesis is always there to be switched on, so that "dictation
     # off" is tested as the choice it is and not as a machine that cannot talk.
@@ -140,7 +140,12 @@ def start(voice: bool, dictation: bool = False):
     app.count_var.set(5)
     app.allowed = {4}
     app.start_game("addition")
-    assert wait_for(app, lambda: app.current is not None), "no card was ever rendered"
+    # A voiced game opens on the "speak clearly" tip and waits for GO; tests
+    # tap through it unless they are the ones checking the tip itself.
+    if voice and not tip:
+        app._begin_countdown()
+    if not tip:
+        assert wait_for(app, lambda: app.current is not None), "no card was rendered"
     return app
 
 
@@ -321,6 +326,42 @@ def test_dictation_modes():
         app.destroy()
 
 
+def test_voiced_intro_tip():
+    """A voiced game opens on the "speak clearly" tip and starts on GO."""
+    app = start(voice=True, dictation=True, tip=True)
+    try:
+        assert app.current is None, "the tip was skipped and a card was dealt"
+        assert app.tip_frame.winfo_exists(), "the tip screen was not shown"
+        app._begin_countdown()  # what the GO button does
+        assert wait_for(app, lambda: app.current is not None), (
+            "GO did not start the game"
+        )
+    finally:
+        app._shutdown()
+        app.destroy()
+
+
+def test_card_hint_waits_then_go():
+    """A dictated card says wait, then cues GO when the question ends."""
+    app = start(voice=True, dictation=True)
+    try:
+        assert app.card_hint is not None, "no wait/GO cue on a dictated card"
+        assert app.card_hint.cget("text") == almathus.T("wait_answer")
+        assert not app.stt.listening(), "the mic opened before the question ended"
+
+        app.tts.finish()  # the question has finished being read
+        assert wait_for(app, app.stt.listening, 5), (
+            "the mic never opened after the question"
+        )
+        assert app.card_hint.cget("text") == almathus.T("go"), (
+            "no GO cue after the question"
+        )
+        assert str(app.card_hint.cget("fg")) == almathus.GOOD
+    finally:
+        app._shutdown()
+        app.destroy()
+
+
 def test_spoken_answer():
     """Which number of an utterance is the answer — and which is the card.
 
@@ -406,6 +447,8 @@ def main() -> int:
         test_voice_flow,
         test_voice_wrong_answer,
         test_dictation_modes,
+        test_voiced_intro_tip,
+        test_card_hint_waits_then_go,
     )
     failures = []
     for test in tests:

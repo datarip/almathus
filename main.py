@@ -2548,6 +2548,18 @@ class Almathus(tk.Tk):
         """
         self.topbar = tk.Frame(self, bg=BG)
         self.topbar.pack(side="top", fill="x")
+        self._populate_topbar()
+
+    def _populate_topbar(self) -> None:
+        """(Re)fill the bar in the current palette.
+
+        The bar is built once, at startup, but the theme can be flipped from the
+        menu long after — so its colours are baked in by rebuilding it on every
+        flip rather than left as the palette that happened to be loaded first.
+        """
+        for w in self.topbar.winfo_children():
+            w.destroy()
+        self.topbar.config(bg=BG)
         Btn(
             self.topbar,
             T("progress"),
@@ -2676,10 +2688,12 @@ class Almathus(tk.Tk):
         def flip():
             apply_theme("default" if THEME == "girly" else "girly")
             write_prefs(theme=THEME)
-            # The window and its container outlive every screen, so they are
-            # repainted by hand; everything else is rebuilt from the new palette.
+            # The window, its container and the top bar outlive every screen, so
+            # they are repainted by hand; everything else is rebuilt from the new
+            # palette, which the bar's own buttons have to be too.
             self.configure(bg=BG)
             self.container.config(bg=BG)
+            self._populate_topbar()
             self.show_settings()
 
         btn._command = flip

@@ -2793,8 +2793,16 @@ class Almathus(tk.Tk):
             for b in buttons:
                 b.pack_forget()
                 b.grid_forget()
-            for c in range(per_row):
-                footer.grid_columnconfigure(c, weight=1, uniform="foot")
+            # Reset every column, not just the active ones. Lowering the count
+            # used to leave the old columns weighted and `uniform`, so the grid
+            # stayed three columns wide with one button in it — wider than the
+            # footer, which pack then centred and clipped off both edges.
+            for c in range(len(buttons)):
+                footer.grid_columnconfigure(
+                    c,
+                    weight=1 if c < per_row else 0,
+                    uniform="foot" if c < per_row else "",
+                )
             for i, b in enumerate(buttons):
                 b.grid(
                     row=i // per_row, column=i % per_row, sticky="ew", padx=pad, pady=6

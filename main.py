@@ -109,6 +109,10 @@ STRINGS = {
         "language_title": "Langue de l'application",
         "language_intro": "Choisissez la langue de l'application et téléchargez son modèle vocal. Il sera conservé pour les prochaines fois.",
         "language_skip": "Continuer sans voix",
+        "language_downloading": "Téléchargement de",
+        "language_once": "Cela n'arrive qu'une fois ; le modèle est conservé pour la prochaine fois.",
+        "language_error": "Impossible d'installer",
+        "language_retry": "Réessayer",
         "voice_off_hint": "🎤 Voix indisponible : {reason}",
         "listening": "🎧 à l'écoute…",
         "thinking": "🤔 …",
@@ -178,6 +182,10 @@ STRINGS = {
         "language_title": "App language",
         "language_intro": "Choose the app language and download its speech model. It is kept for next time.",
         "language_skip": "Continue without voice",
+        "language_downloading": "Downloading",
+        "language_once": "This happens once; the model is kept for next time.",
+        "language_error": "Could not install",
+        "language_retry": "Try again",
         "voice_off_hint": "🎤 Voice unavailable: {reason}",
         "listening": "🎧 listening…",
         "thinking": "🤔 …",
@@ -2120,6 +2128,16 @@ def choose_language_at_startup() -> str | None:
 
 
 class Almathus(tk.Tk):
+    # The language page's widgets and its download queue. Declared here so the
+    # helper methods can be typed; they are built by `show_language`.
+    _lang_body: tk.Frame
+    _lang_status: tk.Label
+    _lang_bar: ttk.Progressbar | None
+    _lang_bytes: tk.Label | None
+    _lang_queue: queue.Queue
+    _lang_installed: set[str]
+    _lang_images: list[tk.PhotoImage]
+
     def __init__(self):
         super().__init__()
         # Rasters belong to the Tcl interpreter that made them: a fresh run may
@@ -2188,6 +2206,8 @@ class Almathus(tk.Tk):
         self._stopping = False  # latched on quit: schedule no more timers
         self._voice_mic_bad = False
         self._pill_size: tuple[int, int] | None = None  # cached question-pill size
+        self._lang_job = None  # the language page's pending download-poll timer
+        self._lang_polling = False
 
         # sound effects (a no-op if no command-line player is installed)
         self.sfx = sfx.Sound(SOUNDS_DIR)
@@ -2349,6 +2369,13 @@ class Almathus(tk.Tk):
         if self._voice_job:
             self.after_cancel(self._voice_job)
             self._voice_job = None
+        # A language download outlives its screen otherwise, and its poll would
+        # touch widgets the next screen has already destroyed.
+        self._lang_polling = False
+        if self._lang_job is not None:
+            with contextlib.suppress(Exception):
+                self.after_cancel(self._lang_job)
+            self._lang_job = None
         if self.stt:
             self.stt.cancel()
         if self.tts:
@@ -2840,7 +2867,7 @@ class Almathus(tk.Tk):
         self._lang_btn = Btn(
             self.topbar,
             "",
-            command=self._open_language_picker,
+            command=self.show_language,
             font=self.f_body,
             bg=SURFACE,
             fg=TEXT,
@@ -2887,16 +2914,194 @@ class Almathus(tk.Tk):
         self._lang_btn.config(image=self._chip_image, text=name)
         self._place_topbar()
 
-    def _open_language_picker(self) -> None:
-        code = LanguagePicker(
-            self,
-            T("language_title"),
-            T("language_intro"),
-            T("language_skip"),
-            current=LANG,
-        ).show()
-        if code and code != LANG:
+    def show_language(self) -> None:
+        """The app-language page — a screen of its own, not a popup.
+
+        Choosing a language is a settings decision, and a modal over the menu
+        covers the very screen whose look it will change. It is built like the
+        stats page: header with Retour, then a scrollable list.
+        """
+        self._clear()
+        self._hush()
+        f = tk.Frame(self.container, bg=BG)
+        f.pack(fill="both", expand=True)
+
+        bar = tk.Frame(f, bg=BG)
+        bar.pack(fill="x", padx=28, pady=(18, 6))
+        Btn(
+            bar,
+            T("back"),
+            command=self.show_settings,
+            font=self.f_body,
+            bg=CARD_BG,
+            fg=TEXT,
+        ).pack(side="left")
+        tk.Label(
+            bar, text=T("language_title"), font=self.f_title, fg=ACCENT, bg=BG
+        ).pack(side="left", padx=20)
+
+        tk.Label(
+            f,
+            text=T("language_intro"),
+            font=self.f_body,
+            fg=MUTED,
+            bg=BG,
+            justify="left",
+            anchor="w",
+            wraplength=760,
+        ).pack(fill="x", padx=28, pady=(2, 10))
+
+        self._lang_body = tk.Frame(f, bg=BG)
+        self._lang_body.pack(fill="both", expand=True, padx=28, pady=(0, 6))
+        self._lang_status = tk.Label(
+            f, text="", font=self.f_small, fg=MUTED, bg=BG, anchor="w"
+        )
+        self._lang_status.pack(fill="x", padx=28, pady=(2, 16))
+
+        self._lang_images: list[tk.PhotoImage] = []
+        self._lang_installed = set(languages.installed())
+        self._lang_queue = queue.Queue()
+        self._lang_polling = False
+        self._lang_job = None
+        self._lang_bar = None
+        self._lang_bytes = None
+        self._show_language_list()
+
+    def _show_language_list(self) -> None:
+        for w in self._lang_body.winfo_children():
+            w.destroy()
+        self._lang_status.config(text="")
+        wrap = tk.Frame(self._lang_body, bg=BG)
+        wrap.pack(fill="both", expand=True)
+        canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0, bd=0, yscrollincrement=1)
+        scroll = tk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        inner = tk.Frame(canvas, bg=BG)
+        win = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
+        inner.bind(
+            "<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        bind_wheel(canvas, lambda px: canvas.yview_scroll(px, "units"))
+        for lang in ordered_languages(LANG):
+            label = f"{lang.endonym}   ·   {lang.english}"
+            if lang.code in self._lang_installed:
+                label += "   ✓"
+            opts: dict = {}
+            image = flag_image(lang.code, 22)
+            if image is not None:
+                self._lang_images.append(image)
+                opts = {"image": image, "compound": "left"}
+            Btn(
+                inner,
+                label,
+                command=lambda code=lang.code: self._choose_language(code),
+                anchor="w",
+                padx=16,
+                pady=12,
+                font=self.f_body,
+                **opts,
+            ).pack(fill="x", pady=3)
+
+    def _choose_language(self, code: str) -> None:
+        if code not in self._lang_installed:
+            self._download_language(code)
+        elif code != LANG:
             self._apply_language(code)
+        else:
+            self.show_settings()
+
+    def _download_language(self, code: str) -> None:
+        lang = languages.BY_CODE[code]
+        for w in self._lang_body.winfo_children():
+            w.destroy()
+        tk.Label(
+            self._lang_body,
+            text=f"{T('language_downloading')} {lang.endonym} …",
+            font=self.f_body,
+            fg=TEXT,
+            bg=BG,
+        ).pack(anchor="w", pady=(6, 10))
+        self._lang_bar = ttk.Progressbar(
+            self._lang_body, mode="determinate", maximum=max(1, lang.size), length=520
+        )
+        self._lang_bar.pack(fill="x")
+        self._lang_bytes = tk.Label(
+            self._lang_body, text="", font=self.f_small, fg=MUTED, bg=BG
+        )
+        self._lang_bytes.pack(anchor="w", pady=(6, 0))
+        self._lang_status.config(text=T("language_once"))
+        self._lang_polling = True
+
+        def progress(done: int, total: int) -> None:
+            self._lang_queue.put(("progress", done, total))
+
+        def work() -> None:
+            try:
+                languages.download(code, progress=progress)
+            except Exception as error:  # noqa: BLE001 - every failure is shown here
+                self._lang_queue.put(("error", code, str(error)))
+            else:
+                self._lang_queue.put(("done", code, None))
+
+        threading.Thread(target=work, daemon=True).start()
+        self._poll_language()
+
+    def _poll_language(self) -> None:
+        self._lang_job = None
+        if not self._lang_polling:
+            return
+        try:
+            while True:
+                kind, first, second = self._lang_queue.get_nowait()
+                if kind == "progress":
+                    if self._lang_bar is not None and self._lang_bytes is not None:
+                        self._lang_bar.config(value=first)
+                        self._lang_bytes.config(
+                            text=f"{first / 1e6:.1f} / {second / 1e6:.1f} MB"
+                        )
+                elif kind == "done":
+                    self._lang_installed.add(first)
+                    self._apply_language(first)
+                    return
+                else:  # "error"
+                    self._lang_polling = False
+                    self._show_language_error(languages.BY_CODE[first], second)
+                    return
+        except queue.Empty:
+            pass
+        if self._lang_polling:
+            self._lang_job = self.after(_DOWNLOAD_POLL_MS, self._poll_language)
+
+    def _show_language_error(self, lang: languages.Language, message: str) -> None:
+        for w in self._lang_body.winfo_children():
+            w.destroy()
+        tk.Label(
+            self._lang_body,
+            text=f"{T('language_error')} {lang.endonym}.",
+            font=self.f_body,
+            fg=TEXT,
+            bg=BG,
+        ).pack(anchor="w", pady=(6, 4))
+        tk.Label(
+            self._lang_body,
+            text=message,
+            font=self.f_small,
+            fg=MUTED,
+            bg=BG,
+            wraplength=620,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 12))
+        Btn(
+            self._lang_body,
+            T("language_retry"),
+            command=self._show_language_list,
+            font=self.f_body,
+            bg=CARD_BG,
+            fg=TEXT,
+        ).pack(anchor="w")
 
     def _apply_language(self, code: str) -> None:
         """Switch the running app to another language.

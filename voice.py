@@ -885,17 +885,43 @@ class SpeechInput:
         return self._busy and not self._cancel.is_set() and not self._stopped
 
     def cancel(self):
-        """End the current listening session (the card is over): the mic closes,
-        so the next card starts on a clean stream and the mic light goes out."""
+        """End the current listening session (the card is over).
+
+        Deliberately does NOT close the stream. Closing PortAudio from the Tk
+        thread while the audio callback is running is what could deadlock
+        CoreAudio and wedge the whole app mid-game; the stream is kept for the
+        next card and only torn down off the UI thread — see ``release``.
+        """
         self._cancel.set()
-        self._close_stream()
+
+    def release(self):
+        """Close the mic when the game is left (menu, recap, stats).
+
+        The teardown runs on a worker thread: even a stubborn CoreAudio close can
+        then only strand that thread, never the UI, which is free to keep drawing.
+        """
+        self._cancel.set()
+        self._request_close()
 
     def stop(self):
-        """Stop any in-progress capture and release the microphone right away
-        (so the OS mic-in-use indicator turns off when the app quits)."""
-        self._stopped = True  # prevent the continuous loop from reopening it
+        """Stop capture and release the microphone (used on quit / language
+        change). Never blocks the caller: the close happens on a worker."""
+        self._stopped = True
         self._cancel.set()
-        self._close_stream()
+        self._request_close()
+
+    def _request_close(self):
+        """Tear the stream down under the mic lock, on a thread we own."""
+
+        def work():
+            if not self._mic_lock.acquire(timeout=5.0):
+                return  # a capture is still using it; it will close on its own
+            try:
+                self._close_stream()
+            finally:
+                self._mic_lock.release()
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _close_stream(self):
         s = self._active_stream
@@ -942,22 +968,28 @@ class SpeechInput:
         and breaks speech detection). Registers an atexit restore for any exit."""
         if sys.platform != "darwin" or self._boosted:
             return
-        try:
-            subprocess.run(  # noqa: S603 - argv list; level is coerced to int
-                ["osascript", "-e", f"set volume input volume {int(level)}"],  # noqa: S607
-                timeout=3,
-                capture_output=True,
-                check=False,  # a refused volume change is not worth an exception
-            )
-            self._boosted = True
-            import atexit
 
-            atexit.register(
-                self.restore_input_volume
-            )  # covers X, Quit, Ctrl-C, crash-exit
-            _dbg(f"boosted macOS input volume to {level}")
-        except Exception as e:
-            _dbg("input volume boost failed:", repr(e))
+        # On a worker: `osascript` can take a moment, and the game starts with
+        # this call — a slow answer must not hold the countdown frozen.
+        def work():
+            try:
+                subprocess.run(  # noqa: S603 - argv list; level is coerced to int
+                    ["osascript", "-e", f"set volume input volume {int(level)}"],  # noqa: S607
+                    timeout=3,
+                    capture_output=True,
+                    check=False,  # a refused volume change is not worth an exception
+                )
+                self._boosted = True
+                import atexit
+
+                atexit.register(
+                    self.restore_input_volume
+                )  # covers X, Quit, Ctrl-C, crash-exit
+                _dbg(f"boosted macOS input volume to {level}")
+            except Exception as e:
+                _dbg("input volume boost failed:", repr(e))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def restore_input_volume(self, level: int = 50):
         """Put the mic input gain back to a neutral 50% on exit — only if we raised
@@ -1419,6 +1451,14 @@ class SpeechInput:
         if self._cancel.is_set():  # cancel() raced with the open
             self._close_stream()
             return None
+        # The mic stays open between cards, so drop anything the stream gathered
+        # while nothing was listening, or it would arrive as the pre-roll of this
+        # capture and be judged as part of the child's answer.
+        while not self._audio_q.empty():
+            try:
+                self._audio_q.get_nowait()
+            except queue.Empty:
+                break
         block_secs = blk / sr
         pre = int(0.25 / block_secs)  # keep a little before the onset
         post = int(0.25 / block_secs)  # ...and a little after the tail

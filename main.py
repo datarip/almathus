@@ -2391,6 +2391,8 @@ class Almathus(tk.Tk):
     def show_settings(self):
         self._clear()
         self._hush()  # leaving the recap: the fanfare goes with it
+        if self.stt:
+            self.stt.release()  # off the game: let the mic go (on a worker)
         self._show_topbar()
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
@@ -2923,6 +2925,8 @@ class Almathus(tk.Tk):
         """
         self._clear()
         self._hush()
+        if self.stt:
+            self.stt.release()
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
@@ -3790,6 +3794,8 @@ class Almathus(tk.Tk):
     # ------------------------------------------------------------------ #
     def show_recap(self):
         self._clear()
+        if self.stt:
+            self.stt.release()
         total_time = self._elapsed()
         cards = self.results
         n = len(cards)
@@ -3947,6 +3953,8 @@ class Almathus(tk.Tk):
     def show_progress(self):
         self._clear()
         self._hush()  # ditto — this screen is for reading, not cheering
+        if self.stt:
+            self.stt.release()
         sessions = resultslog.load_sessions()
 
         f = tk.Frame(self.container, bg=BG)

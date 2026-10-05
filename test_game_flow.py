@@ -71,6 +71,9 @@ class FakeSTT:
     def cancel(self):
         self._listening = False
 
+    def release(self):
+        self._listening = False
+
     def stop(self):
         self._listening = False
 

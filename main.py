@@ -35,6 +35,7 @@ from tkinter import filedialog
 from tkinter import font as tkfont
 from typing import Any, Literal
 
+import languages
 import pdfreport
 import results as resultslog
 import sfx
@@ -67,7 +68,10 @@ RANGES = {
 # 0 is excluded: it would make division undefined and +0 / ×0 pointless.
 NUM_MIN, NUM_MAX = 1, 10
 
-LANG = "fr"  # default language; "en" also supported
+# The language the app runs in. Only fr/en have translated strings today; the
+# others fall back to English in T() while their voice/number support is real.
+DEFAULT_LANG = "fr"  # used until a language is chosen and its model installed
+LANG = DEFAULT_LANG  # resolved at startup by resolve_language()
 
 STRINGS = {
     "fr": {
@@ -245,7 +249,9 @@ MONTHS = {
 
 
 def T(key: str, **kw) -> str:
-    s = STRINGS[LANG].get(key, key)
+    # A language with no translated strings yet falls back to English rather
+    # than to raw keys: a speakable setup and settings screen beats a cryptic one.
+    s = STRINGS.get(LANG, STRINGS["en"]).get(key, key)
     return s.format(**kw) if kw else s
 
 
@@ -337,7 +343,7 @@ def month_label(ym: tuple[int, int] | None) -> str:
     """
     if ym is None:
         return T("month_all")
-    name = MONTHS[LANG][ym[1] - 1]
+    name = MONTHS.get(LANG, MONTHS["en"])[ym[1] - 1]
     return f"{name[:1].upper()}{name[1:]} {ym[0]}"
 
 
@@ -550,6 +556,41 @@ def load_dictation() -> bool:
     child who is still learning to read the signs needs to hear the card, and
     that is the mode the game was built around."""
     return bool(read_prefs().get("dictation", True))
+
+
+def load_language() -> str | None:
+    """The language chosen at setup, or None if the app has never been set up."""
+    value = read_prefs().get("language")
+    return value if isinstance(value, str) and value in languages.BY_CODE else None
+
+
+def save_language(code: str) -> None:
+    """Remember the language so the next launch starts in it."""
+    write_prefs(language=code)
+
+
+def installed_languages() -> list[str]:
+    """Registered languages whose Vosk model is already on disk."""
+    return languages.installed()
+
+
+def resolve_language() -> str:
+    """Choose the startup language, set it globally, and return it.
+
+    The saved language wins when its model is actually installed — that is the
+    ordinary case on every launch after setup. Otherwise the first installed
+    model is used, and failing that the default. The setup screen replaces the
+    last two fallbacks by asking, once it is wired in.
+    """
+    saved = load_language()
+    if saved is not None and languages.is_installed(saved):
+        chosen = saved
+    else:
+        available = installed_languages()
+        chosen = available[0] if available else (saved or DEFAULT_LANG)
+    global LANG  # noqa: PLW0603 - the one app-wide setting, assigned once here
+    LANG = chosen
+    return chosen
 
 
 # --------------------------------------------------------------------------- #
@@ -2232,7 +2273,7 @@ class Almathus(tk.Tk):
             if then:
                 then()
             return
-        word = OP_SPOKEN[LANG][card.mode]
+        word = OP_SPOKEN.get(LANG, OP_SPOKEN["en"])[card.mode]
         phrase = f"{card.a} {word} {card.b}"
         # Each reading is numbered, because stopping a sentence reports through
         # the same callback as finishing one: without this, the tail of the
@@ -2985,6 +3026,7 @@ class Almathus(tk.Tk):
 
 
 def main():
+    resolve_language()  # sets the module's LANG before any widget reads it
     app = Almathus()
     try:
         app.mainloop()

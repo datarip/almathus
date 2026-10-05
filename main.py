@@ -24,6 +24,7 @@ import os
 import queue
 import random
 import signal
+import threading
 import time
 import tkinter as tk
 import traceback
@@ -31,7 +32,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from tkinter import filedialog
+from tkinter import filedialog, ttk
 from tkinter import font as tkfont
 from typing import Any, Literal
 
@@ -572,6 +573,15 @@ def save_language(code: str) -> None:
 def installed_languages() -> list[str]:
     """Registered languages whose Vosk model is already on disk."""
     return languages.installed()
+
+
+def needs_language_setup() -> bool:
+    """True when the app has no speech model at all yet, so setup must run.
+
+    A language whose model is present launches straight into it; only a totally
+    empty store — the true first run, or a user who removed every model — asks.
+    """
+    return not installed_languages()
 
 
 def resolve_language() -> str:
@@ -1445,6 +1455,280 @@ class TimeChart(tk.Canvas):
                 tags="tip",
             )
         self.create_oval(x - 6, y - 6, x + 6, y + 6, outline=TEXT, width=2, tags="tip")
+
+
+# --------------------------------------------------------------------------- #
+# First-run language setup
+# --------------------------------------------------------------------------- #
+
+_DOWNLOAD_POLL_MS = 80
+
+
+def flag_image(code: str, height: int) -> tk.PhotoImage | None:
+    """A language's flag as a Tk image, or None when the asset is not there.
+
+    Tk 9 rasterizes the bundled SVG itself, exactly as the title art does, so a
+    missing flag file — or Tk 8, which cannot read SVG — degrades to plain text
+    with no error. Assets arrive in a later step; until then every row is text.
+    """
+    lang = languages.BY_CODE.get(code)
+    if lang is None or not lang.flag:
+        return None
+    path = ASSETS_DIR / "flags" / f"{lang.flag}.svg"
+    if not path.is_file():
+        return None
+    try:
+        return tk.PhotoImage(file=str(path), format=f"svg -scaletoheight {height}")
+    except tk.TclError:
+        return None
+
+
+class LanguagePicker:
+    """Modal "Choose your language" dialog, with model download.
+
+    Two callers: the first launch, before the main window exists (its parent is
+    a hidden root), and later the settings screen. ``show()`` returns the chosen
+    language code, or None if the user chose to continue without voice. The
+    model downloads on a worker thread and reports back through a queue, because
+    no Tk call may run off the main thread.
+    """
+
+    def __init__(self, parent: tk.Misc, title: str, intro: str, skip_label: str):
+        self._queue: queue.Queue = queue.Queue()
+        self._images: list[tk.PhotoImage] = []  # Tk drops unreferenced images
+        self._installed: set[str] = set(languages.installed())
+        self._polling = False
+        self._bar: ttk.Progressbar | None = None
+        self._bytes: tk.Label | None = None
+        self.result: str | None = None
+
+        self.top = tk.Toplevel(parent)
+        self.top.title(title)
+        self.top.configure(bg=BG)
+        self.top.resizable(False, False)
+        self.top.protocol("WM_DELETE_WINDOW", self._skip)
+
+        outer = tk.Frame(self.top, bg=BG, padx=24, pady=20)
+        outer.pack(fill="both", expand=True)
+        tk.Label(
+            outer, text=title, font=("Helvetica", 20, "bold"), fg=ACCENT, bg=BG
+        ).pack(anchor="w")
+        tk.Label(
+            outer,
+            text=intro,
+            font=("Helvetica", 12),
+            fg=MUTED,
+            bg=BG,
+            justify="left",
+            wraplength=440,
+        ).pack(anchor="w", pady=(6, 14))
+        self.body = tk.Frame(outer, bg=BG)
+        self.body.pack(fill="both", expand=True)
+        self.status = tk.Label(
+            outer, text="", font=("Helvetica", 11), fg=MUTED, bg=BG, anchor="w"
+        )
+        self.status.pack(fill="x", pady=(10, 0))
+        Btn(outer, skip_label, command=self._skip, font=("Helvetica", 12)).pack(
+            anchor="e", pady=(12, 0)
+        )
+        self._show_list()
+
+    # -- views ------------------------------------------------------------- #
+    def _clear_body(self) -> None:
+        for widget in self.body.winfo_children():
+            widget.destroy()
+
+    def _show_list(self) -> None:
+        self._clear_body()
+        self.status.config(text="")
+        wrap = tk.Frame(self.body, bg=BG)
+        wrap.pack(fill="both", expand=True)
+        canvas = tk.Canvas(
+            wrap,
+            bg=BG,
+            highlightthickness=0,
+            width=470,
+            height=360,
+            yscrollincrement=1,
+        )
+        bar = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        bar.pack(side="right", fill="y")
+        inner = tk.Frame(canvas, bg=BG)
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind(
+            "<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        bind_wheel(canvas, lambda px: canvas.yview_scroll(px, "units"))
+        for lang in sorted(languages.LANGUAGES, key=lambda item: item.endonym.lower()):
+            self._language_row(inner, lang)
+
+    def _language_row(self, parent: tk.Misc, lang: languages.Language) -> None:
+        label = f"{lang.endonym}   ·   {lang.english}"
+        if lang.code in self._installed:
+            label += "   ✓"
+        opts: dict = {}
+        image = flag_image(lang.code, 22)
+        if image is not None:
+            self._images.append(image)
+            opts = {"image": image, "compound": "left"}
+        Btn(
+            parent,
+            label,
+            command=lambda code=lang.code: self._choose(code),
+            anchor="w",
+            padx=12,
+            pady=8,
+            font=("Helvetica", 13),
+            **opts,
+        ).pack(fill="x", pady=2)
+
+    def _show_download(self, lang: languages.Language) -> None:
+        self._clear_body()
+        tk.Label(
+            self.body,
+            text=f"Downloading {lang.endonym} ({lang.english})…",
+            font=("Helvetica", 13),
+            fg=TEXT,
+            bg=BG,
+        ).pack(anchor="w")
+        self._bar = ttk.Progressbar(
+            self.body, mode="determinate", maximum=max(1, lang.size), length=450
+        )
+        self._bar.pack(fill="x", pady=(10, 4))
+        self._bytes = tk.Label(
+            self.body, text="", font=("Helvetica", 11), fg=MUTED, bg=BG
+        )
+        self._bytes.pack(anchor="w")
+
+    def _show_error(self, lang: languages.Language, message: str) -> None:
+        self._clear_body()
+        tk.Label(
+            self.body,
+            text=f"Could not install {lang.endonym}.",
+            font=("Helvetica", 13),
+            fg=TEXT,
+            bg=BG,
+        ).pack(anchor="w")
+        tk.Label(
+            self.body,
+            text=message,
+            font=("Helvetica", 11),
+            fg=MUTED,
+            bg=BG,
+            wraplength=450,
+            justify="left",
+        ).pack(anchor="w", pady=(6, 12))
+        Btn(
+            self.body, "Try again", command=self._show_list, font=("Helvetica", 12)
+        ).pack(anchor="w")
+
+    # -- actions ----------------------------------------------------------- #
+    def _choose(self, code: str) -> None:
+        if code in self._installed:
+            self._finish(code)  # already on disk: this is just a switch
+            return
+        self._download(code)
+
+    def _download(self, code: str) -> None:
+        lang = languages.BY_CODE[code]
+        self._show_download(lang)
+        self.status.config(text="This happens once; the model is kept for next time.")
+        self._polling = True
+
+        def progress(done: int, total: int) -> None:
+            self._queue.put(("progress", done, total))
+
+        def work() -> None:
+            try:
+                languages.download(code, progress=progress)
+            except Exception as error:  # noqa: BLE001 - every failure is shown here
+                self._queue.put(("error", code, str(error)))
+            else:
+                self._queue.put(("done", code, None))
+
+        threading.Thread(target=work, daemon=True).start()
+        self.top.after(_DOWNLOAD_POLL_MS, self._poll)
+
+    def _poll(self) -> None:
+        try:
+            while True:
+                kind, first, second = self._queue.get_nowait()
+                if kind == "progress":
+                    if self._bar is not None and self._bytes is not None:
+                        self._bar.config(value=first)
+                        self._bytes.config(
+                            text=f"{first / 1e6:.1f} / {second / 1e6:.1f} MB"
+                        )
+                elif kind == "done":
+                    self._installed.add(first)
+                    self._finish(first)
+                    return
+                else:  # "error"
+                    self._polling = False
+                    self._show_error(languages.BY_CODE[first], second)
+                    return
+        except queue.Empty:
+            pass
+        if self._polling:
+            self.top.after(_DOWNLOAD_POLL_MS, self._poll)
+
+    def _finish(self, code: str) -> None:
+        save_language(code)
+        self.result = code
+        self._close()
+
+    def _skip(self) -> None:
+        self.result = None
+        self._close()
+
+    def _close(self) -> None:
+        self._polling = False
+        with contextlib.suppress(tk.TclError):
+            self.top.grab_release()
+        self.top.destroy()
+
+    def _center(self) -> None:
+        self.top.update_idletasks()
+        w, h = self.top.winfo_reqwidth(), self.top.winfo_reqheight()
+        x = max(0, (self.top.winfo_screenwidth() - w) // 2)
+        y = max(0, (self.top.winfo_screenheight() - h) // 3)
+        self.top.geometry(f"+{x}+{y}")
+
+    def show(self) -> str | None:
+        self._center()
+        self.top.wait_visibility()
+        self.top.grab_set()
+        self.top.wait_window()
+        return self.result
+
+
+def choose_language_at_startup() -> str | None:
+    """Ask for a language when no model is installed; a no-op on later launches.
+
+    Runs before the main window exists, so it owns a hidden root that exists
+    only to parent the dialog. Choosing installs and saves the model; skipping
+    leaves the app fully playable on the keypad.
+    """
+    if not needs_language_setup():
+        return None
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        picker = LanguagePicker(
+            root,
+            title="Choose your language",
+            intro=(
+                "Almathus downloads a small speech model so your child can answer "
+                "out loud in their language. You can add more languages later in "
+                "settings."
+            ),
+            skip_label="Continue without voice",
+        )
+        return picker.show()
+    finally:
+        root.destroy()
 
 
 # --------------------------------------------------------------------------- #
@@ -3026,6 +3310,7 @@ class Almathus(tk.Tk):
 
 
 def main():
+    choose_language_at_startup()  # asks only when no speech model is installed
     resolve_language()  # sets the module's LANG before any widget reads it
     app = Almathus()
     try:

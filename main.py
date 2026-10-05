@@ -2684,7 +2684,7 @@ class Almathus(tk.Tk):
         self._build_dictation_toggle(footer)
         self._build_girly_toggle(footer)
         self._layout_footer(footer)
-        self._fit_column(col)
+        self._fit_column(col, canvas)
         # Tk delivers a wheel event to the widget under the pointer and its own
         # bindtags only — it never walks up to a parent — so binding the canvas
         # alone would scroll nothing unless the pointer is on bare canvas. Every
@@ -2708,7 +2708,7 @@ class Almathus(tk.Tk):
         for child in widget.winfo_children():
             self._bind_wheel_tree(child, canvas)
 
-    def _fit_column(self, col) -> None:
+    def _fit_column(self, col, canvas) -> None:
         """Give up the gaps between the panels rather than the bottom of the column.
 
         A packed column taller than its window is not shrunk to fit, it is cut
@@ -2723,9 +2723,14 @@ class Almathus(tk.Tk):
         the panels is handed back a step at a time until the whole of it fits.
         The panels themselves are never touched; it is the air between them that
         goes, and the screen is merely tighter rather than missing a row.
+
+        The height to fit is the *canvas*', not the window's: the fixed title
+        and the top bar sit above the canvas, so measuring against the whole
+        window left the column a title too tall and the page scrolled even in
+        full screen.
         """
         self.update_idletasks()
-        avail = self.winfo_height()
+        avail = canvas.winfo_height()
         if avail <= 1:  # not configured yet (first build, before the window maps)
             avail = self._usable_height()
         gaps = [(w, w.pack_info()["pady"]) for w in col.pack_slaves()]

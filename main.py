@@ -4438,7 +4438,13 @@ class Almathus(tk.Tk):
         # the canvas as far as Tk is concerned, so it disarmed itself the moment
         # the pointer touched a row.
         def wheel(pixels):
-            if canvas.winfo_exists():
+            # Only scroll when the rows truly overrun the view. A canvas with a
+            # scroll region smaller than its window still nudges on some Tk
+            # builds, which read as scrolling an already-complete table.
+            if (
+                canvas.winfo_exists()
+                and table.winfo_reqheight() > canvas.winfo_height()
+            ):
                 canvas.yview_scroll(pixels, "units")
 
         bind_wheel(canvas, wheel)
@@ -4446,11 +4452,13 @@ class Almathus(tk.Tk):
         # Sideways: shift + wheel, and the horizontal axis of a trackpad swipe.
         # `bind_wheel` already handles the vertical axis; these add to it.
         def xwheel(ev):
-            if canvas.winfo_exists():
+            if canvas.winfo_exists() and table.winfo_reqwidth() > canvas.winfo_width():
                 canvas.xview_scroll(wheel_pixels(ev), "units")
 
         def touchpad_x(ev):
             if not canvas.winfo_exists():
+                return
+            if table.winfo_reqwidth() <= canvas.winfo_width():
                 return
             # dx rides in the high 16 bits, dy in the low (see touchpad_pixels).
             raw = (ev.delta >> 16) & 0xFFFF

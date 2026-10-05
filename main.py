@@ -4294,6 +4294,17 @@ class Almathus(tk.Tk):
 
         table = tk.Frame(canvas, bg=BG)
         window = canvas.create_window((0, 0), window=table, anchor="nw")
+        # Size the scrolled window to the canvas *before* the rows go in. The
+        # window is already at its final size here (the screen is built after
+        # the child taps the button, not during startup), so the width is known
+        # — and doing it now means the first paint is already the full-width
+        # layout. Left to the <Configure> event below, the rows were laid out at
+        # the table's natural width and visibly jumped out to full width a beat
+        # after the screen appeared.
+        canvas.update_idletasks()
+        width = canvas.winfo_width()
+        if width > 1:
+            canvas.itemconfig(window, width=width)
         # `e.widget is canvas`: the rows carry the canvas as an extra bindtag (see
         # below), so this binding is also consulted for *their* <Configure> — and
         # widening the scrolled window to a single cell's width would collapse the

@@ -52,6 +52,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import languages
+
 # Set ALMATHUS_VOICE_DEBUG=1 to trace the whole voice path on stderr.
 _DEBUG = os.environ.get("ALMATHUS_VOICE_DEBUG") not in (None, "", "0")
 
@@ -1595,13 +1597,32 @@ class SpeechInput:
                 Path(path).unlink()
 
     def _vosk_model_dir(self):
+        """Where this language's Vosk model lives, or None if it isn't installed.
+
+        Three places are searched, in order: an explicit ``ALMATHUS_VOSK_MODEL``
+        path, the per-user store the setup screen installs into (see
+        :mod:`languages`), and finally a model dropped beside the app in
+        ``./models``. The last one keeps existing fr/en installs working, and
+        the registry name is tried before the old substring glob so a
+        downloaded ``en-us`` is not shadowed by a hand-placed ``en``.
+        """
         env = os.environ.get("ALMATHUS_VOSK_MODEL")
         if env:
             return env
+        lang = languages.BY_CODE.get(self.lang)
+        if lang is not None and languages.is_installed(self.lang):
+            return str(languages.model_path(self.lang))
         base = Path(__file__).resolve().parent / "models"
-        key = "fr" if self.lang == "fr" else "en"
         if base.is_dir():
-            for d in sorted(base.glob(f"vosk-model*{key}*")):
+            if lang is not None and (base / lang.model).is_dir():
+                return str(base / lang.model)
+            key = lang.code if lang is not None else self.lang
+            matches = sorted(base.glob(f"vosk-model*{key}*"))
+            if not matches and key.startswith("en") and key != "en":
+                # an unqualified "en"/"en-us" language, a model named for any
+                # English variant: try the older, broader glob too
+                matches = sorted(base.glob("vosk-model*en*"))
+            for d in matches:
                 if d.is_dir():
                     return str(d)
         return None

@@ -88,8 +88,8 @@ CASES = [
     ("no", "en", None),
     ("that's too hard", "en", None),
     # -- a French word is not an English number, and the other way round --- #
-    # parakeet transcribes French speech into English words; without this the
-    # French "trois" came back as "Two" and would have scored the card 2.
+    # A recognizer can answer in the wrong language (the English "two" for the
+    # French "trois"); without this the card would have scored 2.
     ("two", "fr", None),
     ("huit", "en", None),
 ]

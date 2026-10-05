@@ -8,11 +8,13 @@ Two independent, gracefully-degrading pieces:
 
 * ``SpeechInput``  — records from the mic with simple voice-activity detection
                      (one open stream per card, auto-stops when the speaker goes
-                     quiet, so nothing is lost between two answers), transcribes with
-                     **parakeet**, and parses the spoken number (French + English).
-                     Needs ``sounddevice`` + ``numpy`` and a parakeet backend;
-                     if any is missing it reports itself unavailable and the game
-                     simply stays keypad-only.
+                     quiet, so nothing is lost between two answers), recognizes
+                     the spoken number with a small, per-language **Vosk** model,
+                     and accepts it only if it is numbers and nothing else.
+                     Needs ``sounddevice`` + ``numpy`` + ``vosk`` and a model
+                     installed by the setup screen (see :mod:`languages`); if any
+                     is missing it reports itself unavailable and the game simply
+                     stays keypad-only.
 
                      Calibrates itself to the room: ``.calibrate()`` listens to
                      the ambient noise in the background (nothing on screen,
@@ -28,9 +30,9 @@ callbacks are plain values so the caller can marshal them onto the Tk main loop.
 
 Environment overrides:
     ALMATHUS_TTS_VOICE     macOS voice name (default: Amélie for fr, Samantha for en)
-    ALMATHUS_PARAKEET_MODEL  HF id for parakeet-mlx (default parakeet-tdt-0.6b-v2)
-    ALMATHUS_PARAKEET_CMD  shell template with {wav}; stdout is used as transcript
-                           (use this to plug in any parakeet CLI you already run)
+    ALMATHUS_VOSK_MODEL    path to a Vosk model directory, bypassing the per-user
+                           store the setup screen installs into
+    ALMATHUS_MODELS_DIR    where installed models are kept (tests / packaging)
 """
 
 from __future__ import annotations
@@ -540,7 +542,7 @@ def parse_number(text: str, lang: str = "fr") -> int | None:
 
 
 # --------------------------------------------------------------------------- #
-# Speech-to-text (mic capture + VAD + parakeet)
+# Speech-to-text (mic capture + VAD + Vosk)
 # --------------------------------------------------------------------------- #
 
 _SAMPLE_RATE = 16000
@@ -690,15 +692,13 @@ def _nfft(sr: int) -> int:
     return 1 << max(8, int(sr * 0.032).bit_length() - 1)
 
 
-# v3 is multilingual (incl. French); v2 is English-only.
-_DEFAULT_PARAKEET = "mlx-community/parakeet-tdt-0.6b-v3"
-
 _WARMUP = object()  # sentinel job: preload the model on the STT thread
 
-# Vosk number-only grammar. Constraining the vocabulary to number words rescues
-# cases the general model can't nail — notably the French "un" (heard as "Mm"/"On"
-# by parakeet). "[unk]" is what lets Vosk say "that was speech, but not a number"
-# instead of being forced to pick a number word for every sound it hears.
+# Vosk number-only grammar. Constraining the vocabulary to number words is what
+# makes isolated short words work at all — a general model hears the French "un"
+# as "Mm"/"On", but asked to choose among numbers Vosk lands on one. "[unk]" is
+# what lets it say "that was speech, but not a number" instead of being forced to
+# pick a number word for every sound it hears.
 _VOSK_GRAMMAR = {
     "fr": (
         '["zéro un une deux trois quatre cinq six sept huit neuf dix onze douze '
@@ -762,28 +762,11 @@ _VETO_CONF = _envf("ALMATHUS_VOICE_VETO_CONF", 0.9)
 _VETO_WORDS = 2  # ...over at least this many words
 
 
-def _quiet_hf_hub(model_id: str) -> None:
-    """Quiet the Hugging Face Hub 'unauthenticated request' warning that parakeet's
-    model download prints. When the model is already cached, go fully offline so the
-    Hub is never contacted — no warning and a faster start. Set before importing
-    parakeet (which imports huggingface_hub) so HF_HUB_OFFLINE takes effect.
-    """
-    import logging
-
-    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
-    hub = (
-        Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
-    )
-    if (hub / ("models--" + model_id.replace("/", "--"))).is_dir():
-        os.environ.setdefault("HF_HUB_OFFLINE", "1")
-
-
 class SpeechInput:
     def __init__(self, lang: str = "fr"):
         self.lang = lang
         self._cancel = threading.Event()
-        self._model: Any = None  # the parakeet model, once loaded
-        self._backend: str | None = None  # "mlx" | "cli", or None for neither
+        self._has_vosk = False  # set by _probe when the vosk module imports
         self._reason = ""
         self._sd: Any = None  # the sounddevice module, if it imported
         self._np: Any = None  # the numpy module, if it imported
@@ -796,7 +779,7 @@ class SpeechInput:
         self._busy = False  # guard against overlapping listen() calls
         self._rec_sr = _SAMPLE_RATE
         self._jobs: queue.Queue = queue.Queue()  # audio -> the one STT thread
-        # owns & runs the model (MLX is thread-affine)
+        # owns & runs the model (Vosk's Kaldi recognizer is not thread-safe)
         self._stt_thread: threading.Thread | None = None
         self._vosk_model: Any = None
         self._vosk_ok: bool | None = None  # None=unknown, False=unavailable
@@ -840,26 +823,19 @@ class SpeechInput:
         except Exception:
             self._reason = "audio libs manquantes (pip: sounddevice numpy)"
             return
-        if os.environ.get("ALMATHUS_PARAKEET_CMD"):
-            self._backend = "cli"
-            return
         try:
-            import parakeet_mlx  # noqa: F401
+            import vosk  # noqa: F401
 
-            self._backend = "mlx"
+            self._has_vosk = True
         except Exception:
-            self._backend = None
-            self._reason = (
-                "parakeet introuvable (pip: parakeet-mlx, ou ALMATHUS_PARAKEET_CMD)"
-            )
+            self._reason = "vosk introuvable (pip: vosk)"
 
     def available(self) -> bool:
-        if not (self._sd and self._np):
+        if not (self._sd and self._np and self._has_vosk):
             return False
         if _grammar_for(self.lang) is None:
             return False  # no number words for this language: keypad only
-        # usable with either a parakeet backend OR a Vosk model (Vosk is primary now)
-        return bool(self._backend) or self._vosk_model_dir() is not None
+        return self._vosk_model_dir() is not None
 
     def reason(self) -> str:
         return self._reason
@@ -1185,6 +1161,8 @@ class SpeechInput:
             # card to be answered; a card never waits for more than that.
             with self._mic_lock:
                 audio = self._record(on_state)
+            if _DEBUG and self._last_raw is not None:
+                self._dump_capture(self._last_raw)  # listen back to what was heard
             # Two silent captures in a row before crying "no mic": the caller stops
             # re-arming on that signal, so one unlucky window (a stream hiccup, a
             # capture cut short) used to leave the kid talking to a deaf card.
@@ -1206,8 +1184,8 @@ class SpeechInput:
             self._jobs.put((None, None, None, on_result, on_state, pick))
 
     def _stt_loop(self):
-        """The ONE thread that creates and runs the parakeet model — MLX streams
-        are thread-local, so the model must never cross threads.
+        """The ONE thread that creates and runs the Vosk model, which is not
+        thread-safe, so it must never be shared across threads.
 
         Nothing raised in here may end this loop. It used to be possible: a job
         tuple of the wrong shape killed the thread on the very first unpack, and
@@ -1230,23 +1208,9 @@ class SpeechInput:
         audio, raw, dirty, on_result, on_state, pick = job
         if audio is _WARMUP:
             try:
-                self._load_vosk()  # primary recognizer, fast (~1s)
+                self._load_vosk()  # load the model (~1s), so the first answer is fast
             except Exception as e:
                 _dbg("vosk warmup failed:", repr(e))
-            # Parakeet is the recognizer of last resort: slow to load (~60s),
-            # so it is only warmed when asked for, or when there is no Vosk
-            # model for this language and it is the only one left. Without
-            # that second case English had no recognizer at all — Vosk found
-            # no model and parakeet was never loaded, so every spoken answer
-            # in English was silently dropped.
-            want_parakeet = (
-                os.environ.get("ALMATHUS_PARAKEET") or self._vosk_model is None
-            )
-            if want_parakeet and self._backend == "mlx":
-                try:
-                    self._ensure_model()
-                except Exception as e:
-                    _dbg("parakeet warmup failed:", repr(e))
             return
         try:
             if audio is None or self._cancel.is_set():
@@ -1256,7 +1220,7 @@ class SpeechInput:
                 return
             if on_state:
                 on_state("thinking")
-            # Vosk FIRST: fast (~100ms), number-grammar, and the accurate one for
+            # Vosk: fast (~100ms), number-grammar, and the accurate one for
             # isolated digits. Runs on the RAW audio (band-pass breaks Vosk).
             _t0 = time.monotonic()
             nums = self._vosk_numbers(raw if raw is not None else audio)
@@ -1267,14 +1231,6 @@ class SpeechInput:
             if not nums and dirty is not None and dirty is not raw:
                 nums = self._vosk_numbers(dirty)
                 _dbg(f"vosk (un-denoised retry) -> {nums}")
-            # parakeet only as a backup, and only if it's already loaded (never
-            # block on its ~60s load — Vosk handles the common case).
-            if not nums and self._model is not None:
-                text = self._transcribe(audio)
-                # Same strict rule as everywhere else: a transcript that says
-                # anything other than numbers is not an answer.
-                nums = strict_numbers(text, self.lang) or []
-                _dbg(f"parakeet fallback transcript={text!r} -> {nums}")
             parsed = pick(nums) if pick else (nums[-1] if nums else None)
             _dbg(f"picked -> {parsed}")
             self._busy = False  # a callback that re-arms must not be refused
@@ -1663,16 +1619,13 @@ class SpeechInput:
         if len(self._room_blocks) >= 8:
             self._learn_room(list(self._room_blocks), sr)
         clean = self._denoise(raw, sr)
-        self._last_raw = clean  # un-band-passed (Vosk wants it that way), denoised
+        self._last_raw = clean  # denoised; Vosk wants it without the VAD band-pass
         self._last_dirty = raw  # ...and untouched, in case the cleaning hurt
-        audio = (
-            sosfilt(sos, clean) if sos is not None else clean
-        )  # band-pass for parakeet
-        return self._normalize(audio)
+        return self._normalize(clean)
 
     def _normalize(self, audio):
         """Amplify a quiet capture to a healthy, consistent level so the recognizer
-        hears it clearly (a low-gain mic otherwise hands parakeet near-silence)."""
+        hears it clearly (a low-gain mic otherwise hands Vosk near-silence)."""
         np = self._np
         audio = np.asarray(audio, dtype=np.float32)
         peak = float(np.abs(audio).max())
@@ -1681,43 +1634,27 @@ class SpeechInput:
         gain = min((0.7 * 32767) / peak, 120.0)  # allow more gain for quiet mics
         return (audio * gain).clip(-32768, 32767).astype(np.int16)
 
-    def _transcribe(self, audio) -> str:
-        np = self._np
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
-            path = tf.name
+    def _dump_capture(self, audio) -> None:
+        """Write the last capture to /tmp so it can be listened back to.
+
+        Only when ``ALMATHUS_VOICE_DEBUG`` is on: it is the one way to hear
+        exactly what the recognizer did, and why it said what it said.
+        """
+        path = Path(tempfile.gettempdir()) / "almathus_capture.wav"
         try:
-            with wave.open(path, "wb") as w:
+            with wave.open(str(path), "wb") as w:
                 w.setnchannels(1)
                 w.setsampwidth(2)
-                w.setframerate(self._rec_sr)  # actual capture rate; parakeet resamples
-                w.writeframes(audio.astype(np.int16).tobytes())
-            if _DEBUG:
-                kept = Path(tempfile.gettempdir()) / "almathus_capture.wav"
-                shutil.copy(path, kept)
-                _dbg(
-                    f"saved capture -> {kept} "
-                    f"(sr={self._rec_sr}, {len(audio)} samples, "
-                    f"{len(audio) / self._rec_sr:.1f}s)"
-                )
-            if self._backend == "cli":
-                tmpl = os.environ["ALMATHUS_PARAKEET_CMD"]
-                cmd = tmpl.format(wav=path)
-                out = subprocess.run(  # noqa: S602 - ALMATHUS_PARAKEET_CMD is the
-                    # user's own command template; a shell is what it is written for
-                    cmd,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    check=False,
-                )
-                return out.stdout.strip()
-            return self._transcribe_mlx(path)
-        except Exception:
-            return ""
-        finally:
-            with contextlib.suppress(OSError):
-                Path(path).unlink()
+                w.setframerate(self._rec_sr)
+                w.writeframes(audio.astype(self._np.int16).tobytes())
+        except Exception as e:
+            _dbg("capture dump failed:", repr(e))
+        else:
+            _dbg(
+                f"saved capture -> {path} "
+                f"(sr={self._rec_sr}, {len(audio)} samples, "
+                f"{len(audio) / self._rec_sr:.1f}s)"
+            )
 
     def _vosk_model_dir(self):
         """Where this language's Vosk model lives, or None if it isn't installed.
@@ -1900,19 +1837,3 @@ class SpeechInput:
             return False  # it heard numbers too — agree
         _dbg(f"vosk: vetoed — the full model confidently heard {text!r}")
         return True
-
-    def _ensure_model(self):
-        """Load the parakeet model. MUST be called on the STT thread only."""
-        if self._model is None:
-            model_id = os.environ.get("ALMATHUS_PARAKEET_MODEL", _DEFAULT_PARAKEET)
-            _quiet_hf_hub(model_id)
-            _dbg("loading parakeet model (first time can take ~60s)...")
-            from parakeet_mlx import from_pretrained
-
-            self._model = from_pretrained(model_id)
-            _dbg("parakeet model loaded")
-
-    def _transcribe_mlx(self, path: str) -> str:
-        self._ensure_model()
-        result = self._model.transcribe(path)
-        return getattr(result, "text", str(result)).strip()

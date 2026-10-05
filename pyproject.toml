@@ -8,10 +8,8 @@ dependencies = []
 
 [project.optional-dependencies]
 # Voice answering (STT). TTS uses macOS `say` and needs nothing installed.
-# vosk: number-only grammar, the primary recognizer where a model exists.
-#   Needs a model in ./models — see README (download vosk-model-small-fr-0.22).
-# parakeet-mlx targets Apple Silicon; on other platforms set ALMATHUS_PARAKEET_CMD.
-#   It is the recognizer for languages with no Vosk model (English out of the box).
+# vosk: the one recognizer, one small model per language, downloaded on first
+#   run by the setup screen (see languages.py).
 # num2words generates 0..100 number words for the installed language, from which
 #   voice derives the Vosk grammar and the parser tables. fr/en stay hand-tuned.
 # Spoken numbers are parsed by voice.strict_numbers — no library, on purpose: the
@@ -19,8 +17,8 @@ dependencies = []
 voice = [
     "sounddevice",
     "numpy",
+    "scipy",  # Butterworth band-pass for the VAD/voicing test (has a fallback)
     "num2words",
-    "parakeet-mlx",
     # vosk 0.3.45 ships no macOS wheel (0.3.44 is the last universal2 build), so
     # resolving to it silently drops the primary French recognizer on a Mac.
     "vosk<0.3.45; sys_platform == 'darwin'",
@@ -95,8 +93,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tkinter binds callbacks as `lambda e: ...`; the event is part of the contract.
 "main.py" = ["ARG005"]
-# voice.py wraps four optional native stacks — PortAudio, WebRTC VAD, Vosk and
-# MLX — each of which raises whatever its C layer feels like. Catching Exception
+# voice.py wraps three optional native stacks — PortAudio, WebRTC VAD and Vosk
+# — each of which raises whatever its C layer feels like. Catching Exception
 # and falling back to the keypad *is* this module's contract (see AGENTS.md:
 # "the game stays fully playable ... if voice deps/models are absent"), so the
 # rule is off here rather than waived 25 times. Every such handler logs through
@@ -129,7 +127,6 @@ module = [
     "numpy",
     "num2words",
     "vosk",
-    "parakeet_mlx",
     "webrtcvad",
     "pyttsx3",
     "scipy.*",

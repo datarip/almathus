@@ -237,7 +237,7 @@ usable the whole time.
                     ┌── the room, measured ──┐
                     ▼                        ▼
 mic audio ─▶ [VAD record] ─▶ [is it a voice?] ─▶ [subtract the room] ─▶ Vosk ─▶ [numbers only?] ─▶ submit
-             (voice.py)       level + pitch       spectral subtraction  ↘ parakeet ↗  strict rule
+             (voice.py)       level + pitch       spectral subtraction     per-language  strict rule
 ```
 
 Each stage can only ever say "not an answer", in which case the card stays up and
@@ -288,11 +288,9 @@ the app keeps listening. **Nothing takes a card off the screen but an answer.**
    the cleaned audio says nothing, the untouched capture gets its own decode. In
    a room already quiet enough, it is skipped entirely.
 3. **Recognize.** **Vosk** with a vocabulary restricted to number words is the
-   primary recognizer (~100 ms, and the accurate one for isolated digits like the
-   French "un"). **parakeet** (`parakeet-mlx`, default model
-   `mlx-community/parakeet-tdt-0.6b-v3`, multilingual) is the recognizer for
-   languages with no Vosk model — English out of the box — and an opt-in backup
-   otherwise.
+   recognizer (~100 ms, and the accurate one for isolated digits like the French
+   "un"). There is one small model per language; the setup screen asks for the
+   language on first run and downloads just that model (see *Languages* below).
 4. **Numbers only.** The transcript is accepted **only if every word in it is a
    number** (`voice.strict_numbers`). One stray word — a filler, an operator, a
    recognizer's `[unk]` — and the whole utterance is refused. Vosk is read the same
@@ -311,20 +309,19 @@ whatever it was handed and drop the rest, so a kid reading the question aloud
 recognizer hears as "quinze seize [unk]" — answered `16`. Measured over a 68-clip
 French corpus, **19 of the 30 non-number utterances were scored as an answer**;
 under the strict rule, 3 are (the one-syllable fillers "euh", "non", "oh non").
-33 of 38 spoken numbers are still recognized. English, through parakeet, scores
-33/33 numbers with no false accepts.
+33 of 38 spoken numbers are still recognized. English is handled the same way,
+with its own Vosk model and its own number grammar.
 
-**Vosk models** live in `./models`. French:
-
-```bash
-curl -L -o /tmp/vosk-fr.zip https://alphacephei.com/vosk/models/vosk-model-small-fr-0.22.zip
-unzip /tmp/vosk-fr.zip -d models/
-# override location with ALMATHUS_VOSK_MODEL=/path/to/model
-```
-
-With no Vosk model for the language, parakeet is loaded instead and handles
-everything (this is the English path — the model name just has to contain the
-language code, e.g. `vosk-model-small-en-us-0.15`, for Vosk to be picked up).
+**Languages and models.** On first run the app shows a language picker and
+downloads only that language's small Vosk model (30–160 MB) into a per-user data
+directory — `~/Library/Application Support/Almathus/models` on macOS,
+`%LOCALAPPDATA%\Almathus\models` on Windows, `~/.local/share/almathus/models` on
+Linux. Add or switch languages later from the settings screen or the language
+chip in the top-right corner; an already-downloaded model is reused, and
+switching takes effect at once. The registry (`languages.py`) lists 32 Vosk
+languages; the six with no number spellings in `num2words` (Hindi, Gujarati,
+Chinese, Georgian, Kyrgyz, Uzbek) run keypad-only. `ALMATHUS_VOSK_MODEL=/path/to/model`
+bypasses the store; `ALMATHUS_MODELS_DIR` moves it.
 
 Tuning, if a room needs it — all optional, all with measured defaults:
 
@@ -344,18 +341,17 @@ Tuning, if a room needs it — all optional, all with measured defaults:
 Enable it:
 
 ```bash
-uv sync --extra voice --group dev   # sounddevice + numpy + vosk + parakeet-mlx + webrtcvad
+uv sync --extra voice --group dev   # sounddevice + numpy + num2words + vosk + webrtcvad
                                     # keep --extra voice on every sync: without it
                                     # uv prunes the audio libs and the mic goes dead
 ```
 
-- First run downloads the parakeet model (~600 MB). **macOS microphone permission
-  is required** — grant your terminal app access under *System Settings → Privacy &
-  Security → Microphone*. If capture is silent, the card shows a permission hint.
-- Not on Apple Silicon, or already have a parakeet CLI? Skip `parakeet-mlx` and
-  point the app at your command:
-  `export ALMATHUS_PARAKEET_CMD='my-parakeet {wav}'` (its stdout is the transcript).
-- Override the STT model: `export ALMATHUS_PARAKEET_MODEL="mlx-community/parakeet-tdt-0.6b-v3"`.
+- First run asks for a language and downloads one small Vosk model (30–160 MB).
+  **macOS microphone permission is required** — grant your terminal app access
+  under *System Settings → Privacy & Security → Microphone*. If capture is
+  silent, the card shows a permission hint.
+- No model for a language you can read but not answer in yet? Keep the keypad:
+  the game is fully playable without voice.
 
 Both TTS and STT degrade to no-ops if unavailable — the game stays fully playable
 with the keypad, and voice input layers on top when it's ready.
@@ -377,8 +373,8 @@ What you get:
   different rate than requested;
 - why a recording ended — no speech before the pre-timeout, no sustained speech,
   or a silent/failed capture — each with the measured peak level;
-- recognition results — the raw Vosk alternatives and the parakeet transcript,
-  with the parsed number and Vosk's elapsed time in ms;
+- recognition results — the raw Vosk alternatives, the parsed number and Vosk's
+  elapsed time in ms;
 - **why an utterance was refused** — how far behind the top hypothesis the
   all-numbers one scored, or what the un-constrained model heard instead;
 - model load and warmup failures that are otherwise swallowed silently.

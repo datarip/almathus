@@ -2168,6 +2168,7 @@ class Almathus(tk.Tk):
             self._close_reading()  # a sentence cut off still took the time it took
         for w in self.container.winfo_children():
             w.destroy()
+        self._hide_topbar()  # off by default: only the menu asks for it back
 
     # ------------------------------------------------------------------ #
     # Screen 1: settings
@@ -2175,6 +2176,7 @@ class Almathus(tk.Tk):
     def show_settings(self):
         self._clear()
         self._hush()  # leaving the recap: the fanfare goes with it
+        self._show_topbar()
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
@@ -2521,11 +2523,25 @@ class Almathus(tk.Tk):
             panel, text=T("numbers_hint"), font=self.f_hint, fg=MUTED, bg=SURFACE
         ).pack(pady=(2, 6))
 
-    def _build_topbar(self) -> None:
-        """A slim bar above every screen: stats on the left, language on the right.
+    def _show_topbar(self) -> None:
+        """Put the bar back on the menu, where the two choices are asked for.
 
-        Both are global — reachable while the menu, a game or the recap is up —
-        and named by an icon so a child reads them at a glance: a chart for the
+        It is deliberately *not* shown during play: a chart button and a flag
+        sitting over the question are things to tap instead of answering. The
+        menu is the one screen that wants them, and `_clear` takes the bar away
+        again the moment a game begins.
+        """
+        if not self.topbar.winfo_manager():
+            self.topbar.pack(side="top", fill="x", before=self.container)
+
+    def _hide_topbar(self) -> None:
+        if self.topbar.winfo_manager():
+            self.topbar.pack_forget()
+
+    def _build_topbar(self) -> None:
+        """The menu's slim bar: stats on the left, language on the right.
+
+        Named by an icon so a child reads them at a glance: a chart for the
         stats, the country's own flag for the language. A real packed row rather
         than a .place()d overlay: a placed widget is not part of the layout and
         would float on top of the settings tiles.

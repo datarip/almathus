@@ -58,6 +58,11 @@ except Exception:  # noqa: BLE001 - keep the game usable if voice.py is absent/b
 
 DEFAULT_CARDS = 20
 
+# The card counts a game may be played (and logged) with. Only whole, documented
+# decks are offered, so a stray press of the stepper cannot leave the child on a
+# four-card "session" that means nothing in the log — see `_save_session`.
+DECK_CHOICES = (5, 10, 20, 30, 50)
+
 MODES = ("addition", "subtraction", "multiplication", "division")
 
 # Operand ranges per mode. Addition/subtraction stay in 0..20 as requested;
@@ -2556,7 +2561,21 @@ class Almathus(tk.Tk):
         ]
 
         def bump(d):
-            self.count_var.set(max(1, min(99, self.count_var.get() + d)))
+            # Step between the documented deck sizes only: a held "−" used to
+            # walk down to any number at all, and a 4-card game is not a deck.
+            cur = self.count_var.get()
+            if cur in DECK_CHOICES:
+                i = DECK_CHOICES.index(cur) + d
+            else:
+                i = (
+                    min(
+                        range(len(DECK_CHOICES)),
+                        key=lambda j: abs(DECK_CHOICES[j] - cur),
+                    )
+                    + d
+                )
+            i = max(0, min(len(DECK_CHOICES) - 1, i))
+            self.count_var.set(DECK_CHOICES[i])
 
         stepper.append(
             Btn(
@@ -2598,7 +2617,7 @@ class Almathus(tk.Tk):
 
         # quick picks double as a segmented control: the live value stays lit
         chips: dict[int, Btn] = {}
-        for q in (5, 10, 20, 30, 50):
+        for q in DECK_CHOICES:
             chips[q] = Btn(
                 bar,
                 str(q),
@@ -2661,18 +2680,24 @@ class Almathus(tk.Tk):
         # bindtags only — it never walks up to a parent — so binding the canvas
         # alone would scroll nothing unless the pointer is on bare canvas. Every
         # descendant is bound too, so a wheel anywhere over the column scrolls it.
-        self._bind_settings_wheel(col, canvas)
+        self._bind_wheel_tree(col, canvas)
         # Measure the finished column once here (this is the one layout pass
         # that is worth forcing), then only ever shrink the gaps or re-centre.
         self.update_idletasks()
         holder_h[0] = holder.winfo_reqheight()
         fit_scrolled()  # measure now, not only on the first <Configure>
 
-    def _bind_settings_wheel(self, widget, canvas) -> None:
-        """Route every wheel gesture over the settings column to the canvas."""
+    def _bind_wheel_tree(self, widget, canvas) -> None:
+        """Route every wheel gesture anywhere over `widget` to `canvas`.
+
+        Tk delivers a wheel event to the widget under the pointer and its own
+        bindtags only — never to a parent — so binding the canvas alone scrolls
+        nothing unless the pointer is on bare canvas. Binding each descendant
+        too means a gesture over any row still scrolls the view.
+        """
         bind_wheel(widget, lambda px: canvas.yview_scroll(px, "units"))
         for child in widget.winfo_children():
-            self._bind_settings_wheel(child, canvas)
+            self._bind_wheel_tree(child, canvas)
 
     def _fit_column(self, col) -> None:
         """Give up the gaps between the panels rather than the bottom of the column.
@@ -3062,6 +3087,10 @@ class Almathus(tk.Tk):
                 font=self.f_body,
                 **opts,
             ).pack(fill="x", pady=3)
+        # The list is one row button per language, so the pointer is nearly
+        # always over a button and the canvas binding above would never fire.
+        # Every row routes its wheel events to the canvas too.
+        self._bind_wheel_tree(inner, canvas)
 
     def _choose_language(self, code: str) -> None:
         if code not in self._lang_installed:
@@ -4341,6 +4370,12 @@ class Almathus(tk.Tk):
             w.bindtags((*w.bindtags(), str(canvas)))
 
     def _save_session(self, cards, total_time, correct):
+        # Only a whole, documented deck is worth a line in the log. A game left
+        # part-way through — or one played on a count that is not a real deck —
+        # would write a row whose `cartes` is not the deck the child sat down
+        # to, and the progress screen would chart and grade that fragment.
+        if self.n_cards not in DECK_CHOICES or len(cards) != self.n_cards:
+            return
         stamp = datetime.now().astimezone()
         hardest = difficult_cards(cards)
 

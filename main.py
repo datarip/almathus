@@ -2789,11 +2789,13 @@ class Almathus(tk.Tk):
         self._voice_arm(card)
 
     def _show_go_hint(self, card: Card) -> None:
-        """Turn the wait-instruction into a green GO!, then let it fade."""
+        """Turn the wait-instruction into a big green GO!, then let it fade."""
         lbl = self.card_hint
         if lbl is None or not lbl.winfo_exists():
             return
-        lbl.config(text=T("go"), fg=GOOD)
+        # Same size and colour as the countdown's GO!, so the two read as the
+        # same cue: the moment it is the child's turn.
+        lbl.config(text=T("go"), fg=GOOD, font=self.f_giant)
         self.after(1500, lambda: self._clear_hint(card))
 
     def _clear_hint(self, card: Card) -> None:

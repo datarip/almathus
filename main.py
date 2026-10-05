@@ -101,6 +101,10 @@ STRINGS = {
         "voice_toggle": "🎤 Répondre à la voix",
         "dictation_toggle": "🔊 Lire la carte",
         "girly_toggle": "👑 Mode princesse",
+        "language_toggle": "🌐 Langue",
+        "language_title": "Langue de l'application",
+        "language_intro": "Choisissez la langue de l'application et téléchargez son modèle vocal. Il sera conservé pour les prochaines fois.",
+        "language_skip": "Continuer sans voix",
         "voice_off_hint": "🎤 Voix indisponible : {reason}",
         "listening": "🎧 à l'écoute…",
         "thinking": "🤔 …",
@@ -162,6 +166,10 @@ STRINGS = {
         "voice_toggle": "🎤 Answer by voice",
         "dictation_toggle": "🔊 Read the card",
         "girly_toggle": "👑 Girly mode",
+        "language_toggle": "🌐 Language",
+        "language_title": "App language",
+        "language_intro": "Choose the app language and download its speech model. It is kept for next time.",
+        "language_skip": "Continue without voice",
         "voice_off_hint": "🎤 Voice unavailable: {reason}",
         "listening": "🎧 listening…",
         "thinking": "🤔 …",
@@ -1819,6 +1827,7 @@ class Almathus(tk.Tk):
         self._ui_queue: queue.Queue = queue.Queue()
         self._pump()
 
+        self._build_topbar()  # the always-visible language chip
         self.container = tk.Frame(self, bg=BG)
         self.container.pack(fill="both", expand=True)
 
@@ -2084,6 +2093,7 @@ class Almathus(tk.Tk):
         self._build_voice_toggle(footer)
         self._build_dictation_toggle(footer)
         self._build_girly_toggle(footer)
+        self._build_language_toggle(footer)
         Btn(
             footer,
             T("progress"),
@@ -2251,6 +2261,86 @@ class Almathus(tk.Tk):
         tk.Label(
             panel, text=T("numbers_hint"), font=self.f_hint, fg=MUTED, bg=SURFACE
         ).pack(pady=(2, 6))
+
+    def _build_topbar(self) -> None:
+        """A slim bar above every screen, holding the language chip on the right.
+
+        A real packed row rather than a .place()d overlay: a placed widget is not
+        part of the layout and would float on top of the settings tiles.
+        """
+        self.topbar = tk.Frame(self, bg=BG)
+        self.topbar.pack(side="top", fill="x")
+        self._lang_chip = tk.Frame(
+            self.topbar,
+            bg=SURFACE,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            cursor="hand2",
+        )
+        self._lang_chip.pack(side="right", padx=12, pady=6)
+        self._chip_image: tk.PhotoImage | None = None
+        self._refresh_lang_chip()
+
+    def _refresh_lang_chip(self) -> None:
+        """Redraw the chip as flag + language name for the current language."""
+        for child in self._lang_chip.winfo_children():
+            child.destroy()
+        lang = languages.BY_CODE.get(LANG)
+        name = lang.endonym if lang is not None else LANG
+        self._chip_image = flag_image(LANG, 18)
+        if self._chip_image is not None:
+            tk.Label(self._lang_chip, image=self._chip_image, bg=SURFACE).pack(
+                side="left", padx=(8, 4), pady=3
+            )
+        tk.Label(
+            self._lang_chip, text=name, font=self.f_body, fg=TEXT, bg=SURFACE
+        ).pack(side="left", padx=(0, 8), pady=3)
+        for widget in (self._lang_chip, *self._lang_chip.winfo_children()):
+            widget.bind("<Button-1>", self._chip_click)
+
+    def _chip_click(self, _event: Any) -> None:
+        self._open_language_picker()
+
+    def _build_language_toggle(self, parent: tk.Misc) -> None:
+        lang = languages.BY_CODE.get(LANG)
+        name = lang.endonym if lang is not None else LANG
+        Btn(
+            parent,
+            f"{T('language_toggle')} : {name}",
+            command=self._open_language_picker,
+            font=self.f_body,
+            padx=22,
+            pady=10,
+        ).pack(side="left", padx=8)
+
+    def _open_language_picker(self) -> None:
+        code = LanguagePicker(
+            self, T("language_title"), T("language_intro"), T("language_skip")
+        ).show()
+        if code and code != LANG:
+            self._apply_language(code)
+
+    def _apply_language(self, code: str) -> None:
+        """Switch the running app to another language.
+
+        LANG is read at call time by every string and table, so a switch is
+        mostly rebuilding the voice engines and redrawing the screen — no restart
+        needed. The old mic is stopped and its input gain restored first.
+        """
+        global LANG  # noqa: PLW0603 - the one app-wide setting, switched here
+        LANG = code
+        save_language(code)
+        self.title(T("title"))
+        if self.stt:
+            self.stt.stop()
+            self.stt.restore_input_volume(50)
+        self.tts = voicemod.TTS(LANG) if voicemod else None
+        self.stt = voicemod.SpeechInput(LANG) if voicemod else None
+        self.voice_enabled.set(bool(self.stt and self.stt.available()))
+        self._refresh_lang_chip()
+        self.show_settings()
+        if self.voice_enabled.get():
+            self.after(700, self._calibrate_mic)
 
     def _build_voice_toggle(self, parent):
         # Only offer the toggle when voice input actually works; otherwise show

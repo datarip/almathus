@@ -2619,7 +2619,7 @@ class Almathus(tk.Tk):
 
         self.count_var.trace_add("write", lit)
         lit()
-        self._wrap_count(bar, stepper, list(chips.values()))
+        self._wrap_count(panel, bar, stepper, list(chips.values()))
 
         # -- which numbers (step 1) ---------------------------------------- #
         self._build_number_row(col)
@@ -2755,23 +2755,59 @@ class Almathus(tk.Tk):
         """Usable width of the page box, less the column's own padding."""
         return max(720, min(self.winfo_width(), CONTENT_MAX)) - 96
 
-    def _wrap_count(self, bar, stepper, chips) -> None:
-        """Drop the quick picks under the stepper when the row is too wide.
+    def _wrap_count(self, panel, bar, stepper, chips) -> None:
+        """Fold the quick picks under the stepper when the row is too wide.
 
         The stepper and the five chips are one row on a roomy screen; on a
         narrow one the picks fold onto a second line inside the panel rather
-        than running off the edge — the same choice the footer makes, and the
-        reason the count panel keeps fitting when everything else does.
+        than running off the edge. The decision is re-made on every width
+        change, because the window is built maximized: checked only once at
+        startup, the row stayed on one line however far the window was later
+        dragged in, and the last chips were simply cut off.
         """
-        bar.update_idletasks()
-        if bar.winfo_reqwidth() <= self._page_room():
-            return
-        for w in (*stepper, *chips):
-            w.pack_forget()
-        for c, w in enumerate(stepper):
-            w.grid(row=0, column=c, padx=6, pady=4)
-        for c, w in enumerate(chips):
-            w.grid(row=1, column=c, padx=6, pady=4)
+        widgets = (*stepper, *chips)
+        # The external padding the pack layout would add, so the row's true
+        # width is known without laying it out to measure it.
+        gaps = 54 + 18 + 5 * (len(chips) - 1)
+        state: list[str | None] = [None]
+
+        def clear() -> None:
+            for w in widgets:
+                w.pack_forget()
+                w.grid_forget()
+
+        def one_row() -> None:
+            clear()
+            stepper[0].pack(side="left", padx=(0, 18))
+            for w in stepper[1:]:
+                w.pack(side="left", padx=6)
+            for c, w in enumerate(chips):
+                w.pack(side="left", padx=(18 if c == 0 else 5, 0))
+
+        def two_rows() -> None:
+            clear()
+            for c, w in enumerate(stepper):
+                w.grid(row=0, column=c, padx=6, pady=4)
+            for c, w in enumerate(chips):
+                w.grid(row=1, column=c, padx=6, pady=4)
+
+        def refit(_event=None) -> None:
+            if not bar.winfo_exists():
+                return
+            # The panel's inner frame, not `bar`: `bar` hugs its content and so
+            # does not fire `<Configure>` when only the window gets narrower.
+            avail = panel.inner.winfo_width()
+            if avail <= 1:  # first build, before the window has mapped
+                avail = self._page_room()
+            need = sum(w.winfo_reqwidth() for w in widgets) + gaps
+            want = "two" if need > avail else "one"
+            if want == state[0]:
+                return
+            state[0] = want
+            (two_rows if want == "two" else one_row)()
+
+        panel.canvas.bind("<Configure>", refit, add="+")
+        refit()
 
     def _build_title(self, parent):
         """'<drawing> Almathus' — Mario normally, Peach in girly mode.
@@ -2996,9 +3032,11 @@ class Almathus(tk.Tk):
             bar,
             T("back"),
             command=self.show_settings,
-            font=self.f_body,
+            font=self.f_small,
             bg=CARD_BG,
             fg=TEXT,
+            padx=14,
+            pady=7,
         ).pack(side="left")
         tk.Label(
             bar, text=T("language_title"), font=self.f_title, fg=ACCENT, bg=BG
@@ -4030,9 +4068,11 @@ class Almathus(tk.Tk):
             bar,
             T("back"),
             command=self.show_settings,
-            font=self.f_body,
+            font=self.f_small,
             bg=CARD_BG,
             fg=TEXT,
+            padx=14,
+            pady=7,
         ).pack(side="left")
         tk.Label(
             bar, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG

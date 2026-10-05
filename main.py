@@ -1549,8 +1549,10 @@ class TimeChart(tk.Canvas):
         # with the screen, so a fixed 30 px clipped the date labels on a tall one.
         self.PAD_B = font.metrics("linespace") + 16
         # Both axes are headed inside the canvas, on one line above the plot, so
-        # the two titles sit level with each other however the fonts scale.
-        self.PAD_T = font.metrics("linespace") + 12
+        # the two titles sit level with each other however the fonts scale. The
+        # band is a little taller than the text needs, so the headings are not
+        # jammed against the top edge.
+        self.PAD_T = font.metrics("linespace") + 26
         if self.deck:
             # Room for the grade axis: its labels, `20/20` at their widest, and
             # the title above them saying what they count.
@@ -1662,7 +1664,7 @@ class TimeChart(tk.Canvas):
         # heads share the baseline y0 - 6 — the reader's eye runs straight from
         # one to the other.
         self.create_text(
-            2,
+            8,
             y0 - 10,
             text=T("chart_title"),
             anchor="sw",
@@ -4120,34 +4122,52 @@ class Almathus(tk.Tk):
         f = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
-        # Two stacked rows: the title line first, the buttons and filters under
-        # it. One row held everything side by side, and on a narrow window the
-        # title and the month filter overpainted each other. The title keeps the
-        # top line — flush with where the menu's own title sits — and the
-        # controls share the line below.
+        # On a phone or tablet the title takes the top line and every control
+        # drops below it; on a laptop the back button and title share the top
+        # line and only the filters wrap under. A width test, not a measured
+        # one: the title's emoji is not counted by `font.measure`, so a measured
+        # threshold read the header as fitting on a screen where it did not.
+        stacked = self._page_room() < 780
+
         bar = tk.Frame(f, bg=BG)
         bar.pack(fill="x", padx=28, pady=(18, 6))
-        top = tk.Frame(bar, bg=BG)
-        top.pack(fill="x")
-        Btn(
-            top,
-            T("back"),
-            command=self.show_settings,
-            font=self.f_small,
-            bg=CARD_BG,
-            fg=TEXT,
-            padx=14,
-            pady=7,
-        ).pack(side="left")
-        tk.Label(
-            top, text=T("progress_title"), font=self.f_title, fg=ACCENT, bg=BG
-        ).pack(side="left", padx=20)
+        title_row = tk.Frame(bar, bg=BG)
+        title_row.pack(fill="x")
+        if stacked:
+            buttons = tk.Frame(bar, bg=BG)
+            buttons.pack(fill="x", pady=(8, 0))
+        else:
+            buttons = title_row
+        filters = tk.Frame(bar, bg=BG)
+        filters.pack(fill="x", pady=(8, 0))
 
-        controls = tk.Frame(bar, bg=BG)
-        controls.pack(fill="x", pady=(8, 0))
+        def back_btn(parent) -> Btn:
+            return Btn(
+                parent,
+                T("back"),
+                command=self.show_settings,
+                font=self.f_small,
+                bg=CARD_BG,
+                fg=TEXT,
+                padx=14,
+                pady=7,
+            )
+
+        if not stacked:
+            back_btn(title_row).pack(side="left")
+        else:
+            back_btn(buttons).pack(side="left")
+        tk.Label(
+            title_row,
+            text=T("progress_title"),
+            font=self.f_title,
+            fg=ACCENT,
+            bg=BG,
+        ).pack(side="left", padx=0 if stacked else 20)
+
         # Reconfigured on every filter change: the count belongs to what is shown.
         self._n_label = tk.Label(
-            controls,
+            buttons,
             text=T("n_sessions", n=len(sessions)),
             font=self.f_small,
             fg=MUTED,
@@ -4161,9 +4181,9 @@ class Almathus(tk.Tk):
             )
             return
 
-        # Export lives on the title line, against its right edge.
+        # Export lives against the right edge of the button line.
         pdf_btn = Btn(
-            top,
+            buttons,
             T("pdf_button"),
             command=self._export_pdf,
             font=self.f_small,
@@ -4174,7 +4194,9 @@ class Almathus(tk.Tk):
         )
         pdf_btn.pack(side="right", padx=(0, 14))
         Tooltip(pdf_btn, T("pdf_tip"), self.f_hint)
-        self._pdf_status = tk.Label(top, text="", font=self.f_small, fg=MUTED, bg=BG)
+        self._pdf_status = tk.Label(
+            buttons, text="", font=self.f_small, fg=MUTED, bg=BG
+        )
         self._pdf_status.pack(side="right", padx=(0, 12))
 
         # The month filter, on the controls line. Every month the log covers,
@@ -4193,7 +4215,7 @@ class Almathus(tk.Tk):
         )
         self._all_sessions = sessions
         picker = Dropdown(
-            controls,
+            filters,
             [(None, T("month_all"))] + [(ym, month_label(ym)) for ym in listed],
             self._month,
             self._select_month,
@@ -4209,7 +4231,7 @@ class Almathus(tk.Tk):
         # The chart's key, beside the filter: which colour is which curve. The
         # grade key only appears while the month on show has a grade to draw, so
         # a legend never promises a line that is not there.
-        legend = tk.Frame(controls, bg=BG)
+        legend = tk.Frame(filters, bg=BG)
         legend.pack(side="left", padx=(20, 0))
         self._legend_key(legend, ACCENT, T("legend_time")).pack(side="left")
         self._legend_grade = self._legend_key(legend, CHART_GRADE, T("legend_grade"))

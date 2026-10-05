@@ -945,36 +945,61 @@ def rounded_photo(
     cached = _ROUND_CACHE.get(key)
     if cached is not None:
         return cached
-    if len(_ROUND_CACHE) > 512:
+    if len(_ROUND_CACHE) > 2048:
         _ROUND_CACHE.clear()
     fill_rgb = _hex_rgb(fill)
     border_rgb = _hex_rgb(border) if border else fill_rgb
     r = max(0, min(radius, w // 2, h // 2))
     bw = max(0, min(border_width, w // 2, h // 2))
+    ri = max(0, r - bw)
+    fill4 = bytes((*fill_rgb, 255))
+    border4 = bytes((*border_rgb, 255))
     px = bytearray(w * h * 4)
+    # The shape is x-monotone — at any row it is one run of pixels — so only the
+    # few columns straddling its left/right edges need a coverage sample. The
+    # run between them is solid, filled wholesale with a slice (C speed). That
+    # turns an O(w·h) Python loop into O(h·edges), which is what makes resizing
+    # a window cheap enough to keep up with the pointer.
     for y in range(h):
+        cy = y + 0.5
+        dyo = max(0.0, r - cy, cy - (h - r))
+        inso = r - math.sqrt(max(0.0, r * r - dyo * dyo)) if dyo and r else 0.0
+        left_o, right_o = inso, w - inso
+        if bw:
+            cyi = cy - bw
+            dyi = max(0.0, ri - cyi, cyi - (h - 2 * bw - ri))
+            insi = ri - math.sqrt(max(0.0, ri * ri - dyi * dyi)) if dyi and ri else 0.0
+            left_i, right_i = bw + insi, w - bw - insi
+        else:
+            left_i, right_i = left_o, right_o
         base = y * w * 4
-        for x in range(w):
-            a_out = _rrect_alpha(x, y, w, h, r, 0, 0)
-            if a_out <= 0.0:
-                continue
-            if bw > 0:
-                a_in = _rrect_alpha(
-                    x, y, w - 2 * bw, h - 2 * bw, max(0, r - bw), bw, bw
+        # outer run (border colour), then the inner run (fill) painted over it
+        ox0, ox1 = math.ceil(left_o), math.ceil(right_o) - 1
+        if 0 <= ox0 <= ox1 < w:
+            start = base + ox0 * 4
+            px[start : start + (ox1 - ox0 + 1) * 4] = border4 * (ox1 - ox0 + 1)
+        ix0, ix1 = math.ceil(left_i), math.ceil(right_i) - 1
+        if 0 <= ix0 <= ix1 < w:
+            start = base + ix0 * 4
+            px[start : start + (ix1 - ix0 + 1) * 4] = fill4 * (ix1 - ix0 + 1)
+        # the antialiased columns at the (up to four) vertical edges of the runs
+        edges = (left_o, right_o) if not bw else (left_o, left_i, right_i, right_o)
+        for edge in edges:
+            for x in range(max(0, math.floor(edge) - 1), min(w, math.ceil(edge) + 2)):
+                a_out = _rrect_alpha(x, y, w, h, r, 0, 0)
+                if a_out <= 0.0:
+                    continue
+                a_in = (
+                    _rrect_alpha(x, y, w - 2 * bw, h - 2 * bw, ri, bw, bw)
+                    if bw
+                    else a_out
                 )
                 t = a_in / a_out
-                rgb = (
-                    round(fill_rgb[0] * t + border_rgb[0] * (1 - t)),
-                    round(fill_rgb[1] * t + border_rgb[1] * (1 - t)),
-                    round(fill_rgb[2] * t + border_rgb[2] * (1 - t)),
-                )
-            else:
-                rgb = fill_rgb
-            i = base + x * 4
-            px[i] = rgb[0]
-            px[i + 1] = rgb[1]
-            px[i + 2] = rgb[2]
-            px[i + 3] = round(a_out * 255)
+                i = base + x * 4
+                px[i] = round(fill_rgb[0] * t + border_rgb[0] * (1 - t))
+                px[i + 1] = round(fill_rgb[1] * t + border_rgb[1] * (1 - t))
+                px[i + 2] = round(fill_rgb[2] * t + border_rgb[2] * (1 - t))
+                px[i + 3] = round(a_out * 255)
     img = tk.PhotoImage(data=base64.b64encode(_png_bytes(w, h, px)), format="png")
     _ROUND_CACHE[key] = img
     return img
@@ -1004,20 +1029,43 @@ class RoundedPanel:
         self.canvas = tk.Canvas(parent, bg=page or BG, highlightthickness=0, bd=0)
         self.inner = tk.Frame(self.canvas, bg=self.fill)
         self._win = self.canvas.create_window(pad, pad, window=self.inner, anchor="nw")
-        self._size = (0, 0)
+        self._size = (0, 0, 0)
+        # Tracked from the events rather than re-asked: `winfo_reqheight` inside
+        # a `<Configure>` handler forces a fresh layout pass each time, and that
+        # is what made dragging a window edge stutter.
+        self._inner_h = self.inner.winfo_reqheight()
+        self._inner_w = self.inner.winfo_reqwidth()
+        self._win_w = 0
         self.canvas.bind("<Configure>", self._fit)
         self.inner.bind("<Configure>", self._fit)
 
-    def _fit(self, _event=None) -> None:
-        w = self.canvas.winfo_width()
+    def _fit(self, event=None) -> None:
+        if event is not None and event.widget is self.inner:
+            self._inner_h = event.height
+            self._inner_w = event.width
+        w = event.width if event is not None and event.widget is self.canvas else None
+        if w is None:
+            w = self.canvas.winfo_width()
         if w <= 1:
-            w = self.inner.winfo_reqwidth() + 2 * self.pad
-        h = self.inner.winfo_reqheight() + 2 * self.pad
-        if (w, h) == self._size:
+            w = self._inner_w + 2 * self.pad
+        h = self._inner_h + 2 * self.pad
+        # The content keeps its natural width and is centred, instead of being
+        # stretched to the panel's: restretching it would re-lay out every child
+        # on every pixel of the drag, which is the other half of the stutter.
+        inner_w = min(self._inner_w, max(1, w - 2 * self.pad))
+        if (w, h, inner_w) == self._size:
             return
-        self._size = (w, h)
-        self.canvas.configure(height=h)
-        self.canvas.itemconfigure(self._win, width=max(1, w - 2 * self.pad))
+        # Only touch the canvas height when it moved: setting the same height
+        # still re-lays out the whole page, and during a width drag it never does.
+        if h != self._size[1]:
+            self.canvas.configure(height=h)
+        # Only its own width, and only when it moved — a repack of the inner
+        # frame is what relayouts the children.
+        if inner_w != self._win_w:
+            self.canvas.itemconfigure(self._win, width=inner_w)
+            self._win_w = inner_w
+        self._size = (w, h, inner_w)
+        self.canvas.coords(self._win, (w - inner_w) // 2, self.pad)
         self._img = rounded_photo(w, h, self.radius, self.fill, self.border, 1)
         self.canvas.delete("bg")
         self.canvas.create_image(0, 0, anchor="nw", image=self._img, tags="bg")
@@ -1072,6 +1120,7 @@ class Btn(tk.Canvas):
         self._compound = compound
         self._radius = radius
         self._hover = False
+        self._cfg_size: tuple[int, int] | None = None
         page = self._parent_bg(parent)
         super().__init__(
             parent, highlightthickness=0, bd=0, bg=page, cursor="hand2", **kw
@@ -1082,7 +1131,19 @@ class Btn(tk.Canvas):
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_press)
         self.bind("<ButtonRelease-1>", self._on_release)
-        self.bind("<Configure>", self._redraw)
+        self.bind("<Configure>", self._on_configure)
+        self._redraw()
+
+    def _on_configure(self, event) -> None:
+        """Redraw only on a real size change.
+
+        A resize fires `<Configure>` several times per widget (the geometry
+        settles, the scrollbar toggles, the parent re-lays out). Redrawing a
+        raster on each was most of the cost of dragging a window edge — and the
+        size is the same in nearly all of them."""
+        if (event.width, event.height) == self._cfg_size:
+            return
+        self._cfg_size = (event.width, event.height)
         self._redraw()
 
     # -- compatible, Label-like surface ------------------------------------ #
@@ -2315,6 +2376,17 @@ class Almathus(tk.Tk):
         canvas.pack(side="left", fill="both", expand=True)
         bind_wheel(canvas, lambda px: canvas.yview_scroll(px, "units"))
 
+        def show_bar():
+            # Overlaid, not packed: a packed bar steals 15 px from the canvas,
+            # which re-centres the whole page and flips the bar on and off at
+            # the threshold — a width wobble on every drag.
+            if not scrollbar.winfo_ismapped():
+                scrollbar.place(relx=1.0, rely=0.0, anchor="ne", relheight=1.0)
+
+        def hide_bar():
+            if scrollbar.winfo_ismapped():
+                scrollbar.place_forget()
+
         # The canvas window is a holder, not the column itself: a widget cannot
         # be both a canvas item and managed by pack (which is where the column's
         # padding comes from), so the column lives packed inside the holder and
@@ -2322,10 +2394,11 @@ class Almathus(tk.Tk):
         holder = tk.Frame(canvas, bg=BG)
         window = canvas.create_window((0, 0), window=holder, anchor="nw")
 
-        size = [(0, 0, 0)]
+        size: list[int] = [0, 0]
         shown = [False]
+        holder_h = [holder.winfo_reqheight()]
 
-        def fit_scrolled(_event=None):
+        def fit_scrolled(event=None):
             """Size the scrolled window to the content (or the view) and show
             the scrollbar only when there is something to scroll. The holder is
             held to the view's height when the content fits, so the column's
@@ -2334,14 +2407,21 @@ class Almathus(tk.Tk):
             centred, and shrunk to the view when the window is narrower."""
             if not canvas.winfo_exists():
                 return
+            if event is not None and event.widget is holder:
+                holder_h[0] = event.height  # no reqheight: that forces a layout
             cw, ch = canvas.winfo_width(), canvas.winfo_height()
             box = min(cw, CONTENT_MAX)
-            h = max(holder.winfo_reqheight(), ch)
-            if size[0] != (cw, h, box):
-                size[0] = (cw, h, box)
-                canvas.itemconfigure(window, width=box, height=h)
+            h = max(holder_h[0], ch)
+            # The width changes on every drag step, but the scrollregion only
+            # depends on the *height*: leaving it alone while only the width
+            # moved spares the canvas a full-area repaint each step.
+            if box != size[0] or h != size[1]:
+                canvas.itemconfigure(window, width=box)
                 canvas.coords(window, (cw - box) // 2, 0)
-                canvas.configure(scrollregion=(0, 0, cw, h))
+                if h != size[1]:
+                    canvas.itemconfigure(window, height=h)
+                    canvas.configure(scrollregion=(0, 0, cw, h))
+                size[0], size[1] = box, h
             # Decide from the measured heights, not from `canvas.yview()`: the
             # view fraction is only recomputed once Tk processes the geometry
             # set just above, so reading it here returns the previous state and
@@ -2350,9 +2430,9 @@ class Almathus(tk.Tk):
             if need_bar != shown[0]:
                 shown[0] = need_bar
                 if need_bar:
-                    scrollbar.pack(side="right", fill="y")
+                    show_bar()
                 else:
-                    scrollbar.pack_forget()
+                    hide_bar()
                     canvas.yview_moveto(0)
             scrollbar.set(*canvas.yview())
 
@@ -2743,7 +2823,6 @@ class Almathus(tk.Tk):
         btn = getattr(self, "_progress_btn", None)
         if btn is None or not btn.winfo_exists():
             return
-        self.topbar.update_idletasks()
         w = self.topbar.winfo_width()
         if w <= 1:  # not mapped yet (or hidden); re-placed on <Configure>
             return

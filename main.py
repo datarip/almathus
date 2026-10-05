@@ -2756,35 +2756,53 @@ class Almathus(tk.Tk):
             self.update_idletasks()
 
     def _layout_footer(self, footer) -> None:
-        """Lay the switches out on the page box, sharing its width evenly.
+        """Lay the switches out in as many columns as their labels fit.
 
         They used to be a packed, content-sized row centred under the panels, so
         they floated in the middle at their own width while everything else met
-        the box's edges. They now divide the same width in equal columns — and
-        fold onto a second row when the box is too narrow to hold them — so the
-        footer reads as the third row of the same grid as the tiles above it.
+        the box's edges. Now they divide the box's width in equal columns, and
+        the number of columns is chosen from the widest label: three across on a
+        roomy screen, two when that still fits each label, one when it does not.
+        A fixed two-per-row split clipped the long "Répondre à la voix : ON" and
+        "Mode princesse : ON" on a narrow screen; measuring the labels first
+        means a button only shares a row when sharing still leaves it room.
         """
         buttons = footer.winfo_children()
         if not buttons:
             return
-        footer.update_idletasks()
         if len(buttons) == 1:
             buttons[0].pack_forget()
             buttons[0].pack(side="left", padx=8)
             return
-        per_row = (
-            len(buttons)
-            if footer.winfo_reqwidth() <= self._page_room()
-            else (len(buttons) + 1) // 2
-        )
-        # Pack and grid cannot share a parent, so the row is unpacked first and
-        # every button re-placed; both geometry managers are the frame's own.
-        for b in buttons:
-            b.pack_forget()
-        for c in range(per_row):
-            footer.grid_columnconfigure(c, weight=1, uniform="foot")
-        for i, b in enumerate(buttons):
-            b.grid(row=i // per_row, column=i % per_row, sticky="ew", padx=10, pady=6)
+        pad = 10
+        laid: list[int] = [0]  # the per-row count currently on screen
+
+        def relayout(_event=None) -> None:
+            if not footer.winfo_exists():
+                return
+            avail = footer.winfo_width()
+            if avail <= 1:  # not mapped yet; the page box is the best estimate
+                avail = self._page_room()
+            widest = max(b.winfo_reqwidth() for b in buttons) + 2 * pad
+            per_row = max(1, min(len(buttons), avail // widest))
+            if per_row == laid[0]:
+                return
+            laid[0] = per_row
+            # Pack and grid cannot share a parent, so unpack first; both
+            # geometry managers are the frame's own.
+            for b in buttons:
+                b.pack_forget()
+                b.grid_forget()
+            for c in range(per_row):
+                footer.grid_columnconfigure(c, weight=1, uniform="foot")
+            for i, b in enumerate(buttons):
+                b.grid(
+                    row=i // per_row, column=i % per_row, sticky="ew", padx=pad, pady=6
+                )
+
+        # Re-decide when the window is resized, not only at build time.
+        footer.bind("<Configure>", relayout, add="+")
+        relayout()
 
     def _page_room(self) -> int:
         """Usable width of the page box, less the column's own padding."""

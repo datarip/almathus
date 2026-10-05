@@ -1833,6 +1833,7 @@ class Almathus(tk.Tk):
         self._pump_job = None  # the worker-thread -> Tk callback pump
         self._stopping = False  # latched on quit: schedule no more timers
         self._voice_mic_bad = False
+        self._pill_size: tuple[int, int] | None = None  # cached question-pill size
 
         # sound effects (a no-op if no command-line player is installed)
         self.sfx = sfx.Sound(SOUNDS_DIR)
@@ -2647,19 +2648,18 @@ class Almathus(tk.Tk):
         body.rowconfigure(0, weight=1)  # top spacer
         body.rowconfigure(4, weight=1)  # bottom spacer (equal -> group centered)
 
-        # The question pill. It also carries the GO! cue: when the reading ends
-        # the pill flashes GO! in place and then shows the question again, so the
-        # child's eyes — already on the card — see the moment to answer.
+        # The question pill, fixed at the width of the widest question so it does
+        # not retract when it flashes the shorter GO!. It carries that cue: when
+        # the reading ends it shows GO! in place and then the question again, so
+        # the child's eyes — already on the card — see the moment to answer.
+        width, height = self._pill_px()
+        pill = tk.Frame(body, bg=CARD_BG, width=width, height=height)
+        pill.grid(row=1, column=0, pady=(0, 8))
+        pill.pack_propagate(False)  # stay this size whatever the text
         self.question_lbl = tk.Label(
-            body,
-            text=card.text,
-            font=self.f_huge,
-            fg=TEXT,
-            bg=CARD_BG,
-            padx=80,
-            pady=12,
+            pill, text=card.text, font=self.f_huge, fg=TEXT, bg=CARD_BG
         )
-        self.question_lbl.grid(row=1, column=0, pady=(0, 8))
+        self.question_lbl.pack(expand=True)
 
         inputs = tk.Frame(body, bg=BG)
         inputs.grid(row=2, column=0, pady=(0, 8))
@@ -2785,6 +2785,22 @@ class Almathus(tk.Tk):
         if self.card_start is None:
             return 0.0
         return max(0.0, time.perf_counter() - self.card_start)
+
+    def _pill_px(self) -> tuple[int, int]:
+        """Pixel size of the question pill — as wide as the widest question.
+
+        Constant so the pill never changes size: a question is shown, GO! flashes
+        in the same box, the question returns. Measured from the session's font
+        (fixed once the window is up) and cached, with a little room over the
+        longest card, which is a division like "100 ÷ 10".
+        """
+        if self._pill_size is None:
+            widest = max(
+                self.f_huge.measure(text)
+                for text in ("GO !", "GO!", "100 ÷ 10", "20 + 10", "20 − 10", "10 × 10")
+            )
+            self._pill_size = (widest + 160, self.f_huge.metrics("linespace") + 24)
+        return self._pill_size
 
     def _after_question(self, card: Card) -> None:
         """The question has finished being read: cue GO! and open the mic."""

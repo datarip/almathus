@@ -349,6 +349,7 @@ def test_card_hint_waits_then_go():
         assert app.card_hint is not None, "no wait cue on a dictated card"
         assert app.card_hint.cget("text") == almathus.T("wait_answer")
         assert app.question_lbl.cget("text") == card.text
+        pill_width = app.question_lbl.master.winfo_reqwidth()
         assert not app.stt.listening(), "the mic opened before the question ended"
 
         app.tts.finish()  # the question has finished being read
@@ -356,6 +357,9 @@ def test_card_hint_waits_then_go():
             app, lambda: app.question_lbl.cget("text") == almathus.T("go"), 5
         ), "the pill never showed GO"
         assert str(app.question_lbl.cget("fg")) == almathus.GOOD
+        assert app.question_lbl.master.winfo_reqwidth() == pill_width, (
+            "the pill changed width when GO! replaced the question"
+        )
         assert app.card_hint.cget("text") == "", "the wait cue was not cleared"
         assert app.stt.listening(), "the mic did not open with GO"
 

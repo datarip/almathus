@@ -873,6 +873,10 @@ def difficult_cards(
 
 BTN_RADIUS = 12  # px; clamped to half the height so short buttons stay sane
 BTN_GAP = 8  # px between an icon and its label
+# The menu's page is a centred box no wider than this. Wider screens keep the
+# content readable instead of stretching the tiles to the window edges; narrower
+# ones shrink the box to fit, so it stays responsive rather than fixed.
+CONTENT_MAX = 1400
 
 
 def _round_rect(canvas, x1, y1, x2, y2, r, **kw):
@@ -2203,7 +2207,7 @@ class Almathus(tk.Tk):
         holder = tk.Frame(canvas, bg=BG)
         window = canvas.create_window((0, 0), window=holder, anchor="nw")
 
-        size = [(0, 0)]
+        size = [(0, 0, 0)]
         shown = [False]
 
         def fit_scrolled(_event=None):
@@ -2211,14 +2215,17 @@ class Almathus(tk.Tk):
             the scrollbar only when there is something to scroll. The holder is
             held to the view's height when the content fits, so the column's
             `expand` still centers it; taller, it takes its natural height and
-            scrolls."""
+            scrolls. Horizontally it is the page box: no wider than CONTENT_MAX,
+            centred, and shrunk to the view when the window is narrower."""
             if not canvas.winfo_exists():
                 return
             cw, ch = canvas.winfo_width(), canvas.winfo_height()
+            box = min(cw, CONTENT_MAX)
             h = max(holder.winfo_reqheight(), ch)
-            if size[0] != (cw, h):
-                size[0] = (cw, h)
-                canvas.itemconfigure(window, width=cw, height=h)
+            if size[0] != (cw, h, box):
+                size[0] = (cw, h, box)
+                canvas.itemconfigure(window, width=box, height=h)
+                canvas.coords(window, (cw - box) // 2, 0)
                 canvas.configure(scrollregion=(0, 0, cw, h))
             # Decide from the measured heights, not from `canvas.yview()`: the
             # view fraction is only recomputed once Tk processes the geometry
@@ -2242,7 +2249,7 @@ class Almathus(tk.Tk):
         # top of whatever comes after it (that's how the voice toggle ended up
         # covering the operation tiles).
         col = tk.Frame(holder, bg=BG)
-        col.pack(expand=True, padx=24, pady=16)
+        col.pack(fill="x", expand=True, padx=24, pady=16)
 
         # -- how many cards (one compact toolbar row) ----------------------- #
         self.count_var = tk.IntVar(value=self.n_cards)
@@ -2252,41 +2259,50 @@ class Almathus(tk.Tk):
         panel.pack(fill="x", pady=(14, 18))
         bar = tk.Frame(panel, bg=SURFACE)
         bar.pack(pady=12)
-        tk.Label(bar, text=T("how_many"), font=self.f_body, fg=MUTED, bg=SURFACE).pack(
-            side="left", padx=(0, 18)
-        )
+        stepper: list[tk.Widget] = [
+            tk.Label(bar, text=T("how_many"), font=self.f_body, fg=MUTED, bg=SURFACE)
+        ]
 
         def bump(d):
             self.count_var.set(max(1, min(99, self.count_var.get() + d)))
 
-        Btn(
-            bar,
-            "−",
-            command=lambda: bump(-1),
-            font=self.f_mode,
-            bg=CARD_BG,
-            fg=TEXT,
-            width=2,
-            pady=0,
-        ).pack(side="left", padx=6)
-        tk.Label(
-            bar,
-            textvariable=self.count_var,
-            font=self.f_mode,
-            fg=ACCENT,
-            bg=SURFACE,
-            width=3,
-        ).pack(side="left")
-        Btn(
-            bar,
-            "+",
-            command=lambda: bump(1),
-            font=self.f_mode,
-            bg=CARD_BG,
-            fg=TEXT,
-            width=2,
-            pady=0,
-        ).pack(side="left", padx=6)
+        stepper.append(
+            Btn(
+                bar,
+                "−",
+                command=lambda: bump(-1),
+                font=self.f_mode,
+                bg=CARD_BG,
+                fg=TEXT,
+                width=2,
+                pady=0,
+            )
+        )
+        stepper.append(
+            tk.Label(
+                bar,
+                textvariable=self.count_var,
+                font=self.f_mode,
+                fg=ACCENT,
+                bg=SURFACE,
+                width=3,
+            )
+        )
+        stepper.append(
+            Btn(
+                bar,
+                "+",
+                command=lambda: bump(1),
+                font=self.f_mode,
+                bg=CARD_BG,
+                fg=TEXT,
+                width=2,
+                pady=0,
+            )
+        )
+        stepper[0].pack(side="left", padx=(0, 18))
+        for w in stepper[1:]:
+            w.pack(side="left", padx=6)
 
         # quick picks double as a segmented control: the live value stays lit
         chips: dict[int, Btn] = {}
@@ -2311,6 +2327,7 @@ class Almathus(tk.Tk):
 
         self.count_var.trace_add("write", lit)
         lit()
+        self._wrap_count(bar, stepper, list(chips.values()))
 
         # -- which numbers (step 1) ---------------------------------------- #
         self._build_number_row(col)
@@ -2412,8 +2429,7 @@ class Almathus(tk.Tk):
         """
         buttons = footer.winfo_children()
         footer.update_idletasks()
-        room = self.winfo_screenwidth() - 96  # the column's padding, both sides
-        if len(buttons) < 2 or footer.winfo_reqwidth() <= room:
+        if len(buttons) < 2 or footer.winfo_reqwidth() <= self._page_room():
             return
         # Pack and grid cannot share a parent, so the row is unpacked first and
         # every button re-placed; both geometry managers are the frame's own.
@@ -2422,6 +2438,28 @@ class Almathus(tk.Tk):
             b.pack_forget()
         for i, b in enumerate(buttons):
             b.grid(row=i // per_row, column=i % per_row, padx=8, pady=4, sticky="ew")
+
+    def _page_room(self) -> int:
+        """Usable width of the page box, less the column's own padding."""
+        return max(720, min(self.winfo_width(), CONTENT_MAX)) - 96
+
+    def _wrap_count(self, bar, stepper, chips) -> None:
+        """Drop the quick picks under the stepper when the row is too wide.
+
+        The stepper and the five chips are one row on a roomy screen; on a
+        narrow one the picks fold onto a second line inside the panel rather
+        than running off the edge — the same choice the footer makes, and the
+        reason the count panel keeps fitting when everything else does.
+        """
+        bar.update_idletasks()
+        if bar.winfo_reqwidth() <= self._page_room():
+            return
+        for w in (*stepper, *chips):
+            w.pack_forget()
+        for c, w in enumerate(stepper):
+            w.grid(row=0, column=c, padx=6, pady=4)
+        for c, w in enumerate(chips):
+            w.grid(row=1, column=c, padx=6, pady=4)
 
     def _build_title(self, parent):
         """'<drawing> Almathus' — Mario normally, Peach in girly mode."""
@@ -2542,12 +2580,15 @@ class Almathus(tk.Tk):
         """The menu's slim bar: stats on the left, language on the right.
 
         Named by an icon so a child reads them at a glance: a chart for the
-        stats, the country's own flag for the language. A real packed row rather
-        than a .place()d overlay: a placed widget is not part of the layout and
-        would float on top of the settings tiles.
+        stats, the country's own flag for the language. The two buttons are
+        placed rather than packed so they can sit on the *page box* the menu
+        below uses — flush with its edges, not the window's. That is safe here
+        because the bar is its own frame with nothing but these two buttons:
+        they cannot float over the screen the way a placed settings tile did.
         """
         self.topbar = tk.Frame(self, bg=BG)
         self.topbar.pack(side="top", fill="x")
+        self.topbar.bind("<Configure>", self._place_topbar)
         self._populate_topbar()
 
     def _populate_topbar(self) -> None:
@@ -2560,7 +2601,7 @@ class Almathus(tk.Tk):
         for w in self.topbar.winfo_children():
             w.destroy()
         self.topbar.config(bg=BG)
-        Btn(
+        self._progress_btn = Btn(
             self.topbar,
             T("progress"),
             command=self.show_progress,
@@ -2569,7 +2610,7 @@ class Almathus(tk.Tk):
             fg=TEXT,
             padx=14,
             pady=6,
-        ).pack(side="left", padx=12, pady=6)
+        )
         self._chip_image: tk.PhotoImage | None = None
         self._lang_btn = Btn(
             self.topbar,
@@ -2582,8 +2623,37 @@ class Almathus(tk.Tk):
             pady=6,
             compound="left",
         )
-        self._lang_btn.pack(side="right", padx=12, pady=6)
         self._refresh_lang_chip()
+        self._place_topbar()
+
+    def _place_topbar(self, _event=None) -> None:
+        """Put the two buttons on the page box, aligned with the menu below."""
+        btn = getattr(self, "_progress_btn", None)
+        if btn is None or not btn.winfo_exists():
+            return
+        self.topbar.update_idletasks()
+        w = self.topbar.winfo_width()
+        if w <= 1:  # not mapped yet (or hidden); re-placed on <Configure>
+            return
+        box = min(w, CONTENT_MAX)
+        left = (w - box) // 2
+        # 24 is the column's own padding, so the buttons line up with the panel
+        # edges rather than with the box, which is a hair wider.
+        inset = 24
+        pad = 8
+        height = (
+            max(
+                self._progress_btn.winfo_reqheight(),
+                self._lang_btn.winfo_reqheight(),
+            )
+            + 2 * pad
+        )
+        if self.topbar.winfo_height() != height:
+            self.topbar.configure(height=height)
+        self._progress_btn.place(x=left + inset, y=pad)
+        self._lang_btn.place(
+            x=left + box - inset - self._lang_btn.winfo_reqwidth(), y=pad
+        )
 
     def _refresh_lang_chip(self) -> None:
         """Redraw the chip as flag + language name for the current language."""
@@ -2591,6 +2661,7 @@ class Almathus(tk.Tk):
         name = lang.endonym if lang is not None else LANG
         self._chip_image = flag_image(LANG, 18)
         self._lang_btn.config(image=self._chip_image, text=name)
+        self._place_topbar()
 
     def _open_language_picker(self) -> None:
         code = LanguagePicker(

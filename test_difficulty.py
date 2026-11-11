@@ -192,6 +192,25 @@ def test_regional_english_log_uses_english_names():
         assert row.split(",")[1] == "-1 and -2"
 
 
+def test_language_without_translated_names_uses_english():
+    """A language the UI falls back to English for writes English names too."""
+    assert resultslog.famille_label("subtraction", {1, 2}, "de") == "-1 and -2"
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "results.csv"
+        resultslog.append_session(
+            day=date(2026, 8, 19),
+            famille=resultslog.famille_label("subtraction", {1, 2}, "de"),
+            seconds=120.0,
+            cards=20,
+            correct=18,
+            lang="de",
+            path=path,
+        )
+        header, row = path.read_text().splitlines()
+        assert header == "date,family,time,cards,grade,average_time_per_card,difficulty"
+        assert row.split(",")[1] == "-1 and -2"
+
+
 def logged(day: date, famille: str, difficultes: list[str]):
     """One row of the log, as `load_sessions` would hand it over."""
     return resultslog.Session(
@@ -317,6 +336,7 @@ def main() -> int:
         test_column_is_added_to_an_existing_log,
         test_english_log_names_the_column_in_english,
         test_regional_english_log_uses_english_names,
+        test_language_without_translated_names_uses_english,
         test_deck_deals_the_repeats_twice,
         test_spread_separates_twins,
     )

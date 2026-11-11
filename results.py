@@ -552,7 +552,7 @@ def famille_label(mode: str, numbers: set[int], lang: str = "fr") -> str:
         return sign
     if len(nums) >= 4 and nums == list(range(nums[0], nums[-1] + 1)):
         return f"{sign}{nums[0]}–{nums[-1]}"
-    return JOINER.get(lang, JOINER.get(base_language(lang), " et ")).join(
+    return JOINER.get(lang, JOINER.get(base_language(lang), " and ")).join(
         f"{sign}{n}" for n in nums
     )
 
@@ -638,7 +638,9 @@ def append_session(
     except OSError:
         pass
 
-    names = HEADERS.get(lang, HEADERS.get(base_language(lang), HEADERS["fr"]))
+    # A language with no translated column names falls back to English, exactly
+    # as the interface does, rather than to French.
+    names = HEADERS.get(lang, HEADERS.get(base_language(lang), HEADERS["en"]))
     write_header = not header
     if write_header:
         header = [names[f] for f in FIELDS]

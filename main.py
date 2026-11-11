@@ -1236,6 +1236,20 @@ class Btn(tk.Canvas):
         self._fill, self._fg = bg, fg
         self._redraw()
 
+    def remeasure(self) -> None:
+        """Fit the button to its text again, after a named font changed size.
+
+        Tk resizes every label that uses a named font on its own, but a `Btn`
+        is a canvas: it measures its text once and keeps that width, so after a
+        rescue its request still describes the text at the old size — wide
+        enough to push the row it is in onto more lines than it needs.
+        """
+        reqw, reqh = self._measure()
+        if (reqw, reqh) != (self._reqw, self._reqh):
+            self._reqw, self._reqh = reqw, reqh
+            super().configure(width=reqw, height=reqh)
+        self._redraw()
+
     # -- geometry + painting ------------------------------------------------ #
     @staticmethod
     def _norm_font(font):
@@ -2688,6 +2702,7 @@ class Almathus(tk.Tk):
             font: tkfont.Font = getattr(self, name)
             font.configure(size=max(11, round(size * scale)), weight=weight)
         self._type_scale = scale
+        self._remeasure_buttons()
         self._header_band = self._measure_header_band()
         self._refresh_title_icon()
         # The question pill is measured from the type, so it is stale now.
@@ -2695,6 +2710,17 @@ class Almathus(tk.Tk):
         topbar = getattr(self, "topbar", None)
         if topbar is not None and topbar.winfo_manager():
             self._refresh_lang_chip()  # its flag follows the type too
+
+    def _remeasure_buttons(self, parent: tk.Misc | None = None) -> None:
+        """Re-fit every button to the type, at whatever depth it sits.
+
+        Only the canvas buttons cache their text's size; labels and entry fields
+        follow the font handle on their own.
+        """
+        for child in (parent or self).winfo_children():
+            if isinstance(child, Btn):
+                child.remeasure()
+            self._remeasure_buttons(child)
 
     # -- frame helper ------------------------------------------------------ #
     def _hush(self):
@@ -3125,6 +3151,13 @@ class Almathus(tk.Tk):
         "Mode princesse : ON" on a narrow screen; measuring the labels first
         means a button only shares a row when sharing still leaves it room.
 
+        When the last row is short — three switches in two columns — it keeps the
+        same button width as the rows above and is *centred* under them. Left
+        alone, the odd switch sat against the left edge with a hole beside it,
+        which is not a layout so much as a mistake with a border. Every place is
+        two grid columns wide, so a row of one can start one column in and land
+        half a button's width from either edge.
+
         `on_relayout` is called after the columns change: the screen's height is
         measured once when it is built, and a later fold onto more rows makes
         the content taller — without a nudge the scroll region stayed at the old
@@ -3132,10 +3165,6 @@ class Almathus(tk.Tk):
         """
         buttons = footer.winfo_children()
         if not buttons:
-            return
-        if len(buttons) == 1:
-            buttons[0].pack_forget()
-            buttons[0].pack(side="left", padx=8)
             return
         pad = 10
         laid: list[int] = [0]  # the per-row count currently on screen
@@ -3147,6 +3176,14 @@ class Almathus(tk.Tk):
             if avail <= 1:  # not mapped yet; the page box is the best estimate
                 avail = self._page_room()
             widest = max(b.winfo_reqwidth() for b in buttons) + 2 * pad
+            # Every switch asks for the same width. The grid stretches them to
+            # its cells anyway, but Tk only levels its uniform columns when
+            # their own content is the same size — with a short switch beside a
+            # long one the columns stayed uneven, and the centred row landed a
+            # few pixels off the middle of the box.
+            for b in buttons:
+                if b.winfo_reqwidth() != widest - 2 * pad:
+                    b.configure(width=widest - 2 * pad)
             per_row = max(1, min(len(buttons), avail // widest))
             if per_row == laid[0]:
                 return
@@ -3160,15 +3197,22 @@ class Almathus(tk.Tk):
             # used to leave the old columns weighted and `uniform`, so the grid
             # stayed three columns wide with one button in it — wider than the
             # footer, which pack then centred and clipped off both edges.
-            for c in range(len(buttons)):
+            for c in range(2 * len(buttons)):
                 footer.grid_columnconfigure(
                     c,
-                    weight=1 if c < per_row else 0,
-                    uniform="foot" if c < per_row else "",
+                    weight=1 if c < 2 * per_row else 0,
+                    uniform="foot" if c < 2 * per_row else "",
                 )
             for i, b in enumerate(buttons):
+                row, place = divmod(i, per_row)
+                in_row = min(per_row, len(buttons) - row * per_row)
                 b.grid(
-                    row=i // per_row, column=i % per_row, sticky="ew", padx=pad, pady=6
+                    row=row,
+                    column=place * 2 + (per_row - in_row),
+                    columnspan=2,
+                    sticky="ew",
+                    padx=pad,
+                    pady=6,
                 )
             if on_relayout is not None:
                 self.update_idletasks()

@@ -2456,6 +2456,29 @@ class Almathus(tk.Tk):
         # fullscreen mode (which hides the menu bar and jumps to its own space).
         self._maximize()
 
+    def _pin_container(self, event=None) -> None:
+        """Hold the page box at the window's size, and keep it there.
+
+        The page box is what the window measures itself against: when it holds
+        nothing — between destroying one screen and building the next — the
+        request collapses to a single empty frame, and a window that is not
+        user-sized follows it down to its minimum. That is what made the whole
+        UI jump on a theme flip. Pinned to the window's own size, the request
+        never moves, so the window never does either.
+        """
+        if event is not None and event.widget is not self:
+            return
+        topbar = getattr(self, "topbar", None)
+        top = (
+            topbar.winfo_height()
+            if topbar is not None and topbar.winfo_manager()
+            else 0
+        )
+        w, h = self.winfo_width(), self.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+        self.container.configure(width=w, height=max(1, h - top))
+
     def _usable_height(self) -> int:
         """How tall a window may actually be here — not how tall the screen is.
 
@@ -2542,8 +2565,21 @@ class Almathus(tk.Tk):
         # `_scale_fonts` has already set it before the top bar places itself:
         # it needs the band to put its buttons on the same line as the headers.
         self._build_topbar()  # the always-visible language chip
-        self.container = tk.Frame(self, bg=BG)
+        # The box every screen is built in. Its size is *ours* (propagation is
+        # off and `_pin_container` keeps it equal to the window), so that
+        # destroying a screen — which happens on every theme flip and every
+        # move between screens — cannot change what the window asks to be: the
+        # window is not treated as user-sized here, and it would follow that
+        # request back to the minimum size, moving the whole UI.
+        self.container = tk.Frame(
+            self,
+            bg=BG,
+            width=self.winfo_screenwidth(),
+            height=self._usable_height(),
+        )
         self.container.pack(fill="both", expand=True)
+        self.container.pack_propagate(False)
+        self.bind("<Configure>", self._pin_container, add="+")
 
         self._install_exit_handlers()
         self.show_settings()
@@ -3445,10 +3481,12 @@ class Almathus(tk.Tk):
         """
         if not self.topbar.winfo_manager():
             self.topbar.pack(side="top", fill="x", before=self.container)
+        self._pin_container()
 
     def _hide_topbar(self) -> None:
         if self.topbar.winfo_manager():
             self.topbar.pack_forget()
+        self._pin_container()
 
     def _build_topbar(self) -> None:
         """The menu's slim bar: stats on the left, language on the right.
@@ -3526,6 +3564,9 @@ class Almathus(tk.Tk):
             self.topbar.configure(height=height)
         self._progress_btn.place(x=inset, y=pad_top)
         self._lang_btn.place(x=w - inset - self._lang_btn.winfo_reqwidth(), y=pad_top)
+        # The bar's height is part of the window's size request, so the page box
+        # is re-pinned against it whenever the bar decides how tall it is.
+        self._pin_container()
 
     def _refresh_lang_chip(self) -> None:
         """Redraw the chip as flag + language name for the current language."""

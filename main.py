@@ -40,7 +40,7 @@ from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog, ttk
 from tkinter import font as tkfont
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import languages
 import pdfreport
@@ -907,10 +907,17 @@ CONTENT_MAX = 1400
 
 # How much of the settings page's spacing between rows is kept when the column
 # is too tall for the window: the gaps are scaled by one of these, roomiest
-# first, and the largest that fits wins. Scaling from 1.0 down to 0.0 in fine
-# steps means a slightly short window only loses a little air, instead of
-# everything going from "comfortable" to "glued" in one jump.
-GAP_SCALES = (1.0, 0.85, 0.7, 0.55, 0.4, 0.25, 0.1, 0.0)
+# first, and the largest that fits wins. The last step is half the air, never
+# none of it — two panels with no gap between them read as one broken panel, so
+# a page that still does not fit at 0.5 scrolls instead of gluing itself shut.
+GAP_SCALES = (1.0, 0.9, 0.8, 0.7, 0.6, 0.5)
+
+# The window the menu was drawn for: its type and its margins are proportional
+# to this. The floor is the smallest share of that design the page will use —
+# below it the page scrolls rather than shrinking further, because the type has
+# to stay readable.
+PAGE_W, PAGE_H = 1440, 900
+SCALE_MIN = 0.6
 
 
 _ROUND_CACHE: dict[tuple, tk.PhotoImage] = {}
@@ -2400,6 +2407,21 @@ class Almathus(tk.Tk):
     _lang_installed: set[str]
     _lang_images: list[tk.PhotoImage]
 
+    # The named fonts, created by `_make_fonts` and resized by `_scale_fonts`.
+    # Declared here because they are created in a loop over `FONT_SPECS`.
+    f_giant: tkfont.Font
+    f_huge: tkfont.Font
+    f_big: tkfont.Font
+    f_logo: tkfont.Font
+    f_mode: tkfont.Font
+    f_title: tkfont.Font
+    f_body: tkfont.Font
+    f_small: tkfont.Font
+    f_tile: tkfont.Font
+    f_chip: tkfont.Font
+    f_num: tkfont.Font
+    f_hint: tkfont.Font
+
     def __init__(self):
         super().__init__()
         # Rasters belong to the Tcl interpreter that made them: a fresh run may
@@ -2410,6 +2432,9 @@ class Almathus(tk.Tk):
         self.title(T("title"))
         self.configure(bg=BG)
         self.minsize(720, 640)
+        # Set before the first font pass: `_scale_fonts` re-renders the menu's
+        # drawing, and at that point the menu has not been built yet.
+        self._title_icon_label: tk.Label | None = None
         # Maximize to fill the screen as a normal window — NOT macOS' native
         # fullscreen mode (which hides the menu bar and jumps to its own space).
         self._maximize()
@@ -2496,9 +2521,9 @@ class Almathus(tk.Tk):
         self._ui_queue: queue.Queue = queue.Queue()
         self._pump()
 
-        # Measured before the top bar places itself: it needs the band to put
-        # its buttons on the same line as the page headers.
-        self._header_band = self._measure_header_band()
+        # The header band (`_header_band`) is measured from the type, so
+        # `_scale_fonts` has already set it before the top bar places itself:
+        # it needs the band to put its buttons on the same line as the headers.
         self._build_topbar()  # the always-visible language chip
         self.container = tk.Frame(self, bg=BG)
         self.container.pack(fill="both", expand=True)
@@ -2595,31 +2620,81 @@ class Almathus(tk.Tk):
         self._ui_queue.put(fn)
 
     # -- fonts ------------------------------------------------------------- #
+    # The page's type at the size it was drawn for (a 1440x900 window).
+    # `_scale_fonts` applies the window's own scale to these, so the text
+    # follows the window in proportion instead of sitting at whatever the
+    # screen happened to be when the app started.
+    FONT_SPECS: ClassVar[dict[str, tuple[int, Literal["normal", "bold"]]]] = {
+        "f_giant": (120, "bold"),
+        "f_huge": (90, "bold"),
+        "f_big": (48, "bold"),
+        "f_logo": (36, "bold"),  # the menu's wordmark: between big and title
+        "f_mode": (30, "bold"),
+        "f_title": (28, "bold"),
+        "f_body": (20, "normal"),
+        "f_small": (15, "normal"),
+        "f_tile": (24, "bold"),
+        "f_chip": (14, "bold"),
+        "f_num": (20, "bold"),
+        "f_hint": (14, "normal"),
+    }
+
     def _make_fonts(self):
-        # Everything scales with the display so the settings column still fits
-        # (and stays readable) on a short laptop display. Measured against the
-        # height a window may actually have, which is the constraint the column
-        # is up against — the screen's own height is 28 px of menu bar too
-        # generous, and that is a row of the settings screen.
-        s = min(1.0, self._usable_height() / 900)
-
-        def scaled(size, weight="normal"):
-            return tkfont.Font(
-                family="Helvetica", size=max(11, round(size * s)), weight=weight
+        # Created at the design size and then scaled for this window, rather
+        # than created already scaled: `_scale_fonts` needs the same base sizes
+        # to go back to when the window grows again.
+        for name, (size, weight) in self.FONT_SPECS.items():
+            setattr(
+                self, name, tkfont.Font(family="Helvetica", size=size, weight=weight)
             )
+        self._type_scale = 0.0  # nothing applied yet
+        self._scale_fonts()
 
-        self.f_giant = scaled(120, "bold")
-        self.f_huge = scaled(90, "bold")
-        self.f_big = scaled(48, "bold")
-        self.f_logo = scaled(36, "bold")  # the menu's wordmark: between big and title
-        self.f_mode = scaled(30, "bold")
-        self.f_title = scaled(28, "bold")
-        self.f_body = scaled(20)
-        self.f_small = scaled(15)
-        self.f_tile = scaled(24, "bold")
-        self.f_chip = scaled(14, "bold")
-        self.f_num = scaled(20, "bold")
-        self.f_hint = scaled(14)
+    def _page_scale(self) -> float:
+        """The share of the design size this window gets.
+
+        The menu was drawn for a 1440x900 window, and both dimensions matter: a
+        short window cannot hold the column and a narrow one cannot hold the
+        tiles. Capped at 1.0 so a big screen keeps the design size rather than
+        stretching it, and floored so the type stays readable — past the floor
+        the page scrolls instead of shrinking further.
+
+        Quantized to 1/40th: a font change re-lays out every label on the page,
+        and a pixel of drag must not do that.
+        """
+        w, h = self.winfo_width(), self.winfo_height()
+        if w <= 1 or h <= 1:  # not mapped yet: the window will be the screen
+            w, h = self.winfo_screenwidth(), self._usable_height()
+        scale = min(w / PAGE_W, h / PAGE_H)
+        return round(max(SCALE_MIN, min(1.0, scale)) * 40) / 40
+
+    def _scale_fonts(self, scale: float | None = None) -> None:
+        """Resize every named font for a window of this size.
+
+        Tk holds its own handle on a named font, so reconfiguring it resizes
+        every label that uses it: the whole app follows the window without a
+        widget being rebuilt, and nothing is left at the size of the screen the
+        app started on.
+
+        The header band and the menu's drawing are measured from the type, so
+        they are refreshed with it — the wordmark beside the drawing is a label
+        and follows on its own, the drawing does not.
+        """
+        if scale is None:
+            scale = self._page_scale()
+        if scale == self._type_scale:
+            return
+        for name, (size, weight) in self.FONT_SPECS.items():
+            font: tkfont.Font = getattr(self, name)
+            font.configure(size=max(11, round(size * scale)), weight=weight)
+        self._type_scale = scale
+        self._header_band = self._measure_header_band()
+        self._refresh_title_icon()
+        # The question pill is measured from the type, so it is stale now.
+        self._pill_size = None
+        topbar = getattr(self, "topbar", None)
+        if topbar is not None and topbar.winfo_manager():
+            self._refresh_lang_chip()  # its flag follows the type too
 
     # -- frame helper ------------------------------------------------------ #
     def _hush(self):
@@ -2922,8 +2997,10 @@ class Almathus(tk.Tk):
                 # The page box has to match the view before anything is
                 # measured: the footer folds by width, and a fit decided on the
                 # rows of the old width is decided against a page that no
-                # longer exists. Then the region follows the height it ends up.
+                # longer exists. Then the type follows the window, and the
+                # region follows the height it all ends up.
                 fit_scrolled()
+                self._scale_fonts()
                 self._fit_column(col, canvas)
                 holder_h[0] = holder.winfo_reqheight()
                 fit_scrolled()
@@ -3117,11 +3194,13 @@ class Almathus(tk.Tk):
         row.pack()
         font = self.f_logo
         icon = self._title_image(font)
+        self._title_icon_label = None
         if icon is not None:
             # Tk keeps no reference of its own to an image: drop ours and the
             # label goes blank the moment the garbage collector runs.
             self._title_icon = icon
-            tk.Label(row, image=icon, bg=BG).pack(side="left", padx=(0, 10), anchor="n")
+            self._title_icon_label = tk.Label(row, image=icon, bg=BG)
+            self._title_icon_label.pack(side="left", padx=(0, 10), anchor="n")
         else:
             tk.Label(row, text=TITLE_ICON, font=font, fg=ACCENT, bg=BG).pack(
                 side="left", padx=(0, 8), anchor="n"
@@ -3129,6 +3208,21 @@ class Almathus(tk.Tk):
         tk.Label(row, text="Almathus", font=font, fg=ACCENT, bg=BG).pack(
             side="left", anchor="n"
         )
+
+    def _refresh_title_icon(self) -> None:
+        """Re-render the drawing at the size the type has now.
+
+        The picture is rasterized from the SVG at a fixed height when the page
+        is built, so unlike the wordmark beside it — a label, which follows its
+        font on its own — it does not follow a font change."""
+        label = self._title_icon_label
+        if label is None or not label.winfo_exists():
+            return
+        icon = self._title_image(self.f_logo)
+        if icon is None:
+            return
+        self._title_icon = icon  # Tk keeps no reference of its own
+        label.configure(image=icon)
 
     def _title_image(self, font):
         """This theme's drawing, rendered to about 1.6 lines of the title font.
@@ -3307,7 +3401,8 @@ class Almathus(tk.Tk):
         """Redraw the chip as flag + language name for the current language."""
         lang = languages.BY_CODE.get(LANG)
         name = lang.endonym if lang is not None else LANG
-        self._chip_image = flag_image(LANG, 18)
+        # The flag follows the type, so the chip reads as one pill at any size.
+        self._chip_image = flag_image(LANG, max(12, round(18 * self._type_scale)))
         self._lang_btn.config(image=self._chip_image, text=name)
         self._place_topbar()
 

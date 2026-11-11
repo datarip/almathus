@@ -2791,20 +2791,6 @@ class Almathus(tk.Tk):
         scrollbar = tk.Scrollbar(f, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)
-        bind_wheel(canvas, lambda px: canvas.yview_scroll(px, "units"))
-
-        def show_bar():
-            # Overlaid, not packed: a packed bar steals 15 px from the canvas,
-            # which re-centres the whole page and flips the bar on and off at
-            # the threshold — a width wobble on every drag. Lifted so it is not
-            # drawn under the canvas it belongs to.
-            if not scrollbar.winfo_ismapped():
-                scrollbar.place(relx=1.0, rely=0.0, anchor="ne", relheight=1.0)
-            scrollbar.lift()
-
-        def hide_bar():
-            if scrollbar.winfo_ismapped():
-                scrollbar.place_forget()
 
         # The canvas window is a holder, not the column itself: a widget cannot
         # be both a canvas item and managed by pack (which is where the column's
@@ -2813,12 +2799,44 @@ class Almathus(tk.Tk):
         holder = tk.Frame(canvas, bg=BG)
         window = canvas.create_window((0, 0), window=holder, anchor="nw")
 
-        size: list[int] = [0, 0, 0]
-        shown = [False]
+        # The last layout written to the canvas: the page box, its x, the
+        # holder's height and the scroll region. All of it is ours to remember —
+        # Tk's own state (yview, ismapped) only catches up a geometry pass
+        # later, and deciding from it is how a bar was once left on screen.
+        last: dict[str, object] = {
+            "box": -1,
+            "x": -1,
+            "h": -1,
+            "region": None,
+            "bar": False,
+        }
         # The content's natural height, measured once after the column is built
         # (and on every rebuild). It is not derived from the holder's Configure:
         # we set that height ourselves, so measuring it back would only echo it.
         holder_h = [0]
+
+        def can_scroll() -> bool:
+            return holder.winfo_reqheight() > canvas.winfo_height()
+
+        def scroll_by(px: int) -> None:
+            """Scroll the menu — but only when the page is taller than the view.
+
+            A gesture on a page with nowhere to go must leave it exactly where
+            it is: nudging it by a few pixels for no visible reason is what made
+            the menu feel broken."""
+            if can_scroll():
+                canvas.yview_scroll(px, "units")
+
+        def show_bar():
+            # Overlaid, not packed: a packed bar steals 15 px from the canvas,
+            # which re-centres the whole page and flips the bar on and off at
+            # the threshold — a width wobble on every drag. Lifted so it is not
+            # drawn under the canvas it belongs to.
+            scrollbar.place(relx=1.0, rely=0.0, anchor="ne", relheight=1.0)
+            scrollbar.lift()
+
+        def hide_bar():
+            scrollbar.place_forget()
 
         def fit_scrolled(_event=None):
             """Size the scrolled window to the content (or the view) and show
@@ -2842,37 +2860,37 @@ class Almathus(tk.Tk):
             # footer can fold onto more rows after the first pass, and a stale
             # height left the new rows outside the scroll region.
             h = holder.winfo_reqheight() or holder_h[0]
-            y = 0
-            # The width changes on every drag step, but the scrollregion only
-            # depends on the *height*: leaving it alone while only the width
-            # moved spares the canvas a full-area repaint each step.
-            if box != size[0] or h != size[1] or y != size[2]:
+            x = (cw - box) // 2
+            if (box, x, h) != (last["box"], last["x"], last["h"]):
                 canvas.itemconfigure(window, width=box)
-                canvas.coords(window, (cw - box) // 2, y)
-                if h != size[1]:
-                    canvas.itemconfigure(window, height=h)
-                    # Width is pinned so the region depends on height alone:
-                    # there is no horizontal scrolling, and a width that tracked
-                    # the view would mean a repaint on every drag step.
-                    canvas.configure(scrollregion=(0, 0, CONTENT_MAX, h))
-                size[0], size[1], size[2] = box, h, y
-            # Decide from the measured heights, not from `canvas.yview()`:
-            # the view fraction is only recomputed once Tk processes the geometry
-            # set just above, so reading it here returns the previous state and
-            # the bar would never appear the first time it is needed.
+                canvas.coords(window, (x, 0))
+                canvas.itemconfigure(window, height=h)
+                last["box"], last["x"], last["h"] = box, x, h
+            # A page with nothing to scroll gets no scroll region at all. An
+            # empty region cannot be scrolled, dragged or bounced — not by a
+            # gesture taken mid-resize, not by a stale height — so the menu
+            # simply stays where it is. The region covers the *view* and not a
+            # fixed width: pinned to CONTENT_MAX it made a page with no
+            # horizontal content scrollable sideways on any narrower window, and
+            # left it off-centre once the window grew past that width.
             need_bar = h > ch
-            if need_bar != shown[0]:
-                shown[0] = need_bar
+            region: tuple[int, int, int, int] | tuple[()] = (
+                (0, 0, cw, h) if need_bar else ()
+            )
+            if region != last["region"]:
+                canvas.configure(scrollregion=region)
+                last["region"] = region
+            # Decide from the measured heights, not from `canvas.yview()`:
+            # the view fraction is only recomputed once Tk processes the
+            # geometry set just above, so reading it here returns the previous
+            # state and the bar would never appear the first time it is needed.
+            if need_bar != last["bar"]:
+                last["bar"] = need_bar
                 if need_bar:
                     show_bar()
                 else:
                     hide_bar()
-                    canvas.yview_moveto(0)
-            elif not need_bar and canvas.yview()[0] != 0.0:
-                # Nothing to scroll, yet the view is not at the top: a gesture
-                # taken during a resize can still move it, because the region
-                # follows the layout a pass behind. Pinned here, so a page that
-                # fits cannot be dragged at all.
+            if not need_bar and canvas.yview()[0] != 0.0:
                 canvas.yview_moveto(0)
             scrollbar.set(*canvas.yview())
 
@@ -3073,24 +3091,24 @@ class Almathus(tk.Tk):
         # alone would scroll nothing unless the pointer is on bare canvas.
         # Binding the whole screen means a gesture anywhere — panels, down the
         # gaps, even over the fixed title — reaches the canvas.
-        self._bind_wheel_tree(f, canvas)
+        self._bind_wheel_tree(f, scroll_by)
         # Bound here, where both halves of the fit are ready to answer: the
         # canvas' size is what decides them, and it changes more than once per
         # drag, so this cannot be a one-shot decision.
         canvas.bind("<Configure>", refit)
         refit()  # measure now, not only on the first <Configure>
 
-    def _bind_wheel_tree(self, widget, canvas) -> None:
-        """Route every wheel gesture anywhere over `widget` to `canvas`.
+    def _bind_wheel_tree(self, widget, scroll) -> None:
+        """Route every wheel gesture anywhere over `widget` to `scroll`.
 
         Tk delivers a wheel event to the widget under the pointer and its own
         bindtags only — never to a parent — so binding the canvas alone scrolls
         nothing unless the pointer is on bare canvas. Binding each descendant
         too means a gesture over any row still scrolls the view.
         """
-        bind_wheel(widget, lambda px: canvas.yview_scroll(px, "units"))
+        bind_wheel(widget, scroll)
         for child in widget.winfo_children():
-            self._bind_wheel_tree(child, canvas)
+            self._bind_wheel_tree(child, scroll)
 
     def _fit_column(self, col, canvas) -> int:
         """Give up the gaps between the panels rather than the bottom of the column.
@@ -3643,7 +3661,7 @@ class Almathus(tk.Tk):
         # The list is one row button per language, so the pointer is nearly
         # always over a button and the canvas binding above would never fire.
         # Every row routes its wheel events to the canvas too.
-        self._bind_wheel_tree(inner, canvas)
+        self._bind_wheel_tree(inner, lambda px: canvas.yview_scroll(px, "units"))
 
     def _choose_language(self, code: str) -> None:
         if code not in self._lang_installed:

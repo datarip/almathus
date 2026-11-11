@@ -3417,8 +3417,16 @@ class Almathus(tk.Tk):
         """This theme's drawing, rendered to about 1.6 lines of the title font.
 
         Tk 9 rasterizes SVG itself and scales to a target height on the way in,
-        so the drawing stays crisp on any screen — that is the whole reason the
-        assets are SVG and not PNG (Tk's bitmap scaler only does integer steps).
+        so the drawing follows the window instead of being resampled in Tk —
+        that is the whole reason the assets are SVG and not PNG (Tk's bitmap
+        scaler only does integer steps).
+
+        Rasterizing at the *display* size is the catch: a hairline cannot survive
+        it. The badge's outline used to be 6 units of the 512 canvas, 1.03 px at
+        the ~88 px this draws, and came out as a broken one-pixel staircase. Tk
+        does antialias — it has no option to turn it off — but at one pixel wide
+        there is nothing to blend, so `assets/*.svg` carry an 18-unit ring (2.4 px
+        at 88 px, 1.4 px at the 0.6 type-scale floor) instead.
 
         Returns None if the file is missing or cannot be rendered; the caller
         falls back to the emoji, so a bad asset never breaks the screen."""

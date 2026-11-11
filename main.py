@@ -34,7 +34,7 @@ import time
 import tkinter as tk
 import traceback
 import zlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -1848,6 +1848,182 @@ class TimeChart(tk.Canvas):
                 tags="tip",
             )
         self.create_oval(x - 6, y - 6, x + 6, y + 6, outline=TEXT, width=2, tags="tip")
+
+
+class ResultsTable(tk.Canvas):
+    """The results sheet, drawn as canvas items.
+
+    One Label per cell put ~400 widgets on the screen for a normal history, and
+    Tk lays every one of them out again each time the table is given a new
+    width: opening the progress screen froze for seconds while the columns
+    stretched to the window. Canvas items are painted straight onto one widget,
+    so the whole sheet — header, stripes, every value — is built and resized
+    without a single child widget to measure or move.
+    """
+
+    PADX = 14  # px between a cell's text and its column edge
+    HAIRLINE = 1  # px under the header, same as the rule the grid drew
+
+    def __init__(
+        self,
+        parent,
+        sessions,
+        font: tkfont.Font,
+        on_overflow: Callable[[bool], None] | None = None,
+    ) -> None:
+        super().__init__(
+            parent,
+            bg=BG,
+            highlightthickness=0,
+            bd=0,
+            yscrollincrement=1,
+            xscrollincrement=1,
+        )
+        self.font = font
+        self.on_overflow = on_overflow
+        # Measured once from the font: a resize reuses these numbers instead of
+        # asking hundreds of widgets what size they would like to be.
+        self.linespace = font.metrics("linespace")
+        self.rowh = self.linespace + 14
+        self.headh = self.linespace + 16
+        self.cols: tuple[tuple[str, Anchor, int], ...] = (
+            (T("col_date"), "w", 3),
+            (T("col_family"), "w", 4),
+            (T("col_time"), "e", 3),
+            (T("col_cards"), "e", 2),
+            (T("col_note"), "e", 2),
+            (T("col_avg"), "e", 4),
+            (T("col_difficult"), "w", 6),
+        )
+        # Newest first: the session that just finished sits right under the
+        # header, and the history scrolls away below it.
+        self.rows: list[tuple[tuple[str, str], ...]] = []
+        for s in reversed(sessions):
+            cells = (
+                (s.day.strftime("%d/%m/%Y") if s.day else "—", TEXT),
+                (s.famille or "—", TEXT),
+                (
+                    resultslog.fmt_duration(s.seconds)
+                    if s.seconds is not None
+                    else (s.raw_time or "—"),
+                    ACCENT,
+                ),
+                (str(s.cards) if s.cards else "—", MUTED),
+                (resultslog.fmt_note(s.note) or "—", ACCENT),
+                (f"{s.avg:.1f} s" if s.avg is not None else "—", GOOD),
+                (", ".join(s.difficultes) or "—", MUTED),
+            )
+            # A blank is never a value: the dash stays muted in every column.
+            self.rows.append(
+                tuple((text, MUTED if text == "—" else fg) for text, fg in cells)
+            )
+        self.natural: list[int] = [
+            max(font.measure(label), *(font.measure(row[i][0]) for row in self.rows))
+            + 2 * self.PADX
+            for i, (label, _, _) in enumerate(self.cols)
+        ]
+        self.content_width = float(sum(self.natural))
+        self.content_height = self.headh + self.HAIRLINE + len(self.rows) * self.rowh
+        self._width = 0
+        self.bind("<Configure>", self._resized)
+        bind_wheel(self, self._wheel)
+        self.bind("<Shift-MouseWheel>", self._xwheel)
+        with contextlib.suppress(tk.TclError):
+            self.bind("<TouchpadScroll>", self._touchpad_x, add="+")
+        self.redraw()
+
+    def redraw(self, width: int | None = None) -> None:
+        """Lay the whole sheet out for `width` (default: the widget's own)."""
+        view = self.winfo_width() if width is None else width
+        self.delete("all")
+        widths, total = self._widths(view)
+        edges = [0.0]
+        for w in widths:
+            edges.append(edges[-1] + w)
+
+        def x_of(i: int, anchor: Anchor) -> float:
+            return edges[i] + self.PADX if anchor == "w" else edges[i + 1] - self.PADX
+
+        for i, (label, anchor, _) in enumerate(self.cols):
+            self.create_text(
+                x_of(i, anchor),
+                self.headh / 2,
+                text=label,
+                font=self.font,
+                fill=MUTED,
+                anchor=anchor,
+            )
+        self.create_rectangle(
+            0, self.headh, total, self.headh + self.HAIRLINE, fill=BORDER, outline=""
+        )
+        top = self.headh + self.HAIRLINE
+        for r, cells in enumerate(self.rows):
+            rowtop = top + r * self.rowh
+            self.create_rectangle(
+                0,
+                rowtop,
+                total,
+                rowtop + self.rowh,
+                fill=ROW_ALT if r % 2 else CARD_BG,
+                outline="",
+            )
+            mid = rowtop + self.rowh / 2
+            for i, (text, fg) in enumerate(cells):
+                self.create_text(
+                    x_of(i, self.cols[i][1]),
+                    mid,
+                    text=text,
+                    font=self.font,
+                    fill=fg,
+                    anchor=self.cols[i][1],
+                )
+        self.content_width = total
+        self.configure(scrollregion=(0, 0, total, self.content_height))
+
+    def _widths(self, view: int) -> tuple[list[float], float]:
+        """Column widths for a `view`-wide table: their natural size when the
+        columns do not fit (the sideways bar reaches the rest), otherwise their
+        natural size plus a share of the spare room, in the columns' weights."""
+        natural_total = float(sum(self.natural))
+        if view <= natural_total:
+            return [float(w) for w in self.natural], natural_total
+        spare = view - natural_total
+        weights = sum(weight for _, _, weight in self.cols)
+        return [
+            w + spare * weight / weights
+            for w, (_, _, weight) in zip(self.natural, self.cols, strict=True)
+        ], float(view)
+
+    def _resized(self, event) -> None:
+        if event.width != self._width:
+            self._width = event.width
+            self.redraw(event.width)
+        self._sync_bar()
+
+    def _sync_bar(self) -> None:
+        """Tell the screen whether the rows overrun the view, so it can show the
+        vertical bar only when there is somewhere to scroll."""
+        if self.on_overflow is not None:
+            self.on_overflow(self.content_height > self.winfo_height())
+
+    def _wheel(self, pixels: int) -> None:
+        # Only scroll when the rows truly overrun the view: a canvas whose
+        # content fits still nudges on some Tk builds, which read as scrolling
+        # an already-complete table.
+        if self.content_height > self.winfo_height():
+            self.yview_scroll(pixels, "units")
+
+    def _xwheel(self, ev) -> None:
+        if self.content_width > self.winfo_width():
+            self.xview_scroll(wheel_pixels(ev), "units")
+
+    def _touchpad_x(self, ev) -> None:
+        if self.content_width <= self.winfo_width():
+            return
+        # dx rides in the high 16 bits, dy in the low (see touchpad_pixels).
+        raw = (ev.delta >> 16) & 0xFFFF
+        dx = raw if raw < 0x8000 else raw - 0x10000
+        self.xview_scroll(-dx, "units")
 
 
 # --------------------------------------------------------------------------- #
@@ -4373,177 +4549,45 @@ class Almathus(tk.Tk):
         )
 
     def _build_results_table(self, parent, sessions):
-        """Every logged session, oldest first — the paper sheet, on screen."""
+        """Every logged session, newest first — the paper sheet, on screen."""
         wrap = tk.Frame(parent, bg=BG)
         wrap.pack(fill="both", expand=True, padx=28, pady=(0, 20))
 
-        # `yscrollincrement=1` makes a `yview_scroll` unit one pixel: a canvas
-        # left at 0 scrolls a tenth of its own height per unit instead, so a
-        # single nudge of the wheel would jump most of the table at a time. The
-        # same for `x`, so the horizontal bar moves a pixel at a time.
-        canvas = tk.Canvas(
-            wrap,
-            bg=BG,
-            highlightthickness=0,
-            bd=0,
-            yscrollincrement=1,
-            xscrollincrement=1,
-        )
-        vbar = tk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
-        hbar = tk.Scrollbar(wrap, orient="horizontal", command=canvas.xview)
-        canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
+        vbar = tk.Scrollbar(wrap, orient="vertical")
+        hbar = tk.Scrollbar(wrap, orient="horizontal")
         # The horizontal bar is always present: it is the only cue that there
         # are more columns off the right, and the only handle for reaching them
         # when the trackpad or a shift-wheel is not at hand.
         hbar.pack(side="bottom", fill="x")
+
+        # The vertical bar is not shown until the rows actually overrun the
+        # view: a short history sat in a mostly empty panel with a bar down the
+        # side that still moved, which read as a scroll that went nowhere.
+        bar_shown = [True]
+
+        def show_vbar(need: bool) -> None:
+            if need == bar_shown[0]:
+                return
+            bar_shown[0] = need
+            if need:
+                vbar.pack(side="right", fill="y")
+            else:
+                vbar.pack_forget()
+
+        table = ResultsTable(wrap, sessions, self.f_small, on_overflow=show_vbar)
+        # The bars take their slabs before the canvas expands into the rest.
         vbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
+        table.pack(side="left", fill="both", expand=True)
+        vbar.configure(command=table.yview)
+        hbar.configure(command=table.xview)
+        table.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
 
-        table = tk.Frame(canvas, bg=BG)
-        window = canvas.create_window((0, 0), window=table, anchor="nw")
-
-        # The scrolled window tracks the *wider* of the canvas and the table's
-        # natural width: as wide as the view when the columns fit (so the rows
-        # span it), and its natural width when they do not. Forcing it to the
-        # view used to squeeze the grid until the column labels overlapped on a
-        # narrow screen; now the horizontal bar reaches the columns that do not
-        # fit instead of crushing them.
-        def fit_width(_event=None):
-            if not canvas.winfo_exists():
-                return
-            want = max(canvas.winfo_width(), table.winfo_reqwidth())
-            if int(float(canvas.itemcget(window, "width") or 0)) != want:
-                canvas.itemconfigure(window, width=want)
-
-        yshown = [True]
-
-        def fit_region(_event=None):
-            fit_width()
-            canvas.configure(scrollregion=canvas.bbox("all"))
-            # The vertical bar is not shown until the rows actually overrun the
-            # view: a short history sat in a mostly empty panel with a bar down
-            # the side that still moved, which read as a scroll that went nowhere.
-            need_y = table.winfo_reqheight() > canvas.winfo_height()
-            if need_y != yshown[0]:
-                yshown[0] = need_y
-                if need_y:
-                    vbar.pack(side="right", fill="y")
-                else:
-                    vbar.pack_forget()
-
-        canvas.bind("<Configure>", lambda e: e.widget is canvas and fit_region())
-        table.bind("<Configure>", fit_region)
-
-        # Wheel and trackpad. The pointer is nearly always over a row Label, not
-        # over the canvas, and Tk hands an event to the widget's own bindtags
-        # only — it never walks up to a parent widget — so a plain binding on the
-        # canvas would never fire. The rows are given the canvas as an extra
-        # bindtag at the end of this function instead, which routes their scroll
-        # events here without a single global binding: an <Enter>/<Leave> pair
-        # driving bind_all cannot work, because moving onto a child *is* leaving
-        # the canvas as far as Tk is concerned, so it disarmed itself the moment
-        # the pointer touched a row.
-        def wheel(pixels):
-            # Only scroll when the rows truly overrun the view. A canvas with a
-            # scroll region smaller than its window still nudges on some Tk
-            # builds, which read as scrolling an already-complete table.
-            if (
-                canvas.winfo_exists()
-                and table.winfo_reqheight() > canvas.winfo_height()
-            ):
-                canvas.yview_scroll(pixels, "units")
-
-        bind_wheel(canvas, wheel)
-
-        # Sideways: shift + wheel, and the horizontal axis of a trackpad swipe.
-        # `bind_wheel` already handles the vertical axis; these add to it.
-        def xwheel(ev):
-            if canvas.winfo_exists() and table.winfo_reqwidth() > canvas.winfo_width():
-                canvas.xview_scroll(wheel_pixels(ev), "units")
-
-        def touchpad_x(ev):
-            if not canvas.winfo_exists():
-                return
-            if table.winfo_reqwidth() <= canvas.winfo_width():
-                return
-            # dx rides in the high 16 bits, dy in the low (see touchpad_pixels).
-            raw = (ev.delta >> 16) & 0xFFFF
-            dx = raw if raw < 0x8000 else raw - 0x10000
-            canvas.xview_scroll(-dx, "units")
-
-        canvas.bind("<Shift-MouseWheel>", xwheel)
-        with contextlib.suppress(tk.TclError):
-            canvas.bind("<TouchpadScroll>", touchpad_x, add="+")
-
-        cols: tuple[tuple[str, Anchor, int], ...] = (
-            (T("col_date"), "w", 3),
-            (T("col_family"), "w", 4),
-            (T("col_time"), "e", 3),
-            (T("col_cards"), "e", 2),
-            (T("col_note"), "e", 2),
-            (T("col_avg"), "e", 4),
-            (T("col_difficult"), "w", 6),
-        )
-        for i, (_, _, weight) in enumerate(cols):
-            table.grid_columnconfigure(i, weight=weight)
-
-        for i, (label, anchor, _) in enumerate(cols):
-            tk.Label(
-                table,
-                text=label,
-                font=self.f_small,
-                fg=MUTED,
-                bg=BG,
-                anchor=anchor,
-                padx=14,
-                pady=8,
-            ).grid(row=0, column=i, sticky="nsew")
-        tk.Frame(table, bg=BORDER, height=1).grid(
-            row=1, column=0, columnspan=len(cols), sticky="ew"
-        )
-
-        # Newest first: the session that just finished sits right under the
-        # header, and the history scrolls away below it.
-        for r, s in enumerate(reversed(sessions)):
-            rowbg = ROW_ALT if r % 2 else CARD_BG
-            cells = (
-                (s.day.strftime("%d/%m/%Y") if s.day else "—", TEXT),
-                (s.famille or "—", TEXT),
-                (
-                    resultslog.fmt_duration(s.seconds)
-                    if s.seconds is not None
-                    else (s.raw_time or "—"),
-                    ACCENT,
-                ),
-                (str(s.cards) if s.cards else "—", MUTED),
-                (resultslog.fmt_note(s.note) or "—", ACCENT),
-                (f"{s.avg:.1f} s" if s.avg is not None else "—", GOOD),
-                (", ".join(s.difficultes) or "—", MUTED),
-            )
-            for i, ((text, fg), (_, anchor, _)) in enumerate(
-                zip(cells, cols, strict=True)
-            ):
-                tk.Label(
-                    table,
-                    text=text,
-                    font=self.f_small,
-                    fg=MUTED if text == "—" else fg,  # a blank is never a value
-                    bg=rowbg,
-                    anchor=anchor,
-                    padx=14,
-                    pady=7,
-                ).grid(row=r + 2, column=i, sticky="nsew")
-
-        # Every cell scrolls the canvas it sits in: the canvas' path name is
-        # appended to each row's bindtags, so a wheel event delivered to a Label
-        # is looked up on the canvas too, and `wheel` above sees it.
-        for w in (table, *table.winfo_children()):
-            w.bindtags((*w.bindtags(), str(canvas)))
-
-        # The natural width is only known once the rows exist; fit now so the
-        # first paint is already the settled layout (wide rows, or the bar).
+        # Let the layout settle once, then draw at the width the view really
+        # has: drawn earlier, the sheet would be shown narrow for a frame and
+        # then visibly stretch to fit.
         self.update_idletasks()
-        fit_region()
+        table.redraw()
+        show_vbar(table.content_height > table.winfo_height())
 
     def _save_session(self, cards, total_time, correct):
         # Record only a session that ran to the size the child chose. A game cut

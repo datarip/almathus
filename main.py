@@ -3421,12 +3421,13 @@ class Almathus(tk.Tk):
         that is the whole reason the assets are SVG and not PNG (Tk's bitmap
         scaler only does integer steps).
 
-        Rasterizing at the *display* size is the catch: a hairline cannot survive
-        it. The badge's outline used to be 6 units of the 512 canvas, 1.03 px at
-        the ~88 px this draws, and came out as a broken one-pixel staircase. Tk
-        does antialias — it has no option to turn it off — but at one pixel wide
-        there is nothing to blend, so `assets/*.svg` carry an 18-unit ring (2.4 px
-        at 88 px, 1.4 px at the 0.6 type-scale floor) instead.
+        Rasterizing at the *display* size is the catch: a hairline does not
+        survive it. At 6 units of the 512 canvas the badge's outline is 1.03 px
+        at the ~88 px this draws, and one pixel in five of it came out pale or
+        missing — the dotted rim this was reported as. Tk antialiases properly
+        (its rim matches Quick Look's pixel for pixel), there is simply nothing
+        to blend inside a single pixel, so `assets/*.svg` carry a 10-unit ring:
+        1.7 px here, the narrowest that leaves no gaps at the design size.
 
         Returns None if the file is missing or cannot be rendered; the caller
         falls back to the emoji, so a bad asset never breaks the screen."""

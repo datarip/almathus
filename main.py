@@ -2447,8 +2447,11 @@ class Almathus(tk.Tk):
         self.configure(bg=BG)
         self.minsize(720, 640)
         # Set before the first font pass: `_scale_fonts` re-renders the menu's
-        # drawing, and at that point the menu has not been built yet.
+        # drawing, and at that point the menu has not been built yet. The fit
+        # cap is read by the font scale, which also runs there.
         self._title_icon_label: tk.Label | None = None
+        self._fit_cap = 1.0
+        self._fit_room = (0, 0)  # the canvas size that cap was set in
         # Maximize to fill the screen as a normal window — NOT macOS' native
         # fullscreen mode (which hides the menu bar and jumps to its own space).
         self._maximize()
@@ -2673,13 +2676,17 @@ class Almathus(tk.Tk):
         stretching it, and floored so the type stays readable — past the floor
         the page scrolls instead of shrinking further.
 
+        `_fit_cap` is the other half: a window a little too short for the type
+        its size asks for gives the difference back here, rather than leaving
+        the page to scroll for the sake of it.
+
         Quantized to 1/40th: a font change re-lays out every label on the page,
         and a pixel of drag must not do that.
         """
         w, h = self.winfo_width(), self.winfo_height()
         if w <= 1 or h <= 1:  # not mapped yet: the window will be the screen
             w, h = self.winfo_screenwidth(), self._usable_height()
-        scale = min(w / PAGE_W, h / PAGE_H)
+        scale = min(w / PAGE_W, h / PAGE_H, self._fit_cap)
         return round(max(SCALE_MIN, min(1.0, scale)) * 40) / 40
 
     def _scale_fonts(self, scale: float | None = None) -> None:
@@ -2861,6 +2868,12 @@ class Almathus(tk.Tk):
                 else:
                     hide_bar()
                     canvas.yview_moveto(0)
+            elif not need_bar and canvas.yview()[0] != 0.0:
+                # Nothing to scroll, yet the view is not at the top: a gesture
+                # taken during a resize can still move it, because the region
+                # follows the layout a pass behind. Pinned here, so a page that
+                # fits cannot be dragged at all.
+                canvas.yview_moveto(0)
             scrollbar.set(*canvas.yview())
 
         # One packed column, top to bottom. Never .place() the content here: a
@@ -2999,6 +3012,10 @@ class Almathus(tk.Tk):
         ]
         self._gap_basis.append((col, _pad_pair(col.pack_info()["pady"])))
         self._gap_scale = 1.0
+        # A rebuilt page is new content: whatever type the last one gave back
+        # to fit its own footer does not apply to this one until it is measured.
+        self._fit_cap = 1.0
+        self._fit_room = (0, 0)
 
         def refit(_event=None) -> None:
             """Re-decide the page fit: the gaps between the rows, and how much
@@ -3023,11 +3040,25 @@ class Almathus(tk.Tk):
                 # The page box has to match the view before anything is
                 # measured: the footer folds by width, and a fit decided on the
                 # rows of the old width is decided against a page that no
-                # longer exists. Then the type follows the window, and the
-                # region follows the height it all ends up.
+                # longer exists.
                 fit_scrolled()
+                # A cap is only good for the room it was decided in: the page
+                # gains or loses a footer row just by being resized, so the
+                # decision is remade from the design size for every new box.
+                room = (canvas.winfo_width(), canvas.winfo_height())
+                if room != self._fit_room:
+                    self._fit_room = room
+                    self._fit_cap = 1.0
                 self._scale_fonts()
-                self._fit_column(col, canvas)
+                # Air first, then type: the page gives back the gaps down to
+                # their floor, and only a page still too tall at that floor
+                # trades text size for the room. One pass can undo the other's
+                # arithmetic (smaller text leaves room for wider gaps), so it
+                # repeats until it settles — two passes in practice.
+                for _ in range(3):
+                    need = self._fit_column(col, canvas)
+                    if not self._shrink_type(canvas, need):
+                        break
                 holder_h[0] = holder.winfo_reqheight()
                 fit_scrolled()
             finally:
@@ -3061,7 +3092,7 @@ class Almathus(tk.Tk):
         for child in widget.winfo_children():
             self._bind_wheel_tree(child, canvas)
 
-    def _fit_column(self, col, canvas) -> None:
+    def _fit_column(self, col, canvas) -> int:
         """Give up the gaps between the panels rather than the bottom of the column.
 
         A packed column taller than its window is not shrunk to fit, it is cut
@@ -3094,9 +3125,12 @@ class Almathus(tk.Tk):
         padding currently applied leaves a content height that no scale changes.
         Laying the page out costs tens of milliseconds here, and trying each
         step with a real layout made a resize stutter.
+
+        Returns the height the page ended up with, which is what tells the
+        caller whether it still needs to trade type for room.
         """
         if not canvas.winfo_exists() or not self._gap_basis:
-            return
+            return 0
         self.update_idletasks()
         avail = canvas.winfo_height()
         if avail <= 1:
@@ -3105,7 +3139,7 @@ class Almathus(tk.Tk):
             # the fallback screen height is twice the room a rebuilt page ends
             # up with, so every step looks like it fits and nothing is given
             # back when the real size arrives.
-            return
+            return 0
 
         basis = self._gap_basis
         k = self._gap_scale
@@ -3132,12 +3166,40 @@ class Almathus(tk.Tk):
             if needed(step) <= avail:
                 k = step
                 break
-        if k == self._gap_scale:
-            return
-        for w, (top, bottom) in basis:
-            w.pack_configure(pady=(round(top * k), round(bottom * k)))
-        self._gap_scale = k
-        self.update_idletasks()
+        if k != self._gap_scale:
+            for w, (top, bottom) in basis:
+                w.pack_configure(pady=(round(top * k), round(bottom * k)))
+            self._gap_scale = k
+            self.update_idletasks()
+        return needed(k)
+
+    def _shrink_type(self, canvas, need: int) -> bool:
+        """Trade type size for room when even the tightest gaps are too tall.
+
+        The gaps stop at half their air, so past that the only thing left to
+        give is the size of the text — a step at a time, never below the floor
+        `_page_scale` keeps. Without this, a window a few pixels short of the
+        page sat there scrollable by a few pixels, with every part visible and
+        nothing to say what the scroll was for.
+
+        The saving is remembered in `_fit_cap` while the page keeps the same
+        room: `_page_scale` alone would hand the type straight back on the next
+        pass, and the page would flicker between the two.
+
+        Returns whether the type moved, so the caller can fit the gaps again.
+        """
+        avail = canvas.winfo_height()
+        if avail <= 1 or need <= avail or self._type_scale <= SCALE_MIN:
+            return False
+        # The page is close to linear in the type size, so the ratio of the room
+        # to the need is the right step to take. Rounded down: rounding a step
+        # back up would leave the page exactly as tall as it was.
+        cap = math.floor(self._type_scale * avail / need * 40) / 40
+        if cap >= self._fit_cap:
+            return False
+        self._fit_cap = max(SCALE_MIN, cap)
+        self._scale_fonts()
+        return True
 
     def _layout_footer(self, footer, on_relayout=None) -> None:
         """Lay the switches out in as many columns as their labels fit.

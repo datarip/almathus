@@ -3234,9 +3234,12 @@ class Almathus(tk.Tk):
 
         Kept deliberately small and tight to the top: it is decoration, and every
         pixel it takes is a pixel the menu's options below cannot use. On a short
-        window that is the difference between seeing them all and scrolling. The
-        wordmark is top-aligned with the drawing rather than centred on it, so it
-        sits up beside the character's head instead of low against its body."""
+        window that is the difference between seeing them all and scrolling.
+
+        The wordmark is centred on the drawing, and the pair is centred in the
+        page: two marks read as one lockup, whereas a name aligned to the
+        drawing's top edge sat up beside the character's head and the pair
+        looked off-centre even though it was not."""
         row = tk.Frame(parent, bg=BG)
         row.pack()
         font = self.f_logo
@@ -3247,13 +3250,13 @@ class Almathus(tk.Tk):
             # label goes blank the moment the garbage collector runs.
             self._title_icon = icon
             self._title_icon_label = tk.Label(row, image=icon, bg=BG)
-            self._title_icon_label.pack(side="left", padx=(0, 10), anchor="n")
+            self._title_icon_label.pack(side="left", padx=(0, 10), anchor="center")
         else:
             tk.Label(row, text=TITLE_ICON, font=font, fg=ACCENT, bg=BG).pack(
-                side="left", padx=(0, 8), anchor="n"
+                side="left", padx=(0, 8), anchor="center"
             )
         tk.Label(row, text="Almathus", font=font, fg=ACCENT, bg=BG).pack(
-            side="left", anchor="n"
+            side="left", anchor="center"
         )
 
     def _refresh_title_icon(self) -> None:

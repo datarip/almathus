@@ -2456,6 +2456,17 @@ class Almathus(tk.Tk):
         # fullscreen mode (which hides the menu bar and jumps to its own space).
         self._maximize()
 
+    def _page_width(self) -> int:
+        """How wide the page will be — known before anything has been laid out.
+
+        The page frame fills the window, so the window's own width is the page's
+        width even when the canvas inside it still reports one pixel. Reading the
+        canvas instead sizes the page to that pixel, paints it, and lets it jump
+        to its real box on the next pass.
+        """
+        w = self.winfo_width()
+        return w if w > 1 else self.winfo_screenwidth()
+
     def _pin_container(self, event=None) -> None:
         """Hold the page box at the window's size, and keep it there.
 
@@ -2834,6 +2845,16 @@ class Almathus(tk.Tk):
         # the holder is the one placed on the canvas.
         holder = tk.Frame(canvas, bg=BG)
         window = canvas.create_window((0, 0), window=holder, anchor="nw")
+        # The page is given its final width *before* anything is built into it.
+        # Building the column lays the page out (the footer re-lays itself with
+        # an update_idletasks), and Tk paints what it finds at that moment: with
+        # the holder still at its own natural width, the page is drawn narrow
+        # against the left edge and only then widens to the real box — visible,
+        # on every rebuild, as the whole UI sliding right.
+        page_w = self._page_width()
+        box0 = min(page_w, CONTENT_MAX)
+        canvas.itemconfigure(window, width=box0)
+        canvas.coords(window, (max(page_w - box0, 0) // 2, 0))
 
         # The last layout written to the canvas: the page box, its x, the
         # holder's height and the scroll region. All of it is ours to remember —
@@ -2884,6 +2905,8 @@ class Almathus(tk.Tk):
             if not canvas.winfo_exists():
                 return
             cw, ch = canvas.winfo_width(), canvas.winfo_height()
+            if cw <= 1:  # not laid out yet: it will be as wide as the window
+                cw = self._page_width()
             box = min(cw, CONTENT_MAX)
             # The holder is kept at the *content's* height, never stretched to
             # the view: stretching it made the measured height equal the view,

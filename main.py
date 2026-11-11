@@ -365,6 +365,13 @@ def capped_scroll(pixels: float) -> int:
     return step if pixels > 0 else -step
 
 
+def _pad_pair(pad: int | tuple[int, int]) -> tuple[int, int]:
+    """A `pady` from `pack_info()` — one number or two — as (top, bottom)."""
+    if isinstance(pad, tuple):
+        return pad
+    return pad, pad
+
+
 def month_label(ym: tuple[int, int] | None) -> str:
     """A `(year, month)` as a person says it: `Juillet 2026` / `July 2026`.
 
@@ -897,6 +904,13 @@ BTN_GAP = 8  # px between an icon and its label
 # content readable instead of stretching the tiles to the window edges; narrower
 # ones shrink the box to fit, so it stays responsive rather than fixed.
 CONTENT_MAX = 1400
+
+# How much of the settings page's spacing between rows is kept when the column
+# is too tall for the window: the gaps are scaled by one of these, roomiest
+# first, and the largest that fits wins. Scaling from 1.0 down to 0.0 in fine
+# steps means a slightly short window only loses a little air, instead of
+# everything going from "comfortable" to "glued" in one jump.
+GAP_SCALES = (1.0, 0.85, 0.7, 0.55, 0.4, 0.25, 0.1, 0.0)
 
 
 _ROUND_CACHE: dict[tuple, tk.PhotoImage] = {}
@@ -2457,6 +2471,12 @@ class Almathus(tk.Tk):
         self._pill_size: tuple[int, int] | None = None  # cached question-pill size
         self._lang_job = None  # the language page's pending download-poll timer
         self._lang_polling = False
+        # The settings page's row gaps: their sizes as built and the share of
+        # them currently on screen. Kept on the window, not captured in a
+        # closure, because the fit is re-decided every time the window resizes.
+        self._gap_basis: list[tuple[tk.Widget, tuple[int, int]]] = []
+        self._gap_scale = 1.0
+        self._fitting = False  # re-entrancy latch for the page fit
 
         # sound effects (a no-op if no command-line player is installed)
         self.sfx = sfx.Sound(SOUNDS_DIR)
@@ -2742,8 +2762,6 @@ class Almathus(tk.Tk):
                     canvas.yview_moveto(0)
             scrollbar.set(*canvas.yview())
 
-        canvas.bind("<Configure>", fit_scrolled)
-
         # One packed column, top to bottom. Never .place() the content here: a
         # placed frame is not part of the packing flow, so it silently lands on
         # top of whatever comes after it (that's how the voice toggle ended up
@@ -2870,32 +2888,63 @@ class Almathus(tk.Tk):
         footer = tk.Frame(col, bg=BG)
         footer.pack(fill="x", pady=(18, 2))
 
-        def resync() -> None:
-            """Re-measure the column and update the scroll region.
+        # The gaps between the rows as built, before any fit scales them. Every
+        # fit is measured from these and never from what is on screen — that is
+        # what makes it reversible: a window made small, then large again, gets
+        # its air back instead of keeping the tight layout the small one asked
+        # for (which left the panels glued together, with no way to recover).
+        self._gap_basis = [
+            (w, _pad_pair(w.pack_info()["pady"])) for w in col.pack_slaves()
+        ]
+        self._gap_basis.append((col, _pad_pair(col.pack_info()["pady"])))
+        self._gap_scale = 1.0
 
-            The footer can fold onto more rows *after* the first measurement,
-            when the window maps and the real width is known; without this the
-            region kept the old, shorter height and the new rows could not be
-            scrolled to.
-            """
-            if not canvas.winfo_exists():
+        def refit(_event=None) -> None:
+            """Re-decide the page fit: the gaps between the rows, and how much
+            of the column the view can show.
+
+            Run on every canvas resize and after the footer re-lays itself, not
+            once at build time: the room the page has is not a constant, and a
+            decision taken for one window size is wrong for the next.
+
+            The footer can also fold onto more rows *after* the first
+            measurement, when the window maps and the real width is known;
+            without this the region kept the old, shorter height and the new
+            rows could not be scrolled to.
+
+            Guarded against re-entry: the layout passes it sets off deliver more
+            <Configure> events than it was called for, and each would otherwise
+            start the whole measurement again."""
+            if self._fitting or not canvas.winfo_exists():
                 return
-            self.update_idletasks()
-            holder_h[0] = holder.winfo_reqheight()
-            fit_scrolled()
+            self._fitting = True
+            try:
+                # The page box has to match the view before anything is
+                # measured: the footer folds by width, and a fit decided on the
+                # rows of the old width is decided against a page that no
+                # longer exists. Then the region follows the height it ends up.
+                fit_scrolled()
+                self._fit_column(col, canvas)
+                holder_h[0] = holder.winfo_reqheight()
+                fit_scrolled()
+            finally:
+                self._fitting = False
 
         self._build_voice_toggle(footer)
         self._build_dictation_toggle(footer)
         self._build_girly_toggle(footer)
-        self._layout_footer(footer, resync)
-        self._fit_column(col, canvas)
+        self._layout_footer(footer, refit)
         # Tk delivers a wheel event to the widget under the pointer and its own
         # bindtags only — it never walks up to a parent — so binding the canvas
         # alone would scroll nothing unless the pointer is on bare canvas.
         # Binding the whole screen means a gesture anywhere — panels, down the
         # gaps, even over the fixed title — reaches the canvas.
         self._bind_wheel_tree(f, canvas)
-        resync()  # measure now, not only on the first <Configure>
+        # Bound here, where both halves of the fit are ready to answer: the
+        # canvas' size is what decides them, and it changes more than once per
+        # drag, so this cannot be a one-shot decision.
+        canvas.bind("<Configure>", refit)
+        refit()  # measure now, not only on the first <Configure>
 
     def _bind_wheel_tree(self, widget, canvas) -> None:
         """Route every wheel gesture anywhere over `widget` to `canvas`.
@@ -2929,30 +2978,63 @@ class Almathus(tk.Tk):
         and the top bar sit above the canvas, so measuring against the whole
         window left the column a title too tall and the page scrolled even in
         full screen.
+
+        The gaps are always scaled from the sizes recorded when the page was
+        built, and this runs again on every resize, so the fit is a property of
+        the window on screen rather than of the window the page happened to be
+        built in. Scaling whatever is on screen instead compounded with each
+        pass, and left the panels glued together for good once a small window
+        had squeezed them: making the window large again could not undo it.
+
+        The steps are *measured in arithmetic, not by laying the page out*: the
+        rows' padding is part of the column's request, so subtracting the
+        padding currently applied leaves a content height that no scale changes.
+        Laying the page out costs tens of milliseconds here, and trying each
+        step with a real layout made a resize stutter.
         """
+        if not canvas.winfo_exists() or not self._gap_basis:
+            return
         self.update_idletasks()
         avail = canvas.winfo_height()
-        if avail <= 1:  # not configured yet (first build, before the window maps)
-            avail = self._usable_height()
-        gaps = [(w, w.pack_info()["pady"]) for w in col.pack_slaves()]
-        gaps.append((col, col.pack_info()["pady"]))
+        if avail <= 1:
+            # Not laid out yet: the first <Configure> will decide, and deciding
+            # now would be deciding against a canvas that has no size at all —
+            # the fallback screen height is twice the room a rebuilt page ends
+            # up with, so every step looks like it fits and nothing is given
+            # back when the real size arrives.
+            return
 
-        def needed():
-            own = col.pack_info()["pady"]
-            return col.winfo_reqheight() + sum(
-                own if isinstance(own, tuple) else (own, own)
+        basis = self._gap_basis
+        k = self._gap_scale
+        # The column's own padding is not in its request (the page around it
+        # adds that), so it is left out here and counted again in `needed`.
+        applied = sum(
+            round(top * k) + round(bottom * k) for _, (top, bottom) in basis[:-1]
+        )
+        content = col.winfo_reqheight() - applied
+
+        def needed(scale: float) -> int:
+            return content + sum(
+                round(top * scale) + round(bottom * scale) for _, (top, bottom) in basis
             )
 
-        for k in (0.6, 0.35, 0.15, 0.0):
-            if needed() <= avail:
-                return
-            for w, pady in gaps:
-                w.pack_configure(
-                    pady=tuple(round(v * k) for v in pady)
-                    if isinstance(pady, tuple)
-                    else round(pady * k)
-                )
-            self.update_idletasks()
+        # Roomiest first: the largest share of the gaps that still fits. The
+        # column only grows with the scale, so the first step that fits is the
+        # best one, and asking is arithmetic — no layout pass is spent on a
+        # step the page does not take. That is also what makes the fit
+        # reversible: nothing is remembered about why the gaps went, so a
+        # window with room again simply gets the roomiest layout back.
+        k = GAP_SCALES[-1]
+        for step in GAP_SCALES:
+            if needed(step) <= avail:
+                k = step
+                break
+        if k == self._gap_scale:
+            return
+        for w, (top, bottom) in basis:
+            w.pack_configure(pady=(round(top * k), round(bottom * k)))
+        self._gap_scale = k
+        self.update_idletasks()
 
     def _layout_footer(self, footer, on_relayout=None) -> None:
         """Lay the switches out in as many columns as their labels fit.

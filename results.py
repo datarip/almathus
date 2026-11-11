@@ -189,6 +189,16 @@ CSV_OP = {"addition": "+", "subtraction": "-", "multiplication": "x", "division"
 JOINER = {"fr": " et ", "en": " and "}
 
 
+def base_language(lang: str) -> str:
+    """The language whose strings to use: regional English is still English.
+
+    The picker offers en-us, en-gb and en-in, but there is one English row of
+    column names and one English joiner. Without this, an English (UK) session
+    wrote a French header and `-1 et -2` into the family cell.
+    """
+    return lang.split("-", 1)[0]
+
+
 def _key(name: str) -> str:
     """Fold a header cell to its comparison key: no accents, no case, no spaces."""
     s = unicodedata.normalize("NFKD", name or "")
@@ -542,7 +552,9 @@ def famille_label(mode: str, numbers: set[int], lang: str = "fr") -> str:
         return sign
     if len(nums) >= 4 and nums == list(range(nums[0], nums[-1] + 1)):
         return f"{sign}{nums[0]}–{nums[-1]}"
-    return JOINER.get(lang, " et ").join(f"{sign}{n}" for n in nums)
+    return JOINER.get(lang, JOINER.get(base_language(lang), " et ")).join(
+        f"{sign}{n}" for n in nums
+    )
 
 
 def _header_names(header: list[str], default: dict[str, str]) -> dict[str, str]:
@@ -626,7 +638,7 @@ def append_session(
     except OSError:
         pass
 
-    names = HEADERS.get(lang, HEADERS["fr"])
+    names = HEADERS.get(lang, HEADERS.get(base_language(lang), HEADERS["fr"]))
     write_header = not header
     if write_header:
         header = [names[f] for f in FIELDS]

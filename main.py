@@ -1997,7 +1997,7 @@ class LanguagePicker:
         self._clear_body()
         tk.Label(
             self.body,
-            text=f"Downloading {lang.endonym} ({lang.english})…",
+            text=f"{T('language_downloading')} {lang.endonym} …",
             font=("Helvetica", 13),
             fg=TEXT,
             bg=BG,
@@ -2015,7 +2015,7 @@ class LanguagePicker:
         self._clear_body()
         tk.Label(
             self.body,
-            text=f"Could not install {lang.endonym}.",
+            text=f"{T('language_error')} {lang.endonym}.",
             font=("Helvetica", 13),
             fg=TEXT,
             bg=BG,
@@ -2030,7 +2030,10 @@ class LanguagePicker:
             justify="left",
         ).pack(anchor="w", pady=(6, 12))
         Btn(
-            self.body, "Try again", command=self._show_list, font=("Helvetica", 12)
+            self.body,
+            T("language_retry"),
+            command=self._show_list,
+            font=("Helvetica", 12),
         ).pack(anchor="w")
 
     # -- actions ----------------------------------------------------------- #
@@ -2043,7 +2046,7 @@ class LanguagePicker:
     def _download(self, code: str) -> None:
         lang = languages.BY_CODE[code]
         self._show_download(lang)
-        self.status.config(text="This happens once; the model is kept for next time.")
+        self.status.config(text=T("language_once"))
         self._polling = True
 
         def progress(done: int, total: int) -> None:
@@ -2171,18 +2174,20 @@ def choose_language_at_startup() -> str | None:
     """
     if not needs_language_setup():
         return None
+    # The app language is not resolved yet, so the dialog cannot use the usual
+    # startup language: a family that removed every model still gets its saved
+    # language, while a genuine first run gets English — the one language a
+    # picker full of endonyms can rely on being readable.
+    global LANG  # noqa: PLW0603 - the one app-wide setting, set for the picker
+    LANG = load_language() or "en"
     root = tk.Tk()
     root.withdraw()
     try:
         picker = LanguagePicker(
             root,
-            title="Choose your language",
-            intro=(
-                "Almathus downloads a small speech model so your child can answer "
-                "out loud in their language. You can add more languages later in "
-                "settings."
-            ),
-            skip_label="Continue without voice",
+            title=T("language_title"),
+            intro=T("language_intro"),
+            skip_label=T("language_skip"),
         )
         return picker.show()
     finally:
@@ -3289,7 +3294,11 @@ class Almathus(tk.Tk):
         self.tts = voicemod.TTS(LANG) if voicemod else None
         self.stt = voicemod.SpeechInput(LANG) if voicemod else None
         self.voice_enabled.set(bool(self.stt and self.stt.available()))
-        self._refresh_lang_chip()
+        # The whole bar, not just the language chip: the stats pill outlives
+        # every screen and carries its label, which is in the old language until
+        # the button is rebuilt. Rebuilding costs two buttons and keeps every
+        # long-lived label in step with LANG.
+        self._populate_topbar()
         self.show_settings()
         if self.voice_enabled.get():
             self.after(700, self._calibrate_mic)

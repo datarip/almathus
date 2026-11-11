@@ -3151,12 +3151,12 @@ class Almathus(tk.Tk):
         "Mode princesse : ON" on a narrow screen; measuring the labels first
         means a button only shares a row when sharing still leaves it room.
 
-        When the last row is short — three switches in two columns — it keeps the
-        same button width as the rows above and is *centred* under them. Left
-        alone, the odd switch sat against the left edge with a hole beside it,
-        which is not a layout so much as a mistake with a border. Every place is
-        two grid columns wide, so a row of one can start one column in and land
-        half a button's width from either edge.
+        When the last row is short — three switches in two columns — its
+        buttons divide the whole row between them instead of leaving a hole.
+        Three in two columns gives two half-width switches and one that takes
+        the full width; the box is never part-empty. Every place is two grid
+        columns wide, so a row of one spans all of them and a row of two splits
+        them evenly.
 
         `on_relayout` is called after the columns change: the screen's height is
         measured once when it is built, and a later fold onto more rows makes
@@ -3206,10 +3206,13 @@ class Almathus(tk.Tk):
             for i, b in enumerate(buttons):
                 row, place = divmod(i, per_row)
                 in_row = min(per_row, len(buttons) - row * per_row)
+                # A short run divides the width it has: two switches across
+                # three places take half the row each, one takes all of it.
+                span = 2 * per_row // in_row
                 b.grid(
                     row=row,
-                    column=place * 2 + (per_row - in_row),
-                    columnspan=2,
+                    column=place * span,
+                    columnspan=span,
                     sticky="ew",
                     padx=pad,
                     pady=6,

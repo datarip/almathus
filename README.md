@@ -40,7 +40,9 @@ Both palettes are the `THEMES` dict at the top of `main.py`; add a third one
 there and it needs nothing else but a way to select it. Each names its drawing
 in `assets/` (`boy.svg`, `girl.svg`) and an emoji to fall back on if that
 file cannot be rendered. They are SVG so Tk 9 can rasterize them straight to the
-title's height — a PNG would only scale in whole steps.
+title's height — a PNG would only scale in whole steps, and one file could not
+follow the icon from 88 px down to 53. `assets/README.md` covers what that choice
+costs the artwork.
 
 ## Timing & progress tracking
 

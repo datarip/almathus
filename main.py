@@ -125,7 +125,6 @@ STRINGS = {
         "didnt_get": "Je n'ai pas compris, réessaie 🎤",
         "too_quiet": "🔊 Plus fort ! Je t'entends à peine",
         "mic_denied": "Micro non autorisé — Réglages ▸ Confidentialité ▸ Microphone",
-        "score_spoken": "Tu as eu {c} sur {n}.",
         "progress": "📈 Mes progrès",
         "back": "← Retour",
         "progress_title": "📈 Mes progrès",
@@ -198,7 +197,6 @@ STRINGS = {
         "didnt_get": "I didn't catch that, try again 🎤",
         "too_quiet": "🔊 Louder! I can barely hear you",
         "mic_denied": "Mic not allowed — Settings ▸ Privacy ▸ Microphone",
-        "score_spoken": "You got {c} out of {n}.",
         "progress": "📈 My progress",
         "back": "← Back",
         "progress_title": "📈 My progress",
@@ -229,6 +227,16 @@ STRINGS = {
     },
 }
 
+# The operator as it is said out loud, per language. A card is read as
+# "7 × 4" -> "<seven> <word> <four>", so each entry has to sit between two
+# spoken numbers. English was the fallback for every language but French until
+# now, which meant a Spanish card was read "siete times cuatro"; the voice was
+# Spanish and the word was not. The table follows the app's language registry
+# (languages.py) and is looked up by base code, so en-us/en-gb/en-in share "en".
+#
+# Only fr and en are user-verified. The rest are the standard school reading in
+# each language (the word a teacher says between the two numbers); one word per
+# mode to correct if a native speaker hears something off.
 OP_SPOKEN = {
     "fr": {
         "addition": "plus",
@@ -242,7 +250,220 @@ OP_SPOKEN = {
         "multiplication": "times",
         "division": "divided by",
     },
+    "es": {
+        "addition": "más",
+        "subtraction": "menos",
+        "multiplication": "por",
+        "division": "entre",
+    },
+    "de": {
+        "addition": "plus",
+        "subtraction": "minus",
+        "multiplication": "mal",
+        "division": "geteilt durch",
+    },
+    "it": {
+        "addition": "più",
+        "subtraction": "meno",
+        "multiplication": "per",
+        "division": "diviso",
+    },
+    "pt": {
+        "addition": "mais",
+        "subtraction": "menos",
+        "multiplication": "vezes",
+        "division": "dividido por",
+    },
+    "nl": {
+        "addition": "plus",
+        "subtraction": "min",
+        "multiplication": "keer",
+        "division": "gedeeld door",
+    },
+    "pl": {
+        "addition": "plus",
+        "subtraction": "minus",
+        "multiplication": "razy",
+        "division": "podzielić przez",
+    },
+    "ru": {
+        "addition": "плюс",
+        "subtraction": "минус",
+        "multiplication": "умножить на",
+        "division": "разделить на",
+    },
+    "uk": {
+        "addition": "плюс",
+        "subtraction": "мінус",
+        "multiplication": "помножити на",
+        "division": "поділити на",
+    },
+    "cs": {
+        "addition": "plus",
+        "subtraction": "minus",
+        "multiplication": "krát",
+        "division": "lomeno",
+    },
+    "sv": {
+        "addition": "plus",
+        "subtraction": "minus",
+        "multiplication": "gånger",
+        "division": "delat med",
+    },
+    "tr": {
+        "addition": "artı",
+        "subtraction": "eksi",
+        "multiplication": "çarpı",
+        "division": "bölü",
+    },
+    "ar": {
+        "addition": "زائد",
+        "subtraction": "ناقص",
+        "multiplication": "ضرب",
+        "division": "تقسيم",
+    },
+    "fa": {
+        "addition": "به‌علاوه",
+        "subtraction": "منهای",
+        "multiplication": "ضربدر",
+        "division": "تقسیم بر",
+    },
+    "hi": {
+        "addition": "जमा",
+        "subtraction": "घटा",
+        "multiplication": "गुणा",
+        "division": "भाग",
+    },
+    "gu": {
+        "addition": "વત્તા",
+        "subtraction": "ઓછા",
+        "multiplication": "ગુણ્યા",
+        "division": "ભાગ્યા",
+    },
+    "te": {
+        "addition": "ప్లస్",
+        "subtraction": "మైనస్",
+        "multiplication": "గుణించు",
+        "division": "భాగించు",
+    },
+    "ja": {
+        "addition": "たす",
+        "subtraction": "ひく",
+        "multiplication": "かける",
+        "division": "わる",
+    },
+    "ko": {
+        "addition": "더하기",
+        "subtraction": "빼기",
+        "multiplication": "곱하기",
+        "division": "나누기",
+    },
+    "cn": {
+        "addition": "加",
+        "subtraction": "减",
+        "multiplication": "乘",
+        "division": "除以",
+    },
+    "vi": {
+        "addition": "cộng",
+        "subtraction": "trừ",
+        "multiplication": "nhân",
+        "division": "chia",
+    },
+    "ca": {
+        "addition": "més",
+        "subtraction": "menys",
+        "multiplication": "per",
+        "division": "dividit per",
+    },
+    "eo": {
+        "addition": "plus",
+        "subtraction": "minus",
+        "multiplication": "multiplikite per",
+        "division": "dividite per",
+    },
+    "ka": {
+        "addition": "პლუს",
+        "subtraction": "მინუს",
+        "multiplication": "გამრავლებული",
+        "division": "გაყოფილი",
+    },
+    "ky": {
+        "addition": "кошуу",
+        "subtraction": "кемитүү",
+        "multiplication": "көбөйтүү",
+        "division": "бөлүү",
+    },
+    "kz": {
+        "addition": "қосу",
+        "subtraction": "азайту",
+        "multiplication": "көбейту",
+        "division": "бөлу",
+    },
+    "tg": {
+        "addition": "ҷамъ",
+        "subtraction": "тарҳ",
+        "multiplication": "зарб",
+        "division": "тақсим",
+    },
+    "uz": {
+        "addition": "qo'shish",
+        "subtraction": "ayirish",
+        "multiplication": "ko'paytirish",
+        "division": "bo'lish",
+    },
 }
+
+# The recap sentence, spoken after the fanfare. It lives here rather than in
+# STRINGS because only fr and en have translated screens: looking a spoken
+# string up through T() would have fallen back to the English sentence for every
+# other language, which is exactly the half-English reading this table removes.
+# Neutral phrasing, so it fits a boy or a girl; {c} correct out of {n}.
+SPOKEN_SCORE = {
+    "fr": "Tu as eu {c} sur {n}.",
+    "en": "You got {c} out of {n}.",
+    "es": "Has acertado {c} de {n}.",
+    "de": "Du hast {c} von {n} richtig.",
+    "it": "Hai fatto {c} su {n}.",
+    "pt": "Acertaste {c} de {n}.",
+    "nl": "Je had {c} van de {n} goed.",
+    "pl": "Poprawnie: {c} z {n}.",
+    "ru": "Правильно: {c} из {n}.",
+    "uk": "Правильно: {c} з {n}.",
+    "cs": "Správně: {c} z {n}.",
+    "sv": "Du fick {c} av {n} rätt.",
+    "tr": "{n} sorudan {c} tanesini doğru yaptın.",
+    "ar": "أجبت بشكل صحيح على {c} من {n}.",
+    "fa": "به {c} سؤال از {n} درست پاسخ دادی.",
+    "hi": "आपने {n} में से {c} सही किए।",
+    "gu": "તમે {n} માંથી {c} સાચા કર્યા.",
+    "te": "మీరు {n} లో {c} సరిగ్గా చేశారు.",
+    "ja": "{n} 問中 {c} 問正解でした。",
+    "ko": "{n} 문제 중 {c} 개를 맞혔어요.",
+    "cn": "{n} 道中你答对了 {c} 道。",
+    "vi": "Bạn làm đúng {c} trên {n} câu.",
+    "ca": "Has encertat {c} de {n}.",
+    "eo": "Vi atingis {c} el {n}.",
+    "ka": "შენ {n}-დან {c} სწორად უპასუხე.",
+    "ky": "Сиз {n} суроодон {c} туура жооп бердиңиз.",
+    "kz": "Сіз {n} сұрақтан {c} дұрыс жауап бердіңіз.",
+    "tg": "Шумо аз {n} савол {c}-ро дуруст ҷавоб додед.",
+    "uz": "Siz {n} ta savoldan {c} tasiga to'g'ri javob berdingiz.",
+}
+
+
+def spoken_words(lang: str) -> dict[str, str]:
+    """The operator words for a language, by base code, English as last resort."""
+    return OP_SPOKEN.get(lang) or OP_SPOKEN.get(lang.split("-", 1)[0], OP_SPOKEN["en"])
+
+
+def spoken_score(lang: str, correct: int, total: int) -> str:
+    """The recap sentence in the app's language, English as last resort."""
+    template = SPOKEN_SCORE.get(lang) or SPOKEN_SCORE.get(
+        lang.split("-", 1)[0], SPOKEN_SCORE["en"]
+    )
+    return template.format(c=correct, n=total)
+
 
 # Month names written out, rather than `strftime("%B")`: that one follows the
 # operating system's locale, which has nothing to do with the language the app
@@ -4259,7 +4480,7 @@ class Almathus(tk.Tk):
             if then:
                 then()
             return
-        word = OP_SPOKEN.get(LANG, OP_SPOKEN["en"])[card.mode]
+        word = spoken_words(LANG)[card.mode]
         phrase = f"{card.a} {word} {card.b}"
         # Each reading is numbered, because stopping a sentence reports through
         # the same callback as finishing one: without this, the tail of the
@@ -4657,7 +4878,12 @@ class Almathus(tk.Tk):
         # callback), which is exactly right — that game is over.
         say = None
         if self.tts and self.tts.available():
-            spoken = f"{msg} {T('score_spoken', c=correct, n=n)}"
+            # The verdict word above it is an English fallback for every language
+            # but French, and reading it in front of a local sentence was the one
+            # English word left in the recap. fr/en keep it because their screens
+            # are translated; the others say the whole sentence in their language.
+            score = spoken_score(LANG, correct, n)
+            spoken = f"{msg} {score}" if LANG in ("fr", "en") else score
 
             # The sound player calls this from a worker thread, so it goes back
             # onto the Tk loop through the pump like every other voice callback.

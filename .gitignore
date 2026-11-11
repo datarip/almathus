@@ -7,3 +7,8 @@ stats/
 models/
 prefs.json
 .DS_Store
+
+# Local graveyard for retired assets: kept on disk for reference, never tracked.
+archived/
+# Scratch inbox for assets being auditioned before they replace a live one.
+/assets/new/

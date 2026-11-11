@@ -422,10 +422,10 @@ THEMES: dict[str, dict[str, Any]] = {
         # deep on the light palette. Either way the label stays legible.
         "TILE_HOVER_BG": "#f5f6ff",
         "TILE_HOVER_FG": "#10121f",
-        "TITLE_SVG": "mario.svg",
+        "TITLE_SVG": "boy.svg",
         "TITLE_ICON": "🧮",  # fallback if the drawing cannot be loaded
     },
-    # Peach-pink page, plum ink. The whole palette flips light here, so the
+    # Warm-pink page, plum ink. The whole palette flips light here, so the
     # greens and reds are darkened too: they carry text on a pale background
     # now, where the dark theme's pastels would wash out.
     "girly": {
@@ -459,7 +459,7 @@ THEMES: dict[str, dict[str, Any]] = {
         # of this palette uses for "chosen", with white text over it.
         "TILE_HOVER_BG": "#d81b7a",
         "TILE_HOVER_FG": "#fff4f8",
-        "TITLE_SVG": "peach.svg",
+        "TITLE_SVG": "girl.svg",
         "TITLE_ICON": "👑",
     },
 }
@@ -525,12 +525,12 @@ SOUNDS_DIR = ASSETS_DIR / "sounds"
 
 COUNTDOWN_STEPS = 3  # 3-2-1, then GO!
 # countdown.mp3 is three beeps and a launch tone, laid out on an exact one-second
-# grid: beeps at 485, 1485 and 2485 ms, the tone at 3485 ms, ringing to 4460. The
+# grid: beeps at 0, 1000 and 2000 ms, the tone at 3000 ms, ringing to 4000. The
 # numbers on screen are hung off that grid rather than the other way round, so a
 # beep and a number land on the same instant instead of merely near one another.
 COUNTDOWN_TICK = 1000  # ms one number stays on screen = the gap between beeps
-COUNTDOWN_GO_AT = 3485  # ms into the sample where the launch tone starts
-COUNTDOWN_GO_LEN = 975  # ms it rings for, after which the sample is silent
+COUNTDOWN_GO_AT = 3000  # ms into the sample where the launch tone starts
+COUNTDOWN_GO_LEN = 1000  # ms it rings for, after which the sample is silent
 GO_FLASH_MS = 500  # how long GO! holds the question pill before the question returns
 
 # How many times a card carried over from the last session is dealt again. Twice
@@ -2447,6 +2447,7 @@ class Almathus(tk.Tk):
         self._speech_id = 0  # which reading that is; see _speak_operation()
         self._tick_job = None
         self._advance_job = None  # the single pending "move to the next card" timer
+        self._countdown_base = 0.0  # perf_counter instant the 3-2-1 count starts at
         self._voice_job = None  # the watchdog that keeps this card's mic armed
         self._card_done = False  # answer committed: ignore anything else on this card
         self._fanfare_job = None  # the recap's pending "start the music" timer
@@ -3023,7 +3024,7 @@ class Almathus(tk.Tk):
         return max(720, min(self.winfo_width(), CONTENT_MAX)) - 96
 
     def _build_title(self, parent):
-        """'<drawing> Almathus' — Mario normally, Peach in girly mode.
+        """'<drawing> Almathus' — the boy normally, the girl in girly mode.
 
         Kept deliberately small and tight to the top: it is decoration, and every
         pixel it takes is a pixel the menu's options below cannot use. On a short
@@ -3627,14 +3628,19 @@ class Almathus(tk.Tk):
     def _begin_countdown(self) -> None:
         # Both the count and the sample have a run-up to their GO! — three ticks
         # on screen, COUNTDOWN_GO_AT in the file — and lining the two up is a
-        # matter of making the shorter one wait for the longer. This sample opens
-        # with silence before its first beep, so here it is the picture that
-        # waits; a sample that starts on its first beep would flip that, and
-        # neither case needs its own branch.
+        # matter of making the shorter one wait for the longer. This sample
+        # starts on its first beep, so its GO! is exactly three ticks in and the
+        # lead is zero. A sample that opens on silence pushes COUNTDOWN_GO_AT
+        # past three ticks and makes the picture wait instead; neither case needs
+        # its own branch.
         lead = COUNTDOWN_STEPS * COUNTDOWN_TICK - COUNTDOWN_GO_AT
         # The settings screen must not sit there through the wait, whichever way
         # it falls: the game has begun, the count just has not caught up yet.
         self._clear()
+        # One fixed instant for the whole count. Every number is scheduled from
+        # it, never from the previous number's repaint, so a slow frame cannot
+        # push the rest of the 3-2-1-GO behind the sample's beeps.
+        self._countdown_base = time.perf_counter() + max(0, -lead) / 1000
         self.after(max(0, lead), lambda: self.sfx.play("countdown"))
         self.after(max(0, -lead), lambda: self.countdown(COUNTDOWN_STEPS))
 
@@ -3650,7 +3656,16 @@ class Almathus(tk.Tk):
             bg=BG,
         ).place(relx=0.5, rely=0.45, anchor="center")
         if n > 0:
-            self.after(COUNTDOWN_TICK, lambda: self.countdown(n - 1))
+            # The n-th number is due n ticks after the count began; measuring
+            # from that shared instant keeps the grid absolute instead of
+            # letting each repaint's own milliseconds add to the next delay.
+            due = self._countdown_base + (COUNTDOWN_STEPS - n + 1) * (
+                COUNTDOWN_TICK / 1000
+            )
+            self.after(
+                max(0, round((due - time.perf_counter()) * 1000)),
+                lambda: self.countdown(n - 1),
+            )
         else:
             self.game_start = time.perf_counter()
             # GO! is held for exactly as long as the tone rings, so the word and

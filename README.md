@@ -204,6 +204,13 @@ On the recap screen a warm feminine voice reads the same message shown on screen
 before the child answers. Both use **Piper**, a small neural synthesizer: one
 model per language, ~60 MB, downloaded at setup beside the recognizer model.
 
+- **The engine is a separate program.** The game does not import Piper: it starts
+  `sidecar/piper_sidecar.py` (or a frozen `piper-sidecar` beside a packaged app)
+  and exchanges text and PCM over stdin/stdout. That keeps the GPL engine at
+  arm's length from the app, which can then be distributed under its own
+  licence. Source runs need `--extra sidecar`; packaged builds ship the frozen
+  helper. `ALMATHUS_PIPER_SIDECAR` points the game at a helper explicitly. The
+  PyPI wheel carries the app only — the GPL sidecar is not in it.
 - **The voice is a file, not the machine's synthesizer.** macOS, Windows and
   Linux play the same model, so a card sounds the same on a Mac as on a PC — no
   system voice to enable, no language pack to install, nothing online.
@@ -390,10 +397,11 @@ Tuning, if a room needs it — all optional, all with measured defaults:
 Enable it:
 
 ```bash
-uv sync --extra voice --group dev   # sounddevice + numpy + num2words + vosk + webrtcvad
-                                    # + piper-tts (the voice) — keep --extra voice on
-                                    # every sync: without it uv prunes the audio libs
-                                    # and both the mic and the Piper voice go dead
+uv sync --extra voice --extra sidecar --group dev
+# voice   : sounddevice + numpy + num2words + vosk + webrtcvad (the mic)
+# sidecar : piper-tts, the GPL engine the separate voice process runs
+# keep --extra voice on every sync: without it uv prunes the audio libs and
+# the mic goes dead
 ```
 
 - First run asks for a language, downloads one small Vosk model (30–160 MB) and

@@ -13,9 +13,14 @@ accept/refuse decision is finally made. The acoustic gates in front of it are
 measured against a recorded corpus instead (see the comments in voice.py).
 """
 
+import os
 import sys
+import tempfile
+import threading
+from pathlib import Path
 
 import languages
+import voice as voicemod
 import voices
 from voice import _espeak_voice, _say_voice, _spoken_form, strict_numbers
 
@@ -210,6 +215,83 @@ def spoken_failures() -> list[str]:
     return failures
 
 
+# -- the out-of-process voice ------------------------------------------------ #
+#
+# The game talks to a separate program over stdin/stdout. A stub speaks the same
+# protocol with no model and no audio device, so the framing, the readiness
+# handshake and the fallback path are tested without downloading 60 MB or
+# making a sound.
+FAKE_SIDECAR = """
+import json, sys
+out = sys.stdout.buffer
+out.write(b'{"ready": true}\\n'); out.flush()
+for line in sys.stdin:
+    request = json.loads(line)
+    if request.get("cmd") == "quit":
+        break
+    pcm = bytes(400)
+    out.write((json.dumps({"sample_rate": 22050, "n": len(pcm)}) + "\\n").encode())
+    out.flush()
+    out.write(pcm); out.flush()
+"""
+
+
+def sidecar_failures() -> list[str]:
+    try:
+        import sounddevice  # the voice extra
+    except ImportError:
+        return []  # nothing to test without the playback stack
+
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        script = folder / "fake_sidecar.py"
+        script.write_text(FAKE_SIDECAR, encoding="utf-8")
+        entry = voices.VOICES["fr"]
+        (folder / f"{entry.model}.onnx").write_bytes(b"x")
+        (folder / f"{entry.model}.onnx.json").write_bytes(b"{}")
+
+        names = (
+            "ALMATHUS_VOICES_DIR",
+            "ALMATHUS_PIPER_SIDECAR",
+            "ALMATHUS_TTS_BACKEND",
+        )
+        old = {name: os.environ.get(name) for name in names}
+        os.environ["ALMATHUS_VOICES_DIR"] = str(folder)
+        os.environ["ALMATHUS_PIPER_SIDECAR"] = str(script)
+        os.environ.pop("ALMATHUS_TTS_BACKEND", None)
+
+        played: list[tuple[int, int]] = []
+        saved = (sounddevice.play, sounddevice.wait, sounddevice.stop)
+        sounddevice.play = lambda audio, rate: played.append((len(audio), rate))
+        sounddevice.wait = lambda: None
+        sounddevice.stop = lambda: None
+        tts = None
+        try:
+            tts = voicemod.TTS("fr")
+            if tts.describe().split()[0] != "piper-sidecar":
+                failures.append(f"  sidecar: backend is {tts.describe()}")
+            elif not tts._sidecar_ready.wait(10):
+                failures.append("  sidecar: never became ready")
+            else:
+                done = threading.Event()
+                tts.speak("10 plus 4", on_done=done.set)
+                if not done.wait(10):
+                    failures.append("  sidecar: no completion")
+                elif not played:
+                    failures.append("  sidecar: nothing was played")
+        finally:
+            if tts is not None:
+                tts.close()
+            sounddevice.play, sounddevice.wait, sounddevice.stop = saved
+            for name, value in old.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+    return failures
+
+
 def main() -> int:
     failures = []
     for text, lang, expected in CASES:
@@ -218,12 +300,14 @@ def main() -> int:
             failures.append(f"  {lang} {text!r}: got {got!r}, expected {expected!r}")
     failures += voice_failures()
     failures += spoken_failures()
+    failures += sidecar_failures()
     total = (
         len(CASES)
         + len(VOICE_CASES)
         + len(SPOKEN_CASES)
         + len(DIGIT_CASES)
         + 1  # the Piper coverage check
+        + 1  # the sidecar round trip
         + len(languages.LANGUAGES)  # every language has an espeak mapping
         + len(voices.VOICES)  # every catalog entry is complete
     )

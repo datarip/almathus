@@ -2907,9 +2907,11 @@ class Almathus(tk.Tk):
                 with contextlib.suppress(Exception):
                     self.after_cancel(pending)
                 setattr(self, job, None)
-        # The player is a child process: quitting through os._exit() leaves it
-        # orphaned, still playing to an empty screen, unless it is killed here.
+        # The player and the voice sidecar are child processes: quitting through
+        # os._exit() leaves them orphaned unless they are stopped here.
         self.sfx.stop()
+        if self.tts:
+            self.tts.close()  # language switch / quit: no orphan sidecar
         if self.stt:
             self.stt.stop()  # close mic stream (mic light off)
             self.stt.restore_input_volume(50)  # idempotent
@@ -4133,6 +4135,8 @@ class Almathus(tk.Tk):
         if self.stt:
             self.stt.stop()
             self.stt.restore_input_volume(50)
+        if self.tts:
+            self.tts.close()  # the old language's sidecar goes with its voice
         self.tts = voicemod.TTS(LANG) if voicemod else None
         self.stt = voicemod.SpeechInput(LANG) if voicemod else None
         self.voice_enabled.set(bool(self.stt and self.stt.available()))
@@ -5343,6 +5347,8 @@ def main():
         if app.stt:
             app.stt.stop()
             app.stt.restore_input_volume(50)
+        if app.tts:
+            app.tts.close()  # idempotent: _shutdown may have done it already
 
 
 if __name__ == "__main__":

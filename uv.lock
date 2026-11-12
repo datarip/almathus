@@ -20,10 +20,12 @@ version = "0.1.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
+sidecar = [
+    { name = "piper-tts", extra = ["ja"] },
+]
 voice = [
     { name = "num2words" },
     { name = "numpy" },
-    { name = "piper-tts", extra = ["ja"] },
     { name = "scipy" },
     { name = "sounddevice" },
     { name = "vosk", version = "0.3.44", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
@@ -41,14 +43,14 @@ dev = [
 requires-dist = [
     { name = "num2words", marker = "extra == 'voice'" },
     { name = "numpy", marker = "extra == 'voice'" },
-    { name = "piper-tts", extras = ["ja"], marker = "extra == 'voice'" },
+    { name = "piper-tts", extras = ["ja"], marker = "extra == 'sidecar'" },
     { name = "scipy", marker = "extra == 'voice'" },
     { name = "sounddevice", marker = "extra == 'voice'" },
     { name = "vosk", marker = "sys_platform == 'darwin' and extra == 'voice'", specifier = "<0.3.45" },
     { name = "vosk", marker = "sys_platform != 'darwin' and extra == 'voice'" },
     { name = "webrtcvad-wheels", marker = "extra == 'voice'" },
 ]
-provides-extras = ["voice"]
+provides-extras = ["voice", "sidecar"]
 
 [package.metadata.requires-dev]
 dev = [

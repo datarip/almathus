@@ -7,7 +7,9 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
-# Voice answering (STT). TTS uses macOS `say` and needs nothing installed.
+# Voice answering (STT) and playback. The spoken voice is not here: it runs in
+# a separate GPL program (see the sidecar extra) so the game itself never links
+# Piper or espeak-ng.
 # vosk: the one recognizer, one small model per language, downloaded on first
 #   run by the setup screen (see languages.py).
 # num2words generates 0..100 number words for the installed language, from which
@@ -19,17 +21,20 @@ voice = [
     "numpy",
     "scipy",  # Butterworth band-pass for the VAD/voicing test (has a fallback)
     "num2words",
-    # The spoken voice: Piper runs the same neural model on every OS, so a
-    # language sounds the same on a Mac, a PC and a Linux box (see voices.py).
-    # onnxruntime comes with it; the per-language model is downloaded at setup.
-    # [ja]: Piper's Japanese voice needs OpenJTalk to phonemize; the wheel is
-    # ~26 MB and the only language with an extra, so it rides with the voice.
-    "piper-tts[ja]",
     # vosk 0.3.45 ships no macOS wheel (0.3.44 is the last universal2 build), so
     # resolving to it silently drops the primary French recognizer on a Mac.
     "vosk<0.3.45; sys_platform == 'darwin'",
     "vosk; sys_platform != 'darwin'",
     "webrtcvad-wheels",
+]
+
+# The Piper sidecar — a separate program, GPL-3.0, run out-of-process. The game
+# talks to it over stdin/stdout and never imports it. Packaged apps ship a
+# frozen `piper-sidecar` instead; this extra is for running from source.
+sidecar = [
+    # [ja]: Piper's Japanese voice needs OpenJTalk to phonemize; the wheel is
+    # ~26 MB and the only language with an extra, so it rides with the engine.
+    "piper-tts[ja]",
 ]
 
 [project.scripts]
@@ -42,7 +47,8 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 # A flat layout: the runtime modules sit beside one another, and everything the
 # game reads at run time (title art, flags, sounds) lives under assets/. Tests,
-# tools/ and mic_check.py are development-only and are not shipped.
+# tools/, mic_check.py and sidecar/ are not part of the app package: the
+# sidecar is a separate GPL program, not a module of the game.
 include = [
     "main.py",
     "languages.py",

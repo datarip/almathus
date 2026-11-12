@@ -5,11 +5,12 @@ Two independent, gracefully-degrading pieces:
 * ``TTS``          — speaks the question and the encouragement in a warm
                      feminine voice: the **Piper** model for the language (see
                      :mod:`voices`), which is the same neural voice on macOS,
-                     Windows and Linux. Without that model — a fresh install, or
-                     a language Piper has none for — it falls back to the
-                     operating system's own voice (macOS ``say``, Linux
-                     ``espeak-ng``, ``pyttsx3``), and to a silent no-op if even
-                     that is missing.
+                     Windows and Linux. Piper runs in a separate process
+                     (``sidecar/``) and is reached over stdin/stdout, so the GPL
+                     engine stays outside this program's licence; without the
+                     sidecar or the model it falls back to the operating system's
+                     own voice (macOS ``say``, Linux ``espeak-ng``,
+                     ``pyttsx3``), and to a silent no-op if even that is missing.
 
 * ``SpeechInput``  — records from the mic with simple voice-activity detection
                      (one open stream per card, auto-stops when the speaker goes
@@ -35,9 +36,12 @@ callbacks are plain values so the caller can marshal them onto the Tk main loop.
 
 Environment overrides:
     ALMATHUS_TTS_BACKEND   "piper", "say", "espeak" or "pyttsx3" to force one
-                           (default: auto — Piper first, then the OS voice)
+                           (default: auto — the Piper sidecar first, then the OS voice)
     ALMATHUS_TTS_VOICE     voice name for the native backends, or a path to an
-                           .onnx model for Piper
+                           .onnx model for the sidecar
+    ALMATHUS_PIPER_SIDECAR path to the sidecar executable (or its .py script);
+                           defaults to a frozen helper beside the app, then to
+                           sidecar/piper_sidecar.py in a source checkout
     ALMATHUS_VOSK_MODEL    path to a Vosk model directory, bypassing the per-user
                            store the setup screen installs into
     ALMATHUS_MODELS_DIR    where installed models are kept (tests / packaging)
@@ -48,7 +52,6 @@ from __future__ import annotations
 
 import contextlib
 import functools
-import importlib.util
 import json
 import os
 import queue
@@ -344,12 +347,34 @@ def _spoken_form(text: str, lang: str) -> str:
     return " ".join(fix(token) for token in _spell_numbers(text, base).split())
 
 
-def _have_piper() -> bool:
-    """Is the Piper stack importable? Checked without importing onnxruntime."""
-    return (
-        importlib.util.find_spec("piper") is not None
-        and importlib.util.find_spec("sounddevice") is not None
-    )
+def _sidecar_command() -> list[str] | None:
+    """How to start the Piper sidecar, if one is available.
+
+    The game never imports Piper: the engine lives in a separate program
+    (``sidecar/piper_sidecar.py``, or a frozen ``piper-sidecar`` executable
+    beside a packaged app) and the two talk over stdin/stdout. That process
+    boundary is what keeps the GPL stack out of the app's licence.
+
+    A packaged build puts the frozen helper next to its own executable; a
+    source checkout falls back to running the script with the same interpreter.
+    ``ALMATHUS_PIPER_SIDECAR`` overrides both, which is also how the tests use a
+    stub.
+    """
+    override = os.environ.get("ALMATHUS_PIPER_SIDECAR")
+    if override:
+        path = Path(override)
+        if path.suffix == ".py":
+            return [sys.executable, str(path)]
+        return [str(path)]
+    beside = Path(sys.executable).resolve().parent
+    for name in ("piper-sidecar", "piper-sidecar.exe"):
+        candidate = beside / name
+        if candidate.is_file():
+            return [str(candidate)]
+    script = Path(__file__).resolve().parent / "sidecar" / "piper_sidecar.py"
+    if script.is_file():
+        return [sys.executable, str(script)]
+    return None
 
 
 def _no_window() -> int:
@@ -386,7 +411,7 @@ def _resample_to_device(audio: Any, sample_rate: int) -> tuple[Any, int]:
 
 
 class TTS:
-    """The game's voice. Piper when its model is installed, else the OS's own."""
+    """The game's voice. Piper's sidecar when its model is installed, else the OS."""
 
     def __init__(self, lang: str = "fr", rate: int = 180):
         self.lang = lang
@@ -397,10 +422,10 @@ class TTS:
         self._voice: str | None = None
         self._backend = "none"
         self._fallback: tuple[str, str | None] = ("none", None)
-        self._piper: Any = None  # a piper.PiperVoice once loaded
-        self._piper_path: Path | None = None
-        self._piper_speaker: str | None = None
-        self._piper_thread: threading.Thread | None = None
+        self._sidecar_cmd: list[str] | None = None
+        self._sidecar_speaker: str | None = None
+        self._sidecar_proc: subprocess.Popen | None = None
+        self._sidecar_ready = threading.Event()
         self._play_until = 0.0  # performance-clock second the speech ends
         self._gen = 0  # so a superseded utterance cannot touch the current one
         self._pyttsx = False
@@ -412,21 +437,22 @@ class TTS:
         self._fallback = self._native(lang)
         forced = os.environ.get("ALMATHUS_TTS_BACKEND", "auto").strip().lower()
         entry = voices.VOICES.get(lang)
+        command = _sidecar_command()
         if (
             entry is not None
             and voices.is_installed(lang)
-            and _have_piper()
-            and forced in ("auto", "piper")
+            and command is not None
+            and forced in ("auto", "piper", "sidecar")
         ):
-            self._backend = "piper"
-            self._voice = entry.model
-            self._piper_speaker = entry.speaker
-            self._piper_path = voices.voice_path(lang)
+            model = voices.voice_path(lang)
             override = os.environ.get("ALMATHUS_TTS_VOICE")
             if override and Path(override).suffix == ".onnx":
-                self._piper_path = Path(override)
-            self._piper_thread = threading.Thread(target=self._load_piper, daemon=True)
-            self._piper_thread.start()
+                model = Path(override)
+            self._backend = "piper-sidecar"
+            self._voice = entry.model
+            self._sidecar_cmd = command
+            self._sidecar_speaker = entry.speaker
+            self._start_sidecar(model)
         elif forced in ("auto", "say", "espeak", "pyttsx3"):
             self._backend, self._voice = self._fallback
         _dbg("tts:", self.describe())
@@ -454,21 +480,145 @@ class TTS:
                 return "pyttsx3", None
         return "none", None
 
-    def _load_piper(self) -> None:
+    def _start_sidecar(self, model: Path) -> None:
+        command = list(self._sidecar_cmd or [])
+        command += ["--model", str(model)]
+        if self._sidecar_speaker:
+            command += ["--speaker", self._sidecar_speaker]
         try:
-            from piper import PiperVoice
-
-            if self._piper_path is not None:
-                self._piper = PiperVoice.load(str(self._piper_path))
-            _dbg("piper ready:", self._voice)
+            self._sidecar_proc = subprocess.Popen(  # noqa: S603 - argv, no shell
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                creationflags=_no_window(),
+            )
         except Exception as e:
-            _dbg("piper load failed:", repr(e))
-            self._piper = None
+            _dbg("sidecar start failed:", repr(e))
+            self._sidecar_proc = None
+            self._fail_sidecar()
+            return
+        self._sidecar_ready.clear()
+        threading.Thread(target=self._sidecar_handshake, daemon=True).start()
+
+    def _sidecar_handshake(self) -> None:
+        """Wait for the sidecar's ready line; fall back if it never comes."""
+        header = self._sidecar_read()
+        if header is None or not header.get("ready"):
+            _dbg("sidecar handshake failed:", header)
+            self._fail_sidecar()
+        else:
+            _dbg("sidecar ready:", self._voice)
+        self._sidecar_ready.set()
+        # The first phrase would otherwise pay for importing numpy/scipy and
+        # opening the output device. Do it now, while the user is still on the
+        # settings screen, so a card is never delayed by it.
+        try:
+            import numpy as np
+
+            _resample_to_device(np.zeros(64, dtype=np.int16), 22050)
+        except Exception as e:
+            _dbg("playback warm-up failed:", repr(e))
+
+    def _sidecar_read(self) -> dict | None:
+        """One JSON line from the sidecar, or None when the pipe is unusable.
+
+        Expected failures are values, not exceptions: the caller falls back to
+        the OS voice for that phrase, and an exception here would be caught by
+        the same thread anyway.
+        """
+        proc = self._sidecar_proc
+        if proc is None or proc.stdout is None:
+            return None
+        line = proc.stdout.readline()
+        if not line:
+            _dbg("sidecar read: pipe closed")
+            return None
+        try:
+            return json.loads(line.decode("utf-8"))
+        except ValueError as e:
+            _dbg("sidecar read: bad json", repr(e))
+            return None
+
+    def _sidecar_read_exact(self, count: int) -> bytes | None:
+        """Exactly `count` PCM bytes, or None if the sidecar went away."""
+        proc = self._sidecar_proc
+        if proc is None or proc.stdout is None:
+            return None
+        chunks: list[bytes] = []
+        left = count
+        while left > 0:
+            chunk = proc.stdout.read(left)
+            if not chunk:
+                _dbg("sidecar pcm: pipe closed")
+                return None
+            chunks.append(chunk)
+            left -= len(chunk)
+        return b"".join(chunks)
+
+    def _sidecar_send(self, payload: dict) -> bool:
+        proc = self._sidecar_proc
+        if proc is None or proc.stdin is None:
+            return False
+        try:
+            proc.stdin.write((json.dumps(payload) + "\n").encode("utf-8"))
+            proc.stdin.flush()
+        except OSError as e:
+            _dbg("sidecar write failed:", repr(e))
+            return False
+        return True
+
+    def _sidecar_request(self, text: str) -> tuple[bytes, int] | None:
+        """One phrase through the sidecar: (PCM, sample rate), or None.
+
+        Waits for the model load, sends the text, reads the header and then the
+        exact byte count. Every failure is logged and returned as None so the
+        caller can fall back for this one phrase without losing the process for
+        the next one.
+        """
+        if not self._sidecar_ready.wait(timeout=30):
+            _dbg("sidecar request: never became ready")
+            return None
+        proc = self._sidecar_proc
+        if proc is None or proc.poll() is not None:
+            _dbg("sidecar request: not running")
+            return None
+        payload = {
+            "text": text,
+            "length_scale": max(0.5, min(2.0, 180 / max(1, self.rate))),
+        }
+        if not self._sidecar_send(payload):
+            return None
+        header = self._sidecar_read()
+        if header is None:
+            return None
+        if "error" in header:
+            _dbg("sidecar error:", header["error"])
+            return None
+        try:
+            count = int(header["n"])
+            sample_rate = int(header["sample_rate"])
+        except (KeyError, TypeError, ValueError) as e:
+            _dbg("sidecar header: invalid", repr(e))
+            return None
+        pcm = self._sidecar_read_exact(count)
+        if pcm is None:
+            return None
+        return pcm, sample_rate
+
+    def _fail_sidecar(self) -> None:
+        """The sidecar is unusable: switch to the OS voice and stop keeping it."""
+        self._backend, self._voice = self._fallback
+        proc, self._sidecar_proc = self._sidecar_proc, None
+        self._sidecar_ready.set()
+        if proc and proc.poll() is None:
+            with contextlib.suppress(Exception):
+                proc.terminate()
 
     def describe(self) -> str:
         """What will speak, for the debug log and the setup screen."""
-        if self._backend == "piper":
-            return f"piper {self._voice}"
+        if self._backend == "piper-sidecar":
+            return f"piper-sidecar {self._voice}"
         if self._backend in ("say", "espeak"):
             return f"{self._backend} {self._voice or '(system default)'}"
         return self._backend
@@ -482,10 +632,10 @@ class TTS:
         """Speak asynchronously; interrupts any speech already in progress."""
         text = _spoken_form(text, self.lang)
         self.stop()
-        if self._backend == "piper":
+        if self._backend == "piper-sidecar":
             gen = self._gen
             threading.Thread(
-                target=self._piper_speak, args=(text, on_done, gen), daemon=True
+                target=self._sidecar_speak, args=(text, on_done, gen), daemon=True
             ).start()
         else:
             self._native_speak(text, on_done)
@@ -529,51 +679,40 @@ class TTS:
                 target=self._wait_then, args=(self._proc, on_done), daemon=True
             ).start()
 
-    def _piper_speak(
+    def _sidecar_speak(
         self, text: str, on_done: Callable[[], None] | None, gen: int
     ) -> None:
         if gen != self._gen:  # a newer utterance took over while this one waited
             if on_done:
                 on_done()
             return
-        # Hold the mic off for the whole synthesis as well as the playback:
-        # `speaking()` is a clock, and the synthesizer is silent but not done.
+        # Hold the mic off for the whole request as well as the playback:
+        # `speaking()` is a clock, and the sidecar is silent but working.
         self._play_until = time.perf_counter() + 30.0
         handed_off = False
         try:
-            if self._piper_thread is not None:
-                self._piper_thread.join()
-            voice = self._piper
-            if voice is None:  # the model would not load: use the OS voice
-                self._backend, self._voice = self._fallback
-                if gen == self._gen:
-                    self._play_until = 0.0
+            result = self._sidecar_request(text)
+            if result is None:
+                self._fail_sidecar()
                 self._native_speak(text, on_done)
                 handed_off = True
                 return
+            pcm, sample_rate = result
+            if gen != self._gen:
+                return
             import numpy as np
             import sounddevice as sd
-            from piper.config import SynthesisConfig
 
-            speaker = None
-            if self._piper_speaker:
-                speaker = voice.config.speaker_id_map.get(self._piper_speaker)
-            config = SynthesisConfig(
-                length_scale=max(0.5, min(2.0, 180 / max(1, self.rate))),
-                speaker_id=speaker,
-            )
-            chunks = list(voice.synthesize(text, config))
-            pcm = b"".join(chunk.audio_int16_bytes for chunk in chunks)
-            if not pcm or gen != self._gen:
-                return
             audio = np.frombuffer(pcm, dtype=np.int16)
-            sample_rate = chunks[0].sample_rate
             audio, sample_rate = _resample_to_device(audio, sample_rate)
             self._play_until = time.perf_counter() + len(audio) / sample_rate + 0.05
             sd.play(audio, sample_rate)
             sd.wait()
         except Exception as e:
-            _dbg("piper speak failed:", repr(e))
+            _dbg("sidecar playback failed:", repr(e))
+            self._fail_sidecar()
+            self._native_speak(text, on_done)
+            handed_off = True
         finally:
             if not handed_off:
                 if gen == self._gen:
@@ -615,11 +754,28 @@ class TTS:
         if proc and proc.poll() is None:
             with contextlib.suppress(Exception):
                 proc.terminate()
-        if self._backend == "piper":
+        if self._backend == "piper-sidecar":
             with contextlib.suppress(Exception):
                 import sounddevice as sd
 
                 sd.stop()
+
+    def close(self) -> None:
+        """Stop the sidecar, if one is running. Called when the app is done
+        with this voice (language switch, quit) so no orphan process survives."""
+        self.stop()
+        proc, self._sidecar_proc = self._sidecar_proc, None
+        self._sidecar_ready.set()
+        if proc and proc.poll() is None:
+            with contextlib.suppress(Exception):
+                if proc.stdin is not None:
+                    proc.stdin.write(b'{"cmd": "quit"}\n')
+                    proc.stdin.flush()
+            with contextlib.suppress(Exception):
+                proc.wait(timeout=2)
+            if proc.poll() is None:
+                with contextlib.suppress(Exception):
+                    proc.terminate()
 
 
 # --------------------------------------------------------------------------- #

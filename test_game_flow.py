@@ -123,6 +123,9 @@ class FakeTTS:
         self._speaking = False
         self._on_done = None
 
+    def close(self):
+        self.stop()
+
 
 def start(voice: bool, dictation: bool = False, tip: bool = False):
     app = almathus.Almathus()

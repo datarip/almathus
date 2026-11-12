@@ -270,6 +270,72 @@ def _espeak_voice(lang: str) -> str | None:
     return f"{code}+f3" if code else None
 
 
+# --------------------------------------------------------------------------- #
+# Saying it the way it has to sound
+# --------------------------------------------------------------------------- #
+#
+# The phonemizer behind Piper (espeak-ng) applies French's elision rules: the
+# final -s of "dix" and "six" disappears before a consonant, and "plus" always
+# shrinks to /ply/. That is right in conversation and wrong at a maths table —
+# "10 fois 4" came out as /di fwa katʁ/ and the operator "+" as /ply/, so the
+# number and the operation were both ambiguous. A child learning to hear "dix"
+# and "plus" must get the sounds that tell them apart.
+#
+# The fix is to respell, because the sounds are what the voice reads: "disse"
+# phonemizes to /dis/ and "plusse" to /plys/, exactly. These strings are only
+# ever spoken, never shown, so the unusual spelling costs nothing.
+#
+# Numbers are spelled out first (10 -> "dix"), both to give the respelling a
+# word to bite on and to leave compounds alone: "dix-sept" and "quatre-vingt-dix"
+# are single tokens whose -s espeak already pronounces.
+_SAY_AS = {
+    "fr": {"dix": "disse", "six": "sisse", "plus": "plusse"},
+}
+_NUM2WORDS_LANG = {"fr": "fr"}
+
+
+def _spell_numbers(text: str, lang: str) -> str:
+    """Replace digit runs with their words, for the languages we respell."""
+    code = _NUM2WORDS_LANG.get(lang)
+    if code is None:
+        return text
+    try:
+        from num2words import num2words
+    except Exception:
+        return text  # no library, no worse: the digits are read as digits
+
+    def spell(m: re.Match[str]) -> str:
+        try:
+            return num2words(int(m.group()), lang=code)
+        except (ValueError, OverflowError):
+            return m.group()
+
+    return re.sub(r"\b\d+\b", spell, text)
+
+
+def _spoken_form(text: str, lang: str) -> str:
+    """The text as it must be pronounced, for the languages that need it."""
+    base = lang.split("-", 1)[0]
+    table = _SAY_AS.get(base)
+    if table is None:
+        return text
+
+    def fix(token: str) -> str:
+        core = token.strip(".,;:!?…")
+        if core in table:
+            return token.replace(core, table[core], 1)
+        # The elision also bites the tail of a compound number before a
+        # consonant ("quatre-vingt-dix sur cent" -> /...di/), so "quatre-vingt-
+        # disse" and "soixante-sisse" get the -s back too. "dix-sept" and
+        # "dix-huit" are untouched: their -s is already spoken.
+        head, dash, tail = core.rpartition("-")
+        if dash and tail in table:
+            return token.replace(core, head + dash + table[tail], 1)
+        return token
+
+    return " ".join(fix(token) for token in _spell_numbers(text, base).split())
+
+
 def _have_piper() -> bool:
     """Is the Piper stack importable? Checked without importing onnxruntime."""
     return (
@@ -406,6 +472,7 @@ class TTS:
 
     def speak(self, text: str, on_done: Callable[[], None] | None = None):
         """Speak asynchronously; interrupts any speech already in progress."""
+        text = _spoken_form(text, self.lang)
         self.stop()
         if self._backend == "piper":
             gen = self._gen

@@ -17,7 +17,7 @@ import sys
 
 import languages
 import voices
-from voice import _espeak_voice, _say_voice, strict_numbers
+from voice import _espeak_voice, _say_voice, _spoken_form, strict_numbers
 
 # (transcript, language, expected)
 #   [ints] — an answer
@@ -161,6 +161,51 @@ def voice_failures() -> list[str]:
     return failures
 
 
+# -- how a French phrase must be pronounced ---------------------------------- #
+#
+# The phonemizer elides French's final -s before a consonant, so "10 fois 4" was
+# heard as /di fwa katʁ/ and the operator "+" as /ply/. These are the respellings
+# that put the sounds back; the digits are spelled out first so the substitution
+# has a word to apply to.
+SPOKEN_CASES = [
+    # Already words: no library needed.
+    ("dix plus quatre", "disse plusse quatre"),
+    ("six fois quatre", "sisse fois quatre"),
+    # Compounds keep the -s they already have; they must not be rewritten.
+    ("dix-sept moins neuf", "dix-sept moins neuf"),
+    ("dix-huit divisé par trois", "dix-huit divisé par trois"),
+    # Only French is respelled.
+    ("10 plus 4", "10 plus 4"),
+]
+SPOKEN_LANGS = ["fr", "fr", "fr", "fr", "en-us"]
+
+# The digit cases need num2words, which ships in the voice extra.
+DIGIT_CASES = [
+    ("10 plus 4", "disse plusse quatre"),
+    ("6 fois 4", "sisse fois quatre"),
+    ("17 moins 9", "dix-sept moins neuf"),  # dix-sept is one token, and right
+    ("90 sur 100", "quatre-vingt-disse sur cent"),  # the tail keeps its -s too
+    ("Tu as eu 18 sur 20.", "Tu as eu dix-huit sur vingt."),
+]
+
+
+def spoken_failures() -> list[str]:
+    failures = []
+    for (text, expected), lang in zip(SPOKEN_CASES, SPOKEN_LANGS, strict=True):
+        got = _spoken_form(text, lang)
+        if got != expected:
+            failures.append(f"  spoken {lang} {text!r}: got {got!r}")
+    try:
+        import num2words  # noqa: F401
+    except ImportError:
+        return failures
+    for text, expected in DIGIT_CASES:
+        got = _spoken_form(text, "fr")
+        if got != expected:
+            failures.append(f"  spoken fr {text!r}: got {got!r}")
+    return failures
+
+
 def main() -> int:
     failures = []
     for text, lang, expected in CASES:
@@ -168,9 +213,12 @@ def main() -> int:
         if got != expected:
             failures.append(f"  {lang} {text!r}: got {got!r}, expected {expected!r}")
     failures += voice_failures()
+    failures += spoken_failures()
     total = (
         len(CASES)
         + len(VOICE_CASES)
+        + len(SPOKEN_CASES)
+        + len(DIGIT_CASES)
         + 1  # the Piper coverage check
         + len(languages.LANGUAGES)  # every language has an espeak mapping
         + len(voices.VOICES)  # every catalog entry is complete

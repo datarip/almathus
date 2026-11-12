@@ -213,6 +213,13 @@ model per language, ~60 MB, downloaded at setup beside the recognizer model.
 - Pick another voice: `export ALMATHUS_TTS_VOICE="Audrey"` for the OS backends,
   or a path to an `.onnx` for Piper. `ALMATHUS_TTS_BACKEND=say|espeak|piper`
   forces one.
+- **French is said the clear way.** The synthesizer applies French elision — the
+  final `-s` of *dix* and *six* disappears before a consonant and *plus* always
+  shrinks to “plu” — which turned “10 fois 4” into “di fwa katr” and the `+`
+  operator into “plu”. The spoken text is respelled before it is voiced
+  (`dix` → *disse*, `plus` → *plusse*), so a child hears /dis/ and /plys/ and
+  the number and the operation stay distinct. Compounds such as *dix-sept* and
+  *quatre-vingt-dix* keep their own `-s`.
 
 ### 🔊 Dictation — the question read aloud (toggle on the settings screen)
 

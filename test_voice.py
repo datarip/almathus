@@ -171,9 +171,10 @@ SPOKEN_CASES = [
     # Already words: no library needed.
     ("dix plus quatre", "disse plusse quatre"),
     ("six fois quatre", "sisse fois quatre"),
-    # Compounds keep the -s they already have; they must not be rewritten.
+    # dix-sept and dix-neuf keep the -s they already pronounce; dix-huit does
+    # not, so its tail is respelled like a bare huit.
     ("dix-sept moins neuf", "dix-sept moins neuf"),
-    ("dix-huit divisé par trois", "dix-huit divisé par trois"),
+    ("dix-huit divisé par trois", "dix-huite divisé par trois"),
     # Only French is respelled.
     ("10 plus 4", "10 plus 4"),
 ]
@@ -183,9 +184,12 @@ SPOKEN_LANGS = ["fr", "fr", "fr", "fr", "en-us"]
 DIGIT_CASES = [
     ("10 plus 4", "disse plusse quatre"),
     ("6 fois 4", "sisse fois quatre"),
+    ("8 plus 4", "huite plusse quatre"),  # the -t goes the same way as the -s
     ("17 moins 9", "dix-sept moins neuf"),  # dix-sept is one token, and right
+    ("18 plus 4", "dix-huite plusse quatre"),  # a compound's tail is affected
+    ("88 plus 4", "quatre-vingt-huite plusse quatre"),
     ("90 sur 100", "quatre-vingt-disse sur cent"),  # the tail keeps its -s too
-    ("Tu as eu 18 sur 20.", "Tu as eu dix-huit sur vingt."),
+    ("Tu as eu 18 sur 20.", "Tu as eu dix-huite sur vingt."),
 ]
 
 

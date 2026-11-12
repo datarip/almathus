@@ -213,13 +213,38 @@ model per language, ~60 MB, downloaded at setup beside the recognizer model.
 - Pick another voice: `export ALMATHUS_TTS_VOICE="Audrey"` for the OS backends,
   or a path to an `.onnx` for Piper. `ALMATHUS_TTS_BACKEND=say|espeak|piper`
   forces one.
-- **French is said the clear way.** The synthesizer applies French elision — the
-  final `-s` of *dix* and *six* disappears before a consonant and *plus* always
-  shrinks to “plu” — which turned “10 fois 4” into “di fwa katr” and the `+`
-  operator into “plu”. The spoken text is respelled before it is voiced
-  (`dix` → *disse*, `plus` → *plusse*), so a child hears /dis/ and /plys/ and
-  the number and the operation stay distinct. Compounds such as *dix-sept* and
-  *quatre-vingt-dix* keep their own `-s`.
+- **French is said the clear way.** The phonemizer applies a real French rule:
+  the final consonant of *six*, *huit* and *dix* is dropped before a consonant
+  (“dix jours” is /di ʒuʁ/), and *plus* is read /ply/ (“no more”) rather than
+  the /plys/ of the plus sign. That is right in conversation and wrong at a
+  maths table — “10 fois 4” came out as “di fwa katr”. The spoken text is
+  respelled before it is voiced (`dix` → *disse*, `huit` → *huite*, `plus` →
+  *plusse*), so a child hears /dis/, /ɥit/ and /plys/. A compound gets the same
+  treatment at its tail: *dix-huit* → *dix-huite*, *quatre-vingt-dix* →
+  *quatre-vingt-disse*, while *dix-sept* keeps the `-s` it already says.
+
+  This is a **policy, not a universal fix**: the citation form a teacher would
+  use. It is applied only where it has been measured to matter. The check
+  compares, for every number 0–20, the phonemes of the word alone with the same
+  word followed by the language's real operator, across the 23 languages with
+  number words:
+
+  | Finding | Languages |
+  |---|---|
+  | Number loses a consonant in context | **French only** (`6`, `8`, `10`, `18`) |
+  | Final *s* voiced before a voiced consonant — correct sandhi, same word | Portuguese |
+  | Stress only, same phonemes | German, Italian, Catalan, Turkish, Persian, Kazakh |
+  | Tone output differs in espeak; not yet listened to by a native speaker | Vietnamese |
+  | Stable | English (US/UK/India), Spanish, Dutch, Polish, Russian, Ukrainian, Czech, Swedish, Arabic, Telugu, Korean |
+
+  Japanese (OpenJTalk phonemizer) and Hindi/Chinese/Georgian (no number words to
+  compare against) could not be measured; their numerals are short and their
+  operators unambiguous, but that is reasoning, not evidence.
+
+  `uv run python tools/audit_pronunciation.py <code>` reproduces it with the
+  installed Piper model once the voice is downloaded. The operator words are
+  printed too, because a homograph (*plus*) cannot be caught by a phoneme test —
+  only its meaning says which pronunciation is meant.
 
 ### 🔊 Dictation — the question read aloud (toggle on the settings screen)
 

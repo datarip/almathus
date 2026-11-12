@@ -274,22 +274,29 @@ def _espeak_voice(lang: str) -> str | None:
 # Saying it the way it has to sound
 # --------------------------------------------------------------------------- #
 #
-# The phonemizer behind Piper (espeak-ng) applies French's elision rules: the
-# final -s of "dix" and "six" disappears before a consonant, and "plus" always
-# shrinks to /ply/. That is right in conversation and wrong at a maths table —
-# "10 fois 4" came out as /di fwa katʁ/ and the operator "+" as /ply/, so the
-# number and the operation were both ambiguous. A child learning to hear "dix"
-# and "plus" must get the sounds that tell them apart.
+# This is a pronunciation policy for one class of words, not a general fix, and
+# the mechanism is deliberately blunt: the text is respelled because the text is
+# the only lever that works on every backend (Piper, macOS `say`, espeak-ng).
 #
-# The fix is to respell, because the sounds are what the voice reads: "disse"
-# phonemizes to /dis/ and "plusse" to /plys/, exactly. These strings are only
-# ever spoken, never shown, so the unusual spelling costs nothing.
+# The class is French numerals and one operator. The phonemizer applies a real
+# French sandhi rule — the final consonant of "six", "huit" and "dix" is
+# dropped before a consonant ("dix jours" is /di ʒuʁ/, "huit jours" /ɥi ʒuʁ/) —
+# and "plus" is read /ply/ ("no more") rather than the /plys/ of the plus sign.
+# Both are correct conversation and wrong at a maths table: "6 + 4" loses the
+# sound that tells 6 from 7 ("sept"), and the operator changes word.
 #
-# Numbers are spelled out first (10 -> "dix"), both to give the respelling a
-# word to bite on and to leave compounds alone: "dix-sept" and "quatre-vingt-dix"
-# are single tokens whose -s espeak already pronounces.
+# This is the citation form a teacher would use, so it is a choice, not a bug
+# fix. The same audit over the other 22 languages (see README, "Why only French
+# is respelled") found no other numeral that changes word when an operator
+# follows; a handful only shift the stress, Portuguese voices its final s before
+# a voiced consonant (correct sandhi), and Vietnamese's tone output differs in a
+# way no one has listened to yet.
+#
+# Respelling, because the sounds are what the voice reads: "disse" phonemizes to
+# /dis/, "huite" to /ɥit/, "plusse" to /plys/. These strings are spoken only,
+# never shown, so the odd spelling costs nothing.
 _SAY_AS = {
-    "fr": {"dix": "disse", "six": "sisse", "plus": "plusse"},
+    "fr": {"dix": "disse", "six": "sisse", "huit": "huite", "plus": "plusse"},
 }
 _NUM2WORDS_LANG = {"fr": "fr"}
 
@@ -324,10 +331,11 @@ def _spoken_form(text: str, lang: str) -> str:
         core = token.strip(".,;:!?…")
         if core in table:
             return token.replace(core, table[core], 1)
-        # The elision also bites the tail of a compound number before a
-        # consonant ("quatre-vingt-dix sur cent" -> /...di/), so "quatre-vingt-
-        # disse" and "soixante-sisse" get the -s back too. "dix-sept" and
-        # "dix-huit" are untouched: their -s is already spoken.
+        # The same rule bites the tail of a compound before a consonant
+        # ("quatre-vingt-dix sur cent" -> /...di/, "dix-huit plus" -> /...ɥi/),
+        # so "quatre-vingt-disse", "soixante-sisse" and "dix-huite" get their
+        # final consonant back too. "dix-sept" and "dix-neuf" are left alone:
+        # their -s is spoken either way.
         head, dash, tail = core.rpartition("-")
         if dash and tail in table:
             return token.replace(core, head + dash + table[tail], 1)

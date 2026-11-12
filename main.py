@@ -833,12 +833,20 @@ def installed_languages() -> list[str]:
 
 
 def needs_language_setup() -> bool:
-    """True when the app has no speech model at all yet, so setup must run.
+    """True when the app must ask about a language before it starts.
 
-    A language whose model is present launches straight into it; only a totally
-    empty store — the true first run, or a user who removed every model — asks.
+    A first run — no recognizer model at all — always asks. So does an install
+    that predates the harmonized voice: its language has a Piper model left to
+    fetch, and the picker is the screen that downloads it. That second question
+    is asked once; skipping it sets ``voice_skipped`` so the game does not
+    reopen the picker on every launch for someone who is happy with the system
+    voice.
     """
-    return not installed_languages()
+    if not installed_languages():
+        return True
+    saved = load_language() or DEFAULT_LANG
+    wants_voice = saved in voices.VOICES and not voices.is_installed(saved)
+    return wants_voice and not read_prefs().get("voice_skipped")
 
 
 def resolve_language() -> str:
@@ -2543,6 +2551,7 @@ class LanguagePicker:
 
     def _finish(self, code: str) -> None:
         save_language(code)
+        write_prefs(voice_skipped=False)  # a language was chosen: ask again if needed
         self.result = code
         self._close()
 
@@ -2629,6 +2638,7 @@ def choose_language_at_startup() -> str | None:
     """
     if not needs_language_setup():
         return None
+    first_run = not installed_languages()
     # The app language is not resolved yet, so the dialog cannot use the usual
     # startup language: a family that removed every model still gets its saved
     # language, while a genuine first run gets English — the one language a
@@ -2644,9 +2654,14 @@ def choose_language_at_startup() -> str | None:
             intro=T("language_intro"),
             skip_label=T("language_skip"),
         )
-        return picker.show()
+        chosen = picker.show()
     finally:
         root.destroy()
+    if chosen is None and not first_run:
+        # Only the voice was missing and it was declined: remember that, so the
+        # question is asked once rather than at every launch.
+        write_prefs(voice_skipped=True)
+    return chosen
 
 
 # --------------------------------------------------------------------------- #

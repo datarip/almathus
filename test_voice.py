@@ -15,7 +15,9 @@ measured against a recorded corpus instead (see the comments in voice.py).
 
 import sys
 
-from voice import strict_numbers
+import languages
+import voices
+from voice import _espeak_voice, _say_voice, strict_numbers
 
 # (transcript, language, expected)
 #   [ints] — an answer
@@ -95,15 +97,87 @@ CASES = [
 ]
 
 
+# -- which voice speaks ------------------------------------------------------ #
+#
+# The app used to pick `say` voices alphabetically, which is how Albert — a 1994
+# MacinTalk voice listed first among the English ones — became the voice of every
+# language but French. These are the catalogues that decision is made from, with
+# the joke voices and the character voices that `say -v '?'` lists everywhere.
+
+# (voice, locale) as `say -v '?'` reports them, minus the variant suffix.
+MAC_LISTING = [
+    ("Albert", "en_US"),
+    ("Samantha", "en_US"),
+    ("Flo", "en_US"),
+    ("Bells", "en_US"),
+    ("Daniel", "en_GB"),
+    ("Flo", "en_GB"),
+    ("Karen", "en_AU"),
+    ("Majed", "ar_001"),
+    ("Mónica", "es_ES"),
+    ("Thomas", "fr_FR"),
+    ("Amélie", "fr_CA"),
+]
+
+VOICE_CASES = [
+    # An English language is read by an English voice, and the best one wins
+    # over the alphabetically first.
+    ("en-us", "Samantha"),
+    # en-gb's curated woman is a character voice on a stock Mac, but she is
+    # still a woman's voice and the only one installed; a man is not preferred
+    # over her just because Apple files her under "Fun".
+    ("en-gb", "Flo"),
+    # A language is never read by another language's voice. This is the bug that
+    # read Spanish cards with Albert.
+    ("es", "Mónica"),
+    ("ar", "Majed"),  # ar_001 used to be dropped by the locale parser
+    ("fr", "Amélie"),  # the woman curated first wins over Thomas
+    # No voice for the language at all: None means "let the OS use its default",
+    # never "borrow the nearest English voice".
+    ("eo", None),
+    ("ka", None),
+]
+
+# Piper is the harmonized voice; these are the languages it has no model for.
+NO_PIPER = {"eo", "gu", "ky", "tg", "uz"}
+
+
+def voice_failures() -> list[str]:
+    failures = []
+    for lang, expected in VOICE_CASES:
+        got = _say_voice(lang, MAC_LISTING)
+        if got != expected:
+            failures.append(f"  say {lang}: got {got!r}, expected {expected!r}")
+    available = {lang.code for lang in languages.LANGUAGES}
+    missing = available - set(voices.VOICES)
+    if missing != NO_PIPER:
+        failures.append(f"  piper voices: unknown coverage, missing {sorted(missing)}")
+    for code in sorted(available):
+        if _espeak_voice(code) is None:
+            failures.append(f"  espeak: no voice mapping for {code}")
+    for code, entry in voices.VOICES.items():
+        if not entry.sha256 or len(entry.sha256) != 64 or entry.size <= 0:
+            failures.append(f"  piper {code}: incomplete catalog entry")
+    return failures
+
+
 def main() -> int:
     failures = []
     for text, lang, expected in CASES:
         got = strict_numbers(text, lang)
         if got != expected:
             failures.append(f"  {lang} {text!r}: got {got!r}, expected {expected!r}")
+    failures += voice_failures()
+    total = (
+        len(CASES)
+        + len(VOICE_CASES)
+        + 1  # the Piper coverage check
+        + len(languages.LANGUAGES)  # every language has an espeak mapping
+        + len(voices.VOICES)  # every catalog entry is complete
+    )
     for line in failures:
         print(line)
-    print(f"{len(CASES) - len(failures)}/{len(CASES)} passed")
+    print(f"{total - len(failures)}/{total} passed")
     return 1 if failures else 0
 
 

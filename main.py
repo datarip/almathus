@@ -46,6 +46,7 @@ import languages
 import pdfreport
 import results as resultslog
 import sfx
+import voices
 
 try:
     import voice as voicemod
@@ -109,10 +110,11 @@ STRINGS = {
         "girly_toggle": "👑 Mode princesse",
         "language_toggle": "🌐 Langue",
         "language_title": "Langue de l'application",
-        "language_intro": "Choisissez la langue de l'application et téléchargez son modèle vocal. Il sera conservé pour les prochaines fois.",
+        "language_intro": "Choisissez la langue de l'application et téléchargez son modèle de reconnaissance et sa voix. Ils seront conservés pour les prochaines fois.",
         "language_skip": "Continuer sans voix",
         "language_downloading": "Téléchargement de",
-        "language_once": "Cela n'arrive qu'une fois ; le modèle est conservé pour la prochaine fois.",
+        "voice_downloading": "Téléchargement de la voix",
+        "language_once": "Cela n'arrive qu'une fois ; tout est conservé pour la prochaine fois.",
         "language_error": "Impossible d'installer",
         "language_retry": "Réessayer",
         "voice_off_hint": "🎤 Voix indisponible : {reason}",
@@ -181,10 +183,11 @@ STRINGS = {
         "girly_toggle": "👑 Girly mode",
         "language_toggle": "🌐 Language",
         "language_title": "App language",
-        "language_intro": "Choose the app language and download its speech model. It is kept for next time.",
+        "language_intro": "Choose the app language and download its recognizer model and its voice. They are kept for next time.",
         "language_skip": "Continue without voice",
         "language_downloading": "Downloading",
-        "language_once": "This happens once; the model is kept for next time.",
+        "voice_downloading": "Downloading the voice",
+        "language_once": "This happens once; everything is kept for next time.",
         "language_error": "Could not install",
         "language_retry": "Try again",
         "voice_off_hint": "🎤 Voice unavailable: {reason}",
@@ -2341,6 +2344,7 @@ class LanguagePicker:
         self._polling = False
         self._bar: ttk.Progressbar | None = None
         self._bytes: tk.Label | None = None
+        self._label: tk.Label | None = None
         self.result: str | None = None
 
         self.top = tk.Toplevel(parent)
@@ -2427,13 +2431,14 @@ class LanguagePicker:
 
     def _show_download(self, lang: languages.Language) -> None:
         self._clear_body()
-        tk.Label(
+        self._label = tk.Label(
             self.body,
             text=f"{T('language_downloading')} {lang.endonym} …",
             font=("Helvetica", 13),
             fg=TEXT,
             bg=BG,
-        ).pack(anchor="w")
+        )
+        self._label.pack(anchor="w")
         self._bar = ttk.Progressbar(
             self.body, mode="determinate", maximum=max(1, lang.size), length=450
         )
@@ -2470,7 +2475,8 @@ class LanguagePicker:
 
     # -- actions ----------------------------------------------------------- #
     def _choose(self, code: str) -> None:
-        if code in self._installed:
+        wants_voice = code in voices.VOICES and not voices.is_installed(code)
+        if code in self._installed and not wants_voice:
             self._finish(code)  # already on disk: this is just a switch
             return
         self._download(code)
@@ -2489,8 +2495,18 @@ class LanguagePicker:
                 languages.download(code, progress=progress)
             except Exception as error:  # noqa: BLE001 - every failure is shown here
                 self._queue.put(("error", code, str(error)))
-            else:
-                self._queue.put(("done", code, None))
+                return
+            # The voice is what makes the game sound the same everywhere; a
+            # failure to fetch it must not cost the language, which is usable
+            # with the operating system's own voice.
+            entry = voices.VOICES.get(code)
+            if entry is not None and not voices.is_installed(code):
+                self._queue.put(("label", T("voice_downloading"), entry.size))
+                try:
+                    voices.download(code, progress=progress)
+                except Exception as error:  # noqa: BLE001 - optional, never fatal
+                    print(f"[voice] voice download failed: {error}", file=sys.stderr)
+            self._queue.put(("done", code, None))
 
         threading.Thread(target=work, daemon=True).start()
         self.top.after(_DOWNLOAD_POLL_MS, self._poll)
@@ -2505,6 +2521,13 @@ class LanguagePicker:
                         self._bytes.config(
                             text=f"{first / 1e6:.1f} / {second / 1e6:.1f} MB"
                         )
+                elif kind == "label":
+                    if self._label is not None:
+                        self._label.config(text=f"{first} …")
+                    if self._bar is not None:
+                        self._bar.config(maximum=max(1, second), value=0)
+                    if self._bytes is not None:
+                        self._bytes.config(text="")
                 elif kind == "done":
                     self._installed.add(first)
                     self._finish(first)
@@ -2638,6 +2661,7 @@ class Almathus(tk.Tk):
     _lang_status: tk.Label
     _lang_bar: ttk.Progressbar | None
     _lang_bytes: tk.Label | None
+    _lang_label: tk.Label | None
     _lang_queue: queue.Queue
     _lang_installed: set[str]
     _lang_images: list[tk.PhotoImage]
@@ -3913,6 +3937,7 @@ class Almathus(tk.Tk):
         self._lang_job = None
         self._lang_bar = None
         self._lang_bytes = None
+        self._lang_label = None
         self._show_language_list()
 
     def _show_language_list(self) -> None:
@@ -3958,7 +3983,10 @@ class Almathus(tk.Tk):
         self._bind_wheel_tree(inner, lambda px: canvas.yview_scroll(px, "units"))
 
     def _choose_language(self, code: str) -> None:
-        if code not in self._lang_installed:
+        # A language installed before voices existed has its Vosk model but no
+        # voice yet; the same download screen fetches just the missing part.
+        wants_voice = code in voices.VOICES and not voices.is_installed(code)
+        if code not in self._lang_installed or wants_voice:
             self._download_language(code)
         elif code != LANG:
             self._apply_language(code)
@@ -3969,13 +3997,14 @@ class Almathus(tk.Tk):
         lang = languages.BY_CODE[code]
         for w in self._lang_body.winfo_children():
             w.destroy()
-        tk.Label(
+        self._lang_label = tk.Label(
             self._lang_body,
             text=f"{T('language_downloading')} {lang.endonym} …",
             font=self.f_body,
             fg=TEXT,
             bg=BG,
-        ).pack(anchor="w", pady=(6, 10))
+        )
+        self._lang_label.pack(anchor="w", pady=(6, 10))
         self._lang_bar = ttk.Progressbar(
             self._lang_body, mode="determinate", maximum=max(1, lang.size), length=520
         )
@@ -3995,8 +4024,18 @@ class Almathus(tk.Tk):
                 languages.download(code, progress=progress)
             except Exception as error:  # noqa: BLE001 - every failure is shown here
                 self._lang_queue.put(("error", code, str(error)))
-            else:
-                self._lang_queue.put(("done", code, None))
+                return
+            # The voice is what makes the game sound the same on every machine,
+            # but it is not what makes it playable: if it cannot be fetched, the
+            # language still starts and the OS voice stands in for it.
+            entry = voices.VOICES.get(code)
+            if entry is not None and not voices.is_installed(code):
+                self._lang_queue.put(("label", T("voice_downloading"), entry.size))
+                try:
+                    voices.download(code, progress=progress)
+                except Exception as error:  # noqa: BLE001 - optional, never fatal
+                    print(f"[voice] voice download failed: {error}", file=sys.stderr)
+            self._lang_queue.put(("done", code, None))
 
         threading.Thread(target=work, daemon=True).start()
         self._poll_language()
@@ -4014,6 +4053,15 @@ class Almathus(tk.Tk):
                         self._lang_bytes.config(
                             text=f"{first / 1e6:.1f} / {second / 1e6:.1f} MB"
                         )
+                elif kind == "label":
+                    # The voice is a second download on the same bar; its size
+                    # is the new maximum, not the model archive's.
+                    if self._lang_label is not None:
+                        self._lang_label.config(text=f"{first} …")
+                    if self._lang_bar is not None:
+                        self._lang_bar.config(maximum=max(1, second), value=0)
+                    if self._lang_bytes is not None:
+                        self._lang_bytes.config(text="")
                 elif kind == "done":
                     self._lang_installed.add(first)
                     self._apply_language(first)

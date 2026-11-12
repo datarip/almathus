@@ -402,12 +402,17 @@ def _base_dir() -> Path:
     return Path(xdg) if xdg else Path.home() / ".local" / "share"
 
 
+def app_dir() -> Path:
+    """The app's own per-user directory; models and voices live under it."""
+    return _base_dir() / _APP_DIR
+
+
 def models_dir() -> Path:
     """Where installed Vosk models live (overridable for tests and packaging)."""
     override = os.environ.get("ALMATHUS_MODELS_DIR")
     if override:
         return Path(override)
-    return _base_dir() / _APP_DIR / "models"
+    return app_dir() / "models"
 
 
 def model_path(code: str) -> Path:
@@ -444,7 +449,7 @@ def _md5(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _fetch(url: str, dest: Path, expected: int, progress: Progress | None) -> None:
+def fetch(url: str, dest: Path, expected: int, progress: Progress | None) -> None:
     """Stream a model archive to ``dest``, reporting progress as it goes.
 
     The url always comes from this module's pinned registry (never from the
@@ -506,7 +511,7 @@ def download(code: str, progress: Progress | None = None) -> Path:
     with tempfile.TemporaryDirectory(dir=str(dest.parent)) as tmp:
         tmp_path = Path(tmp)
         archive_path = tmp_path / f"{lang.model}.zip"
-        _fetch(lang.url, archive_path, lang.size, progress)
+        fetch(lang.url, archive_path, lang.size, progress)
         got = _md5(archive_path)
         if got != lang.md5:
             raise RuntimeError(  # noqa: TRY003 - carries the two hashes to compare

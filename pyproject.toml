@@ -19,6 +19,12 @@ voice = [
     "numpy",
     "scipy",  # Butterworth band-pass for the VAD/voicing test (has a fallback)
     "num2words",
+    # The spoken voice: Piper runs the same neural model on every OS, so a
+    # language sounds the same on a Mac, a PC and a Linux box (see voices.py).
+    # onnxruntime comes with it; the per-language model is downloaded at setup.
+    # [ja]: Piper's Japanese voice needs OpenJTalk to phonemize; the wheel is
+    # ~26 MB and the only language with an extra, so it rides with the voice.
+    "piper-tts[ja]",
     # vosk 0.3.45 ships no macOS wheel (0.3.44 is the last universal2 build), so
     # resolving to it silently drops the primary French recognizer on a Mac.
     "vosk<0.3.45; sys_platform == 'darwin'",
@@ -41,6 +47,7 @@ include = [
     "main.py",
     "languages.py",
     "voice.py",
+    "voices.py",
     "results.py",
     "pdfreport.py",
     "sfx.py",

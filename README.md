@@ -193,15 +193,26 @@ Tune these in the `RANGES` dict at the top of `main.py`.
 Handled by `voice.py`, split into two independent pieces that each degrade to a
 no-op if unavailable — the game always stays fully playable with the keypad.
 
-### 🔊 Spoken encouragement (works out of the box on macOS)
+### 🔊 The spoken voice — one voice on every OS
 
 On the recap screen a warm feminine voice reads the same message shown on screen
-(e.g. *“Bravo ! Tu as eu 18 sur 20.”*). Uses the built-in macOS `say` command with
-the **Amélie** French voice — nothing to install, fully offline.
+(e.g. *“Bravo ! Tu as eu 18 sur 20.”*), and with dictation on it reads each card
+before the child answers. Both use **Piper**, a small neural synthesizer: one
+model per language, ~60 MB, downloaded at setup beside the recognizer model.
 
-- Pick another voice: `export ALMATHUS_TTS_VOICE="Audrey"` (add voices in
-  *System Settings → Accessibility → Spoken Content → System Voice → Manage Voices*).
-- Off macOS it falls back to `pyttsx3` if installed.
+- **The voice is a file, not the machine's synthesizer.** macOS, Windows and
+  Linux play the same model, so a card sounds the same on a Mac as on a PC — no
+  system voice to enable, no language pack to install, nothing online.
+- **Five languages have no Piper model** — Esperanto, Gujarati, Kyrgyz, Tajik,
+  Uzbek — and every language falls back to the operating-system voice until its
+  model has downloaded: macOS `say`, Linux `espeak-ng`, Windows `pyttsx3`.
+- The OS fallback is chosen from a curated list of that language's adult voices
+  (women first), not alphabetically: English gets **Samantha**, not Albert the
+  1994 MacinTalk novelty voice, and no language is ever read by another
+  language's voice. `ALMATHUS_VOICE_DEBUG=1` prints which voice was chosen.
+- Pick another voice: `export ALMATHUS_TTS_VOICE="Audrey"` for the OS backends,
+  or a path to an `.onnx` for Piper. `ALMATHUS_TTS_BACKEND=say|espeak|piper`
+  forces one.
 
 ### 🔊 Dictation — the question read aloud (toggle on the settings screen)
 
@@ -344,11 +355,13 @@ Enable it:
 
 ```bash
 uv sync --extra voice --group dev   # sounddevice + numpy + num2words + vosk + webrtcvad
-                                    # keep --extra voice on every sync: without it
-                                    # uv prunes the audio libs and the mic goes dead
+                                    # + piper-tts (the voice) — keep --extra voice on
+                                    # every sync: without it uv prunes the audio libs
+                                    # and both the mic and the Piper voice go dead
 ```
 
-- First run asks for a language and downloads one small Vosk model (30–160 MB).
+- First run asks for a language, downloads one small Vosk model (30–160 MB) and
+  that language's Piper voice (~60 MB; 109 MB for Ukrainian, 122 MB for Kazakh).
   **macOS microphone permission is required** — grant your terminal app access
   under *System Settings → Privacy & Security → Microphone*. If capture is
   silent, the card shows a permission hint.
@@ -403,9 +416,11 @@ settings screen or the chip in the top-right corner.
 languages tested end to end, on a real microphone. 🔊 **Voice** — the number
 words are generated automatically and the language *should* work, but it has not
 been tried yet. ⌨️ **Keypad only** — no number words exist for this language, so
-voice answering stays off and the game is played on the keypad. The interface is
-only translated for French and English; every other language falls back to
-English labels until a translation is added.
+voice answering stays off and the game is played on the keypad. The on-screen
+labels are only translated for French and English, and other languages fall back
+to English until a translation is added — but what the game **says** is in the
+chosen language: the operator word ("7 fois 4", "7 times 4", "7 por 4") and the
+recap sentence are translated for all 32 languages.
 
 **Feedback is very welcome.** Real-mic reports are the only way the untested
 languages get verified, and the quickest way to fix one. If a spoken number is

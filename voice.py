@@ -2,9 +2,14 @@
 
 Two independent, gracefully-degrading pieces:
 
-* ``TTS``          — speaks encouragement in a warm feminine voice.
-                     Uses macOS ``say`` (offline, built-in); falls back to
-                     ``pyttsx3`` if present; otherwise a silent no-op.
+* ``TTS``          — speaks the question and the encouragement in a warm
+                     feminine voice: the **Piper** model for the language (see
+                     :mod:`voices`), which is the same neural voice on macOS,
+                     Windows and Linux. Without that model — a fresh install, or
+                     a language Piper has none for — it falls back to the
+                     operating system's own voice (macOS ``say``, Linux
+                     ``espeak-ng``, ``pyttsx3``), and to a silent no-op if even
+                     that is missing.
 
 * ``SpeechInput``  — records from the mic with simple voice-activity detection
                      (one open stream per card, auto-stops when the speaker goes
@@ -29,16 +34,21 @@ Nothing here ever raises into the UI: probe with ``.available()`` first, and all
 callbacks are plain values so the caller can marshal them onto the Tk main loop.
 
 Environment overrides:
-    ALMATHUS_TTS_VOICE     macOS voice name (default: Amélie for fr, Samantha for en)
+    ALMATHUS_TTS_BACKEND   "piper", "say", "espeak" or "pyttsx3" to force one
+                           (default: auto — Piper first, then the OS voice)
+    ALMATHUS_TTS_VOICE     voice name for the native backends, or a path to an
+                           .onnx model for Piper
     ALMATHUS_VOSK_MODEL    path to a Vosk model directory, bypassing the per-user
                            store the setup screen installs into
     ALMATHUS_MODELS_DIR    where installed models are kept (tests / packaging)
+    ALMATHUS_VOICES_DIR    where Piper voices are kept (tests / packaging)
 """
 
 from __future__ import annotations
 
 import contextlib
 import functools
+import importlib.util
 import json
 import os
 import queue
@@ -57,6 +67,7 @@ from pathlib import Path
 from typing import Any
 
 import languages
+import voices
 
 # Set ALMATHUS_VOICE_DEBUG=1 to trace the whole voice path on stderr.
 _DEBUG = os.environ.get("ALMATHUS_VOICE_DEBUG") not in (None, "", "0")
@@ -71,24 +82,93 @@ def _dbg(*a):
 # Text-to-speech
 # --------------------------------------------------------------------------- #
 
-# Feminine voice name hints per language, used to pick a nice macOS `say` voice.
-_FEMALE_HINTS = {
-    "fr": ["amelie", "audrey", "aurelie", "marie", "chantal", "virginie", "julie"],
-    "en": [
-        "samantha",
-        "karen",
-        "moira",
-        "tessa",
-        "fiona",
-        "allison",
-        "ava",
-        "susan",
-        "zoe",
-        "serena",
-        "kate",
-        "victoria",
-    ],
+# One voice for every platform: a Piper model (see voices.py) when it is on
+# disk, otherwise whatever the operating system has. The system voice is no
+# longer the normal path — it is the state of a fresh install, and the only
+# option for the few languages Piper has no model for.
+#
+# The selections below are what makes the fallback listenable rather than
+# alphabetical: `say -v '?'` lists the joke voices (Bells, Boing, Whisper) and
+# the new character voices (Flo, Grandma, Eddie) in every locale, and sorting
+# them by name is how the app ended up reading English with Albert, a MacinTalk
+# voice from 1994, in every language but French.
+#
+# Curated adult voices per app language, women first. Region codes are their own
+# keys because British and Indian English are not read by a US voice.
+_SAY_VOICES: dict[str, dict[str, tuple[str, ...]]] = {
+    "fr": {
+        "f": ("Amélie", "Audrey", "Marie", "Julie", "Chantal", "Virginie"),
+        "m": ("Thomas", "Jacques"),
+    },
+    "en-us": {
+        "f": ("Samantha", "Ava", "Allison", "Susan", "Zoe", "Kate"),
+        "m": ("Alex", "Tom", "Nathan", "Daniel", "Fred", "Ralph"),
+    },
+    "en-gb": {
+        # Kate and Serena are the good ones when they have been installed; Flo
+        # and the others are the modern character voices a stock Mac does have.
+        "f": ("Kate", "Serena", "Fiona", "Stephanie", "Flo", "Shelley", "Sandy"),
+        "m": ("Daniel", "Oliver"),
+    },
+    "en-in": {
+        "f": ("Tara", "Veena"),
+        "m": ("Aman", "Rishi"),
+    },
+    "en": {
+        "f": ("Samantha", "Karen", "Moira", "Tessa", "Fiona", "Serena"),
+        "m": ("Daniel",),
+    },
+    "es": {"f": ("Mónica", "Paulina"), "m": ("Diego", "Jorge")},
+    "de": {"f": ("Anna", "Petra", "Katja"), "m": ("Markus", "Yannick", "Viktor")},
+    "it": {"f": ("Alice", "Federica"), "m": ("Luca", "Paolo")},
+    "pt": {"f": ("Joana", "Luciana", "Catarina"), "m": ("Felipe", "Daniel")},
+    "nl": {"f": ("Ellen", "Nathalie"), "m": ("Xander", "Maarten")},
+    "pl": {"f": ("Zosia",), "m": ("Krzysztof",)},
+    "ru": {"f": ("Milena",), "m": ("Yuri",)},
+    "uk": {"f": ("Lesya",), "m": ("Dmytro",)},
+    "cs": {"f": ("Zuzana", "Iveta"), "m": ()},
+    "sv": {"f": ("Alva",), "m": ()},
+    "tr": {"f": ("Yelda",), "m": ("Tolga",)},
+    "ar": {"f": (), "m": ("Majed",)},
+    "hi": {"f": ("Lekha", "Pooja"), "m": ("Kabir",)},
+    "te": {"f": ("Geeta",), "m": ()},
+    "ja": {"f": ("Kyoko",), "m": ("Otoya", "Hattori")},
+    "ko": {"f": ("Yuna",), "m": ()},
+    "cn": {"f": ("Tingting", "Meijia", "Sinji"), "m": ("Li-mu",)},
+    "vi": {"f": ("Linh",), "m": ()},
+    "ca": {"f": ("Montse",), "m": ()},
+    "kz": {"f": ("Aru",), "m": ()},
 }
+
+# Never preferred while anything else exists in the language: the joke voices and
+# the oldest MacinTalk set. They are still usable, because a silly voice that a
+# child can hear beats silence.
+_SAY_CARTOON = frozenset(
+    {
+        "Albert",
+        "Bad News",
+        "Bahh",
+        "Bells",
+        "Boing",
+        "Bubbles",
+        "Cellos",
+        "Fred",
+        "Good News",
+        "Jester",
+        "Junior",
+        "Kathy",
+        "Organ",
+        "Ralph",
+        "Superstar",
+        "Trinoids",
+        "Whisper",
+        "Wobble",
+        "Zarvox",
+    }
+)
+
+# `say` locales are not always the app's code (Kazakh is kk_KZ, Chinese zh_CN).
+_SAY_BASE = {"kz": "kk", "cn": "zh"}
 
 
 def _list_say_voices() -> list[tuple[str, str]]:
@@ -96,7 +176,10 @@ def _list_say_voices() -> list[tuple[str, str]]:
 
     Lines look like:  "Amélie              fr_CA    # Bonjour!"
                 or:   "Amélie (French (Canada)) fr_CA    # Bonjour!"
-    We anchor on the locale token (xx_XX / xx-XX) and take everything before it.
+                or:   "Majed               ar_001   # مرحبًا!"
+    We anchor on the locale token (xx_XX, xx-XX or a numeric region) and take
+    everything before it. The variant suffix is dropped so one name matches the
+    catalog entry whether or not the listing spells out "(English (US))".
     """
     out = subprocess.run(
         ["say", "-v", "?"],  # noqa: S607 - a macOS system binary, resolved on PATH
@@ -105,83 +188,294 @@ def _list_say_voices() -> list[tuple[str, str]]:
         timeout=5,
         check=False,  # `say` exits non-zero when no voices are installed
     ).stdout
-    voices = []
+    found: list[tuple[str, str]] = []
     for line in out.splitlines():
-        m = re.match(r"^(.+?)\s+([A-Za-z]{2}[-_][A-Za-z]{2})\b", line)
+        m = re.match(r"^(.+?)\s+([A-Za-z]{2}[-_][A-Za-z0-9]{2,3})\b", line)
         if m:
-            voices.append((m.group(1).strip(), m.group(2)))
-    return voices
+            name = m.group(1).split(" (")[0].strip()
+            pair = (name, m.group(2))
+            if pair not in found:  # the listing repeats enhanced variants
+                found.append(pair)
+    return found
+
+
+def _say_voice(lang: str, listing: list[tuple[str, str]]) -> str | None:
+    """The best installed `say` voice for a language, or None if it has none.
+
+    Ranked by: a woman's voice at all, then a curated adult voice, then the
+    curated order (Amélie before Audrey), with an exact locale as the last
+    tie-break so en-gb prefers a British voice over Daniel's other recordings.
+    """
+    base = _SAY_BASE.get(lang.split("-", 1)[0], lang.split("-", 1)[0])
+    table = _SAY_VOICES.get(lang) or _SAY_VOICES.get(base) or {"f": (), "m": ()}
+    women, men = set(table["f"]), set(table["m"])
+    candidates = [(n, loc) for n, loc in listing if loc.lower().startswith(base)]
+    if not candidates:
+        return None
+    target = lang.replace("-", "_").lower()
+
+    def rank(candidate: tuple[str, str]) -> tuple[bool, int, int, bool]:
+        name, loc = candidate
+        woman = name in women
+        curated = woman or name in men
+        tier = 3 if curated else (0 if name in _SAY_CARTOON else 2)
+        order = (table["f"] if woman else table["m"]).index(name) if curated else 99
+        exact = loc.lower().replace("-", "_").startswith(target)
+        return (woman, tier, -order, exact)
+
+    candidates.sort(key=rank, reverse=True)
+    return candidates[0][0]
+
+
+# espeak-ng, the Linux fallback; `+f3` is its female variant. The app's code is
+# not always espeak's (Chinese is "cmn", Kazakh "kk").
+_ESPEAK_LANG = {
+    "fr": "fr",
+    "en-us": "en-us",
+    "en-gb": "en-gb",
+    "en-in": "en-gb",
+    "es": "es",
+    "de": "de",
+    "it": "it",
+    "pt": "pt",
+    "nl": "nl",
+    "pl": "pl",
+    "ru": "ru",
+    "uk": "uk",
+    "cs": "cs",
+    "sv": "sv",
+    "tr": "tr",
+    "ar": "ar",
+    "ar-tn": "ar",
+    "fa": "fa",
+    "hi": "hi",
+    "gu": "gu",
+    "te": "te",
+    "ja": "ja",
+    "ko": "ko",
+    "cn": "cmn",
+    "vi": "vi",
+    "ca": "ca",
+    "eo": "eo",
+    "ka": "ka",
+    "ky": "ky",
+    "kz": "kk",
+    "tg": "tg",
+    "uz": "uz",
+}
+
+
+def _espeak_voice(lang: str) -> str | None:
+    code = _ESPEAK_LANG.get(lang) or _ESPEAK_LANG.get(lang.split("-", 1)[0])
+    return f"{code}+f3" if code else None
+
+
+def _have_piper() -> bool:
+    """Is the Piper stack importable? Checked without importing onnxruntime."""
+    return (
+        importlib.util.find_spec("piper") is not None
+        and importlib.util.find_spec("sounddevice") is not None
+    )
+
+
+def _no_window() -> int:
+    """Keep a helper process from flashing a console on Windows."""
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
 
 class TTS:
+    """The game's voice. Piper when its model is installed, else the OS's own."""
+
     def __init__(self, lang: str = "fr", rate: int = 180):
         self.lang = lang
         self.rate = rate
         self._proc: subprocess.Popen | None = None
         self._say = shutil.which("say")
-        self._voice = self._pick_voice(lang)
-        self._pyttsx = None
-        if not self._say:
+        self._espeak = shutil.which("espeak-ng") or shutil.which("espeak")
+        self._voice: str | None = None
+        self._backend = "none"
+        self._fallback: tuple[str, str | None] = ("none", None)
+        self._piper: Any = None  # a piper.PiperVoice once loaded
+        self._piper_path: Path | None = None
+        self._piper_speaker: str | None = None
+        self._piper_thread: threading.Thread | None = None
+        self._play_until = 0.0  # performance-clock second the speech ends
+        self._gen = 0  # so a superseded utterance cannot touch the current one
+        self._pyttsx = False
+        self._setup(lang)
+
+    # -- which voice ------------------------------------------------------- #
+
+    def _setup(self, lang: str) -> None:
+        self._fallback = self._native(lang)
+        forced = os.environ.get("ALMATHUS_TTS_BACKEND", "auto").strip().lower()
+        entry = voices.VOICES.get(lang)
+        if (
+            entry is not None
+            and voices.is_installed(lang)
+            and _have_piper()
+            and forced in ("auto", "piper")
+        ):
+            self._backend = "piper"
+            self._voice = entry.model
+            self._piper_speaker = entry.speaker
+            self._piper_path = voices.voice_path(lang)
+            override = os.environ.get("ALMATHUS_TTS_VOICE")
+            if override and Path(override).suffix == ".onnx":
+                self._piper_path = Path(override)
+            self._piper_thread = threading.Thread(target=self._load_piper, daemon=True)
+            self._piper_thread.start()
+        elif forced in ("auto", "say", "espeak", "pyttsx3"):
+            self._backend, self._voice = self._fallback
+        _dbg("tts:", self.describe())
+
+    def _native(self, lang: str) -> tuple[str, str | None]:
+        """The operating system's own voice, as a (backend, voice) pair."""
+        forced = os.environ.get("ALMATHUS_TTS_BACKEND", "auto").strip().lower()
+        override = os.environ.get("ALMATHUS_TTS_VOICE")
+        if self._say and forced in ("auto", "say"):
+            try:
+                listing = _list_say_voices()
+            except Exception as e:
+                _dbg("say -v '?' failed:", repr(e))
+                listing = []
+            return "say", override or _say_voice(lang, listing)
+        if self._espeak and forced in ("auto", "espeak"):
+            return "espeak", override or _espeak_voice(lang)
+        if forced in ("auto", "pyttsx3"):
             try:
                 import pyttsx3  # noqa: F401
-
-                self._pyttsx = True
             except Exception:
-                self._pyttsx = False
+                return "none", None
+            else:
+                self._pyttsx = True
+                return "pyttsx3", None
+        return "none", None
 
-    def _pick_voice(self, lang: str) -> str | None:
-        if not shutil.which("say"):
-            return None
-        env = os.environ.get("ALMATHUS_TTS_VOICE")
-        if env:
-            return env
+    def _load_piper(self) -> None:
         try:
-            voices = _list_say_voices()
-        except Exception:
-            return None
-        pref = "fr" if lang == "fr" else "en"
-        cands = [(n, loc) for n, loc in voices if loc.lower().startswith(pref)]
-        if not cands:
-            return None
-        hints = _FEMALE_HINTS.get(lang, [])
+            from piper import PiperVoice
 
-        def rank(nl):
-            name, loc = nl
-            nn = _strip_accents(name).lower()
-            female = any(h in nn for h in hints)
-            local_match = loc.lower().replace("-", "_") == (pref + "_" + pref)
-            return (female, local_match)
+            if self._piper_path is not None:
+                self._piper = PiperVoice.load(str(self._piper_path))
+            _dbg("piper ready:", self._voice)
+        except Exception as e:
+            _dbg("piper load failed:", repr(e))
+            self._piper = None
 
-        cands.sort(key=rank, reverse=True)
-        # Use the short base name (e.g. "Amélie"), which `say -v` accepts even when
-        # the listing shows an enhanced variant like "Amélie (French (Canada))".
-        return cands[0][0].split(" (")[0].strip()
+    def describe(self) -> str:
+        """What will speak, for the debug log and the setup screen."""
+        if self._backend == "piper":
+            return f"piper {self._voice}"
+        if self._backend in ("say", "espeak"):
+            return f"{self._backend} {self._voice or '(system default)'}"
+        return self._backend
 
     def available(self) -> bool:
-        return bool(self._say or self._pyttsx)
+        return self._backend != "none"
+
+    # -- speaking ---------------------------------------------------------- #
 
     def speak(self, text: str, on_done: Callable[[], None] | None = None):
         """Speak asynchronously; interrupts any speech already in progress."""
         self.stop()
-        if self._say:
+        if self._backend == "piper":
+            gen = self._gen
+            threading.Thread(
+                target=self._piper_speak, args=(text, on_done, gen), daemon=True
+            ).start()
+        else:
+            self._native_speak(text, on_done)
+
+    def _native_speak(self, text: str, on_done: Callable[[], None] | None) -> None:
+        if self._backend == "say" and self._say:
             cmd = [self._say, "-r", str(self.rate)]
             if self._voice:
                 cmd += ["-v", self._voice]
             cmd.append(text)
-            try:
-                self._proc = subprocess.Popen(cmd)  # noqa: S603 - argv list, no shell
-            except Exception:
-                return
-            if on_done:
-                threading.Thread(
-                    target=self._wait_then, args=(self._proc, on_done), daemon=True
-                ).start()
-        elif self._pyttsx:
+            self._spawn(cmd, on_done)
+        elif self._backend == "espeak" and self._espeak:
+            cmd = [self._espeak, "-s", str(self.rate)]
+            if self._voice:
+                cmd += ["-v", self._voice]
+            cmd.append(text)
+            self._spawn(cmd, on_done)
+        elif self._backend == "pyttsx3" and self._pyttsx:
             threading.Thread(
                 target=self._pyttsx_speak, args=(text, on_done), daemon=True
             ).start()
         elif on_done:
             on_done()
+
+    def _spawn(self, cmd: list[str], on_done: Callable[[], None] | None) -> None:
+        try:
+            self._proc = subprocess.Popen(  # noqa: S603 - argv list, no shell
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=_no_window(),
+            )
+        except Exception as e:
+            _dbg("speak failed:", repr(e))
+            self._proc = None
+            if on_done:
+                on_done()
+            return
+        if on_done:
+            threading.Thread(
+                target=self._wait_then, args=(self._proc, on_done), daemon=True
+            ).start()
+
+    def _piper_speak(
+        self, text: str, on_done: Callable[[], None] | None, gen: int
+    ) -> None:
+        if gen != self._gen:  # a newer utterance took over while this one waited
+            if on_done:
+                on_done()
+            return
+        # Hold the mic off for the whole synthesis as well as the playback:
+        # `speaking()` is a clock, and the synthesizer is silent but not done.
+        self._play_until = time.perf_counter() + 30.0
+        handed_off = False
+        try:
+            if self._piper_thread is not None:
+                self._piper_thread.join()
+            voice = self._piper
+            if voice is None:  # the model would not load: use the OS voice
+                self._backend, self._voice = self._fallback
+                if gen == self._gen:
+                    self._play_until = 0.0
+                self._native_speak(text, on_done)
+                handed_off = True
+                return
+            import numpy as np
+            import sounddevice as sd
+            from piper.config import SynthesisConfig
+
+            speaker = None
+            if self._piper_speaker:
+                speaker = voice.config.speaker_id_map.get(self._piper_speaker)
+            config = SynthesisConfig(
+                length_scale=max(0.5, min(2.0, 180 / max(1, self.rate))),
+                speaker_id=speaker,
+            )
+            chunks = list(voice.synthesize(text, config))
+            pcm = b"".join(chunk.audio_int16_bytes for chunk in chunks)
+            if not pcm or gen != self._gen:
+                return
+            audio = np.frombuffer(pcm, dtype=np.int16)
+            sample_rate = chunks[0].sample_rate
+            self._play_until = time.perf_counter() + len(audio) / sample_rate + 0.05
+            sd.play(audio, sample_rate)
+            sd.wait()
+        except Exception as e:
+            _dbg("piper speak failed:", repr(e))
+        finally:
+            if not handed_off:
+                if gen == self._gen:
+                    self._play_until = 0.0
+                if on_done:
+                    on_done()
 
     def _wait_then(self, proc, on_done):
         try:
@@ -206,13 +500,22 @@ class TTS:
     def speaking(self) -> bool:
         """Is the app talking right now? The mic must not be armed while it is,
         or the question read aloud gets captured as the answer to itself."""
-        return bool(self._proc and self._proc.poll() is None)
+        if self._proc and self._proc.poll() is None:
+            return True
+        return time.perf_counter() < self._play_until
 
     def stop(self):
-        if self._proc and self._proc.poll() is None:
+        self._gen += 1
+        self._play_until = 0.0
+        proc, self._proc = self._proc, None
+        if proc and proc.poll() is None:
             with contextlib.suppress(Exception):
-                self._proc.terminate()
-        self._proc = None
+                proc.terminate()
+        if self._backend == "piper":
+            with contextlib.suppress(Exception):
+                import sounddevice as sd
+
+                sd.stop()
 
 
 # --------------------------------------------------------------------------- #

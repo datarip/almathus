@@ -245,10 +245,10 @@ model per language, ~60 MB, downloaded at setup beside the recognizer model.
   compare against) could not be measured; their numerals are short and their
   operators unambiguous, but that is reasoning, not evidence.
 
-  `uv run python tools/audit_pronunciation.py <code>` reproduces it with the
-  installed Piper model once the voice is downloaded. The operator words are
-  printed too, because a homograph (*plus*) cannot be caught by a phoneme test —
-  only its meaning says which pronunciation is meant.
+  The check compares the phonemes of each number word alone with the same word
+  followed by the operator, using the installed Piper model — a homograph such
+  as *plus* has to be read by eye, because only its meaning says which
+  pronunciation is meant.
 
 ### 🔊 Dictation — the question read aloud (toggle on the settings screen)
 
@@ -269,7 +269,7 @@ speech rate: change the voice or its `rate` and every number would move without
 the child doing anything differently. The keypad stays live under a reading, so
 a card answered before its clock starts is worth zero, never less.
 
-Sessions logged before 2026-08-19 were timed the old way; `tools/retime_dictation.py`
+Sessions logged before 2026-08-19 were timed the old way; a one-off correction
 took the readings back out of them, card by card, so the progress chart is one
 curve measured one way. The choice of mode is remembered between runs
 (`prefs.json`).

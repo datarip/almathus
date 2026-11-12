@@ -56,7 +56,7 @@ include = [
 exclude = ["**/.DS_Store", "**/__pycache__"]
 
 [dependency-groups]
-# Quality gate. See AGENTS.md — both must be clean before a commit.
+# Quality gate. Both must be clean before a commit.
 dev = ["mypy", "ruff"]
 
 # --------------------------------------------------------------------------- #
@@ -114,9 +114,9 @@ ignore = [
 "main.py" = ["ARG005"]
 # voice.py wraps three optional native stacks — PortAudio, WebRTC VAD and Vosk
 # — each of which raises whatever its C layer feels like. Catching Exception
-# and falling back to the keypad *is* this module's contract (see AGENTS.md:
-# "the game stays fully playable ... if voice deps/models are absent"), so the
-# rule is off here rather than waived 25 times. Every such handler logs through
+# and falling back to the keypad *is* this module's contract — the game stays
+# fully playable if the voice deps or models are absent — so the rule is off
+# here rather than waived 25 times. Every such handler logs through
 # _dbg(); a silent one is still a bug, and S110/S112 still catch those.
 "voice.py" = ["BLE001"]
 

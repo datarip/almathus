@@ -15,3 +15,7 @@ archived/
 # Local macOS dev launcher (see main.relaunch_as_app_bundle): keeps a bare
 # Tk run from registering under the editor bundle. Never part of a release.
 Almathus.app/
+
+# Developer-only material: not part of the game or its wheel.
+AGENTS.md
+tools/

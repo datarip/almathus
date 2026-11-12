@@ -11,9 +11,10 @@ Four moments of that flow have a sound (see sfx.py and assets/README.md): the
 countdown, a right answer, a wrong one, and the winner's music over the recap.
 They need a command-line player on PATH and are silently skipped without one.
 
-Every session is logged twice: the full per-card detail to ./stats/*.json, and
-one summary line to ./results/results.csv — the hand-editable log the progress
-screen charts and tabulates (see results.py for the header definition).
+Every session is logged twice: the full per-card detail to stats/*.json, and
+one summary line to results.csv — the hand-editable log the progress screen
+charts and tabulates (see results.py for the header definition). Both live in
+the user's Documents/Almathus folder, never beside the code.
 """
 
 from __future__ import annotations
@@ -749,7 +750,7 @@ OP_SYMBOL = {
     "division": "÷",
 }
 
-STATS_DIR = Path(__file__).resolve().parent / "stats"
+STATS_DIR = resultslog.stats_dir()
 PREFS_FILE = Path(__file__).resolve().parent / "prefs.json"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 SOUNDS_DIR = ASSETS_DIR / "sounds"
@@ -5300,7 +5301,7 @@ class Almathus(tk.Tk):
 
         # ...and the full per-card detail as JSON, for finer analysis later.
         try:
-            STATS_DIR.mkdir(exist_ok=True)
+            STATS_DIR.mkdir(parents=True, exist_ok=True)
             payload = {
                 "timestamp": stamp.isoformat(timespec="seconds"),
                 "mode": self.mode,
@@ -5333,6 +5334,7 @@ def main():
         return
     choose_language_at_startup()  # asks only when no speech model is installed
     resolve_language()  # sets the module's LANG before any widget reads it
+    resultslog.migrate_legacy()  # a log left in the checkout follows the user
     app = Almathus()
     try:
         app.mainloop()

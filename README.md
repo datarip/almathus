@@ -48,16 +48,20 @@ costs the artwork.
 
 - A **total stopwatch** counts up (bottom-right) and a **per-card timer** shows how
   long the current card is taking (bottom-left).
-- Each session is saved twice:
-  - `results/results.csv` — one summary line per session, hand-editable, and the
-    file the **progress screen** reads (see below);
+- Each session is saved twice, under **`Documents/Almathus/`** on every OS (so
+  an update or a reinstall never touches them, and `ALMATHUS_RESULTS_DIR`
+  overrides the folder):
+  - `results.csv` — one summary line per session, hand-editable, and the file the
+    **progress screen** reads (see below);
   - `stats/<timestamp>-<mode>.json` — the full per-card detail (time, attempts,
     correctness), for finer analysis.
+- A log written by an older build inside the checkout is copied to that folder
+  the first time the app starts and finds it empty.
 
 ## 📈 Progress screen
 
 Reachable from the **settings screen** (*Mes progrès*) and from the **recap** after
-a game. It reads `results/results.csv` and shows:
+a game. It reads `Documents/Almathus/results.csv` and shows:
 
 - a **chart** of time over the dates — **one point per day**, averaging that
   day's sessions (three tries in an afternoon used to stack into a vertical
@@ -92,7 +96,7 @@ a game. It reads `results/results.csv` and shows:
   `pdfreport.py`, which builds the file by hand — no print library, no new
   dependency.
 
-## The results log — `results/results.csv`
+## The results log — `Documents/Almathus/results.csv`
 
 The digital continuation of the paper *Calcul mental* sheet (Date / Famille /
 Temps), plus the average column. **It is the database**: every finished session is

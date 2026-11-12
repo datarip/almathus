@@ -88,6 +88,8 @@ from __future__ import annotations
 
 import csv
 import io
+import os
+import shutil
 import unicodedata
 from collections import Counter
 from collections.abc import Sequence
@@ -96,8 +98,57 @@ from datetime import date as _date
 from datetime import datetime
 from pathlib import Path
 
-RESULTS_DIR = Path(__file__).resolve().parent / "results"
+
+def results_dir() -> Path:
+    """Where the log and its exports live.
+
+    A session log is user data, not code: it must not sit beside the modules.
+    An installed wheel lives in a read-only site-packages, and an app bundle
+    would lose the log on its next update. Documents is the one folder every
+    desktop has, every account can write to, and every backup covers; the
+    subfolder keeps the file from being lost among family documents.
+    ``ALMATHUS_RESULTS_DIR`` overrides the location for tests and packaging.
+    """
+    override = os.environ.get("ALMATHUS_RESULTS_DIR")
+    if override:
+        return Path(override)
+    return Path.home() / "Documents" / "Almathus"
+
+
+RESULTS_DIR = results_dir()
 RESULTS_FILE = RESULTS_DIR / "results.csv"
+
+
+def stats_dir() -> Path:
+    """The per-card JSON detail, kept beside the log so one folder holds it all."""
+    return RESULTS_DIR / "stats"
+
+
+def migrate_legacy() -> None:
+    """Copy a log written before results left the checkout, once.
+
+    Older builds wrote ``./results/results.csv`` and ``./stats/*.json`` next to
+    the source. Copying them into the per-user folder the first time it is empty
+    keeps that history in the app without ever writing to the checkout again.
+    A failed copy is not fatal: the game starts a fresh log rather than refusing
+    to run.
+    """
+    root = Path(__file__).resolve().parent
+    try:
+        legacy_results = root / "results" / "results.csv"
+        if not RESULTS_FILE.exists() and legacy_results.exists():
+            RESULTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(legacy_results, RESULTS_FILE)
+        legacy_stats = root / "stats"
+        if legacy_stats.is_dir():
+            target = stats_dir()
+            target.mkdir(parents=True, exist_ok=True)
+            for source in legacy_stats.glob("*.json"):
+                if not (target / source.name).exists():
+                    shutil.copyfile(source, target / source.name)
+    except OSError:
+        pass
+
 
 # The logical fields, in canonical order. `temps_moyen` is derived but kept as a
 # real column so it can be hand-filled for rows with no card count; `difficultes`

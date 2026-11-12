@@ -283,6 +283,34 @@ def _no_window() -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
 
+def _resample_to_device(audio: Any, sample_rate: int) -> tuple[Any, int]:
+    """Piper speaks at 22 kHz; many Windows and Linux devices only open at 48.
+
+    PortAudio does not convert for us: asking an output stream for a rate it does
+    not support fails outright, which would have made the voice work on macOS
+    and fail silently everywhere else. The device's own default rate is the one
+    thing it is guaranteed to accept, so the audio is resampled to it when they
+    differ. scipy does the conversion when the voice extra is installed; linear
+    interpolation is the fallback, and plain playback the last resort.
+    """
+    try:
+        import sounddevice as sd
+
+        target = int(sd.query_devices(kind="output")["default_samplerate"])
+    except Exception:
+        return audio, sample_rate
+    if target <= 0 or target == sample_rate:
+        return audio, sample_rate
+    try:
+        import numpy as np
+        from scipy.signal import resample_poly
+
+        return resample_poly(audio, target, sample_rate).astype(np.int16), target
+    except Exception as e:
+        _dbg("resample failed, playing at the source rate:", repr(e))
+        return audio, sample_rate
+
+
 class TTS:
     """The game's voice. Piper when its model is installed, else the OS's own."""
 
@@ -465,6 +493,7 @@ class TTS:
                 return
             audio = np.frombuffer(pcm, dtype=np.int16)
             sample_rate = chunks[0].sample_rate
+            audio, sample_rate = _resample_to_device(audio, sample_rate)
             self._play_until = time.perf_counter() + len(audio) / sample_rate + 0.05
             sd.play(audio, sample_rate)
             sd.wait()

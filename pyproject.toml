@@ -4,6 +4,11 @@ version = "0.1.0"
 description = "A kid-friendly mental-math game (Tkinter)"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Datarip" }]
+# The sidecar/ tree is a separate GPL-3.0 program and is not part of the wheel;
+# see SHIPPING.md for why the app and the voice engine have different licences.
 dependencies = []
 
 [project.optional-dependencies]

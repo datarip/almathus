@@ -530,6 +530,18 @@ French by default. Set `LANG = "en"` near the top of `main.py` for English
 (TTS voice, spoken phrases, and the number parser all follow). A settings-screen
 toggle is a good next iteration.
 
+## Licensing
+
+- The game's code and its wheel are **MIT** — see [`LICENSE`](LICENSE).
+- [`sidecar/`](sidecar/) is a separate **GPL-3.0** program — see
+  [`sidecar/LICENSE`](sidecar/LICENSE). It owns Piper and espeak-ng so the game
+  does not have to; an installer that bundles it is a GPL-3.0 combined work and
+  must carry its source and licence. The wheel never contains it.
+- Voice models are downloaded at setup and keep their own licences; the sounds
+  are CC0 / CC BY ([`assets/README.md`](assets/README.md)); the flags are MIT.
+- The full reasoning, the shipping matrix and the per-OS packaging steps are in
+  [`SHIPPING.md`](SHIPPING.md).
+
 ## Roadmap / next iterations
 
 - Language toggle on the settings screen.

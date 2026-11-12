@@ -1,0 +1,19 @@
+Almathus
+Copyright (c) 2026 Datarip
+
+Licensing of this repository is split by component:
+
+- The game — everything except the `sidecar/` directory — is licensed under
+  the MIT License; see `LICENSE`.
+- `sidecar/` is a separate program under the GNU General Public License,
+  version 3 or later (GPL-3.0-or-later); see `sidecar/LICENSE` and the
+  SPDX identifier in its source. It links Piper and espeak-ng, which is why it
+  cannot be MIT.
+
+The Python package built for the game (wheel and sdist) contains only the MIT
+part: `sidecar/` is excluded from it. The sidecar is distributed from this
+repository or as a frozen helper beside a packaged app, never inside the game's
+package.
+
+Voice models downloaded at setup and the audio samples in `assets/sounds/`
+keep their own licences; see `docs/shipping.md` and `assets/README.md`.

@@ -5,10 +5,10 @@ description = "A kid-friendly mental-math game (Tkinter)"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Datarip" }]
 # The sidecar/ tree is a separate GPL-3.0 program and is not part of the wheel;
-# see SHIPPING.md for why the app and the voice engine have different licences.
+# see docs/shipping.md for why the app and the voice engine have different licences.
 dependencies = []
 
 [project.optional-dependencies]
@@ -35,7 +35,8 @@ voice = [
 
 # The Piper sidecar — a separate program, GPL-3.0, run out-of-process. The game
 # talks to it over stdin/stdout and never imports it. Packaged apps ship a
-# frozen `piper-sidecar` instead; this extra is for running from source.
+# frozen `piper-sidecar` instead; this extra is for a repository checkout. The
+# PyPI sdist excludes sidecar/, so it carries the engine but not the script.
 sidecar = [
     # [ja]: Piper's Japanese voice needs OpenJTalk to phonemize; the wheel is
     # ~26 MB and the only language with an extra, so it rides with the engine.
@@ -48,6 +49,12 @@ almathus = "main:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+# The sidecar is a separate GPL-3.0 program, not part of the game package. Keep
+# it out of the PyPI source archive so both distribution artefacts are MIT;
+# the sidecar travels with the repository or as a frozen helper. See NOTICE.
+exclude = ["/sidecar"]
 
 [tool.hatch.build.targets.wheel]
 # A flat layout: the runtime modules sit beside one another, and everything the

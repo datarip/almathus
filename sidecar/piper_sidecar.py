@@ -46,6 +46,13 @@ def main() -> int:
     ap.add_argument("--speaker", default=None, help="speaker name, if multi-speaker")
     args = ap.parse_args()
 
+    # The protocol is UTF-8 on every OS. Windows opens stdin with the ANSI code
+    # page by default, which would mangle Arabic, Hindi or Chinese phrases before
+    # they ever reach the phonemizer; macOS/Linux happen to default to UTF-8.
+    reconfigure = getattr(sys.stdin, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8")
+
     voice = PiperVoice.load(args.model)
     speaker_id = None
     if args.speaker:

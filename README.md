@@ -213,7 +213,9 @@ model per language, ~60 MB, downloaded at setup beside the recognizer model.
   PyPI wheel carries the app only — the GPL sidecar is not in it.
 - **The voice is a file, not the machine's synthesizer.** macOS, Windows and
   Linux play the same model, so a card sounds the same on a Mac as on a PC — no
-  system voice to enable, no language pack to install, nothing online.
+  system voice to enable, no language pack to install, nothing online. The
+  per-OS packaging and what has actually been verified are in
+  [`SHIPPING.md`](SHIPPING.md#cross-platform-status).
 - **Five languages have no Piper model** — Esperanto, Gujarati, Kyrgyz, Tajik,
   Uzbek — and every language falls back to the operating-system voice until its
   model has downloaded: macOS `say`, Linux `espeak-ng`, Windows `pyttsx3`.

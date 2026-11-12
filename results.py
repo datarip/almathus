@@ -1,8 +1,9 @@
 """The results log — one CSV that doubles as the app's little database.
 
-Every finished session appends one line to `results/results.csv`. The same file
-is read back by the progress screen (chart + table), so the file is the single
-source of truth: edit it by hand between sessions and the app follows.
+Every finished session appends one line to `Documents/Almathus/results.csv` (see
+`results_dir()`). The same file is read back by the progress screen (chart +
+table), so the file is the single source of truth: edit it by hand between
+sessions and the app follows.
 
 It is the digital continuation of the paper "Calcul mental" sheet, which had
 three hand-written columns — Date / Famille / Temps — plus one derived column

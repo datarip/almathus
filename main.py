@@ -1820,18 +1820,17 @@ class Dropdown(Btn):
         # Local grab, inside this app only: a click outside the list lands on
         # the list widget and closes it, so it behaves like a menu without
         # asking the window manager for anything.
-        # The frame itself sees the clicks the grab redirects to it. Decided by
-        # where the pointer was, so a press redirected here from over a row
-        # still counts as "on the list".
+        # No grab. A local grab rewrites which window a click is delivered to,
+        # and on macOS a redirected event reports its root coordinates against
+        # the grab window: a click on the far side of the page then looks like a
+        # click *on* the list, and the list never closes. Without the grab the
+        # click arrives at the widget it was aimed at, with honest coordinates.
+        # The cost is that the dismissing click also reaches that widget (a Back
+        # button navigates as it closes the list), which is how menus behave.
         for sequence in ("<ButtonPress-1>", "<ButtonRelease-1>"):
             top.bind(sequence, self._click_anywhere)
         canvas.bind("<Button-1>", lambda e: self._close())  # empty space under the rows
         self._bind_open_keys()
-        try:
-            top.grab_set()
-            top.focus_set()
-        except tk.TclError:
-            pass
 
     def _bind_open_keys(self) -> None:
         """Arrows, Home/End, Enter and Escape work while the list is open.
@@ -1862,8 +1861,9 @@ class Dropdown(Btn):
         # turns out to be, so a click anywhere in the app closes the list even
         # when the grab has quietly redirected it. Nothing else in the app binds
         # a global ButtonPress, so removing it here takes nothing with it.
-        self._all_bindings.append(("<ButtonPress-1>", self._click_anywhere))
-        root.bind_all("<ButtonPress-1>", self._click_anywhere, add="+")
+        for sequence in ("<ButtonPress-1>", "<ButtonRelease-1>"):
+            self._all_bindings.append((sequence, self._click_anywhere))
+            root.bind_all(sequence, self._click_anywhere, add="+")
 
     def _move(self, step: int) -> str:
         return self._jump(self._index + step)
@@ -1898,7 +1898,17 @@ class Dropdown(Btn):
         (this Frame), so `event.widget` says "inside" for a click on the far side
         of the page. That is why an outside click used to leave the list open.
         """
-        if self._pop is None or self._over_list(event.x_root, event.y_root):
+        if self._pop is None:
+            return
+        if os.environ.get("ALMATHUS_DROPDOWN_DEBUG"):
+            print(
+                f"[dropdown] press on {event.widget}: {event.x_root},{event.y_root} "
+                f"| list {self._pop.winfo_rootx()},{self._pop.winfo_rooty()} "
+                f"{self._pop.winfo_width()}x{self._pop.winfo_height()}",
+                file=sys.stderr,
+                flush=True,
+            )
+        if self._over_list(event.x_root, event.y_root):
             return
         self._close()
 
@@ -1925,8 +1935,9 @@ class Dropdown(Btn):
         self._keys.clear()
         if self._all_bindings:
             self._all_bindings.clear()
-            with contextlib.suppress(tk.TclError):
-                self.winfo_toplevel().unbind_all("<ButtonPress-1>")
+            for sequence in ("<ButtonPress-1>", "<ButtonRelease-1>"):
+                with contextlib.suppress(tk.TclError):
+                    self.winfo_toplevel().unbind_all(sequence)
         if self._pop:
             with contextlib.suppress(tk.TclError):
                 self._pop.grab_release()

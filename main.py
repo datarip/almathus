@@ -1731,6 +1731,7 @@ class Dropdown(Btn):
         self._rows: list[tuple[Any, Btn]] = []  # (value, button), in list order
         self._index = 0  # the row the arrow keys are on
         self._keys: list[tuple[str, str]] = []  # window bindings while open
+        self._all_bindings: list[tuple[str, object]] = []  # app-wide, while open
         self._canvas: tk.Canvas | None = None
         self._view = 0  # the visible height of the list
         super().__init__(
@@ -1819,7 +1820,11 @@ class Dropdown(Btn):
         # Local grab, inside this app only: a click outside the list lands on
         # the list widget and closes it, so it behaves like a menu without
         # asking the window manager for anything.
-        top.bind("<Button-1>", lambda e: e.widget is top and self._close())
+        # The frame itself sees the clicks the grab redirects to it. Decided by
+        # where the pointer was, so a press redirected here from over a row
+        # still counts as "on the list".
+        for sequence in ("<ButtonPress-1>", "<ButtonRelease-1>"):
+            top.bind(sequence, self._click_anywhere)
         canvas.bind("<Button-1>", lambda e: self._close())  # empty space under the rows
         self._bind_open_keys()
         try:
@@ -1849,9 +1854,16 @@ class Dropdown(Btn):
             ("<End>", lambda e: self._jump(len(self._rows) - 1)),
             ("<Return>", lambda e: self._take()),
             ("<KP_Enter>", lambda e: self._take()),
-            ("<Button-1>", self._click_anywhere),
         ):
             self._keys.append((sequence, root.bind(sequence, handler, add="+")))
+        # `bind_all`, not a binding on the window: the list holds a local grab,
+        # and a grab decides which window a click is delivered to, not which
+        # widget it happened over. An "all" binding runs whatever that widget
+        # turns out to be, so a click anywhere in the app closes the list even
+        # when the grab has quietly redirected it. Nothing else in the app binds
+        # a global ButtonPress, so removing it here takes nothing with it.
+        self._all_bindings.append(("<ButtonPress-1>", self._click_anywhere))
+        root.bind_all("<ButtonPress-1>", self._click_anywhere, add="+")
 
     def _move(self, step: int) -> str:
         return self._jump(self._index + step)
@@ -1879,16 +1891,25 @@ class Dropdown(Btn):
         return "break"
 
     def _click_anywhere(self, event) -> None:
-        if self._pop is not None and not self._is_inside(event.widget):
-            self._close()
+        """Close when a press lands anywhere but on the list itself.
 
-    def _is_inside(self, widget) -> bool:
-        w: Any = widget
-        while w is not None:
-            if w is self._pop:
-                return True
-            w = getattr(w, "master", None)
-        return False
+        Decided by where the pointer was, not by which widget got the event: the
+        list holds a local grab, and a grab hands every click to the grab window
+        (this Frame), so `event.widget` says "inside" for a click on the far side
+        of the page. That is why an outside click used to leave the list open.
+        """
+        if self._pop is None or self._over_list(event.x_root, event.y_root):
+            return
+        self._close()
+
+    def _over_list(self, x_root: int, y_root: int) -> bool:
+        pop = self._pop
+        if pop is None:
+            return False
+        x, y = pop.winfo_rootx(), pop.winfo_rooty()
+        return (
+            x <= x_root < x + pop.winfo_width() and y <= y_root < y + pop.winfo_height()
+        )
 
     def _choose(self, value):
         self._close()
@@ -1902,6 +1923,10 @@ class Dropdown(Btn):
             with contextlib.suppress(tk.TclError):
                 self.winfo_toplevel().unbind(sequence, funcid)
         self._keys.clear()
+        if self._all_bindings:
+            self._all_bindings.clear()
+            with contextlib.suppress(tk.TclError):
+                self.winfo_toplevel().unbind_all("<ButtonPress-1>")
         if self._pop:
             with contextlib.suppress(tk.TclError):
                 self._pop.grab_release()

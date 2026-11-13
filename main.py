@@ -1637,9 +1637,10 @@ class Btn(tk.Canvas):
 class Tooltip:
     """A small label that appears under a widget on hover and says what it does.
 
-    A borderless Toplevel rather than a Label inside the screen: the bubble is
-    wider than the icon it hangs off and has to be free to overflow the header
-    row (and, near the right edge, to slide back inside the screen).
+    Drawn inside the app's own window rather than as a Toplevel. A Toplevel is
+    a real window: a tiling window manager tiles it, focuses it, and the app
+    behind stops taking clicks. Painting the bubble in the window cannot be
+    seen by a window manager at all.
     """
 
     def __init__(self, widget, text, font, delay=350):
@@ -1666,10 +1667,10 @@ class Tooltip:
         self.job = None
         if self.tip or not self.widget.winfo_exists():
             return
-        self.tip = tk.Toplevel(self.widget)
-        self.tip.wm_overrideredirect(True)  # no title bar, no shadow frame
-        with contextlib.suppress(tk.TclError):
-            self.tip.wm_attributes("-topmost", True)
+        root = self.widget.winfo_toplevel()
+        self.tip = tk.Frame(
+            root, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER
+        )
         tk.Label(
             self.tip,
             text=self.text,
@@ -1678,18 +1679,25 @@ class Tooltip:
             fg=TEXT,
             padx=10,
             pady=5,
-            highlightthickness=1,
-            highlightbackground=BORDER,
         ).pack()
         self.tip.update_idletasks()
-        # Hang it under the widget, right edges aligned — the button lives in the
-        # top-right corner, so a left-aligned bubble would run off the screen.
+        # Hang it under the widget with the right edges aligned: the buttons it
+        # serves live in the top-right corner, so a left-aligned bubble would
+        # run off the edge of the window.
         w = self.tip.winfo_reqwidth()
-        x = self.widget.winfo_rootx() + self.widget.winfo_width() - w
-        x = max(4, min(x, self.widget.winfo_screenwidth() - w - 4))
-        self.tip.wm_geometry(
-            f"+{x}+{self.widget.winfo_rooty() + self.widget.winfo_height() + 6}"
+        h = self.tip.winfo_reqheight()
+        x = self.widget.winfo_rootx() - root.winfo_rootx() + self.widget.winfo_width()
+        x = max(4, min(x - w, root.winfo_width() - w - 4))
+        y = (
+            self.widget.winfo_rooty()
+            - root.winfo_rooty()
+            + self.widget.winfo_height()
+            + 6
         )
+        if y + h > root.winfo_height() - 4:  # no room below: sit above instead
+            y = max(4, y - self.widget.winfo_height() - h - 12)
+        self.tip.place(x=x, y=y)
+        self.tip.lift()
 
     def _hide(self, _e=None):
         self._cancel()
@@ -1735,19 +1743,18 @@ class Dropdown(Btn):
 
     def _open(self):
         self.update_idletasks()  # the list hangs off this button's geometry
-        self._pop = top = tk.Toplevel(self)
-        top.wm_overrideredirect(True)  # no title bar, no shadow
-        # Built out of sight: measuring the rows maps the window, and the window
-        # manager places it before it hears where we want it — so an unhidden
-        # popup flashes in the corner of the screen on its way under the button.
-        top.wm_withdraw()
-        with contextlib.suppress(tk.TclError):
-            top.wm_attributes("-topmost", True)
-        frame = tk.Frame(
-            top, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER
+        # Drawn inside this app's own window, not as a Toplevel: a Toplevel is a
+        # window, and a tiling window manager (OmniWM on this machine) tiles it
+        # like any other, puts it in its own frame and moves the focus to it.
+        # The app behind then gets no clicks at all and looks frozen, and the
+        # list can be reparented to another workspace mid-click. A Frame that
+        # the window paints itself cannot be seen by any window manager.
+        root = self.winfo_toplevel()
+        top = tk.Frame(
+            root, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER
         )
-        frame.pack(fill="both", expand=True)
-        canvas = tk.Canvas(frame, bg=SURFACE, highlightthickness=0, bd=0)
+        self._pop = top
+        canvas = tk.Canvas(top, bg=SURFACE, highlightthickness=0, bd=0)
         canvas.pack(fill="both", expand=True)
         rows = tk.Frame(canvas, bg=SURFACE)
         window = canvas.create_window((0, 0), window=rows, anchor="nw")
@@ -1771,7 +1778,7 @@ class Dropdown(Btn):
         rows.update_idletasks()
         w = max(rows.winfo_reqwidth(), self.winfo_width())
         h = rows.winfo_reqheight()
-        view = min(h, int(self.winfo_screenheight() * self.MAX_SCREEN))
+        view = max(1, min(h, int(self.winfo_screenheight() * self.MAX_SCREEN)))
         # `yscrollincrement=1`: without it a canvas scrolls a tenth of its own
         # height per unit, which on a list this size is half the popup a nudge.
         canvas.configure(
@@ -1779,41 +1786,37 @@ class Dropdown(Btn):
         )
         canvas.itemconfig(window, width=w)  # rows span the full width
         if h > view:
-            # Bound on the Toplevel: a row Label's bindtags include its window,
-            # so a wheel event over a row is looked up here as well.
-            bind_wheel(top, lambda px: canvas.yview_scroll(px, "units"))
+            # A Frame has no bindtags of its own, so every row needs the wheel
+            # binding too: a row Label is a child, and events do not bubble.
+            def scroll(px: int) -> None:
+                canvas.yview_scroll(px, "units")
+
+            for widget in (top, canvas, rows, *rows.winfo_children()):
+                bind_wheel(widget, scroll)
             if here is not None:  # open on the month you are on
                 canvas.yview_moveto(max(0.0, (here.winfo_y() - view / 2) / h))
 
-        # Hang it under the button, and flip it above when the screen runs out:
-        # a popup placed past the bottom edge is invisible, and a grab on an
-        # invisible popup takes every click in the app with it.
-        top.update_idletasks()
-        x = min(max(self.winfo_rootx(), 4), self.winfo_screenwidth() - w - 4)
-        below = self.winfo_rooty() + self.winfo_height() + 4
-        y = below
-        if below + view > self.winfo_screenheight() - 4:
-            y = max(4, self.winfo_rooty() - view - 4)  # open upwards instead
-        top.wm_geometry(f"+{x}+{y}")
-        top.wm_deiconify()
+        # Hang it under the button in this window's own coordinates, flipped
+        # above when the window bottom is closer than the list is tall.
+        x = self.winfo_rootx() - root.winfo_rootx()
+        y = self.winfo_rooty() - root.winfo_rooty() + self.winfo_height() + 4
+        x = max(4, min(x, root.winfo_width() - w - 4))
+        if y + view > root.winfo_height() - 4:
+            y = max(4, self.winfo_rooty() - root.winfo_rooty() - view - 4)
+        top.place(x=x, y=y, width=w, height=view)
+        top.lift()
 
-        # The grab hands every click outside the list to the Toplevel itself —
-        # which is how clicking anywhere else (this button included) closes it.
-        top.bind("<ButtonPress-1>", lambda e: e.widget is top and self._close())
-        top.bind("<ButtonRelease-1>", lambda e: e.widget is top and self._close())
+        # Local grab, inside this app only: a click outside the list lands on
+        # the list widget and closes it, so it behaves like a menu without
+        # asking the window manager for anything.
+        top.bind("<Button-1>", lambda e: e.widget is top and self._close())
         top.bind("<Escape>", lambda e: self._close())
+        canvas.bind("<Button-1>", lambda e: self._close())  # empty space under the rows
         try:
             top.grab_set()
             top.focus_set()
         except tk.TclError:
             pass
-        # A grab is only safe if the window it belongs to is on screen. If the
-        # window manager refused the deiconify, the popup is invisible while
-        # still holding every click: the app looks frozen, with no dialog and
-        # no beachball. Check once, and let go if the list never appeared.
-        top.after(
-            250, lambda: self._pop is top and not top.winfo_viewable() and self._close()
-        )
 
     def _choose(self, value):
         self._close()

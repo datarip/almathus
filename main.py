@@ -84,7 +84,7 @@ LANG = DEFAULT_LANG  # resolved at startup by resolve_language()
 
 STRINGS = {
     "fr": {
-        "title": "Almathus — les maths en jouant",
+        "title": "Almathus",
         "how_many": "Combien de cartes ?",
         "choose_numbers": "Avec quels nombres ?",
         "numbers_hint": "Touche un nombre pour l'allumer ou l'éteindre",
@@ -157,7 +157,7 @@ STRINGS = {
         "pdf_failed": "Échec de l'export PDF",
     },
     "en": {
-        "title": "Almathus — math through play",
+        "title": "Almathus",
         "how_many": "How many cards?",
         "choose_numbers": "With which numbers?",
         "numbers_hint": "Tap a number to switch it on or off",

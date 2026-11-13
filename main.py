@@ -1728,6 +1728,11 @@ class Dropdown(Btn):
         self._on_pick = command
         self._font = font
         self._pop = None
+        self._rows: list[tuple[Any, Btn]] = []  # (value, button), in list order
+        self._index = 0  # the row the arrow keys are on
+        self._keys: list[tuple[str, str]] = []  # window bindings while open
+        self._canvas: tk.Canvas | None = None
+        self._view = 0  # the visible height of the list
         super().__init__(
             parent, self._text_for(value), command=self._toggle, font=font, **kw
         )
@@ -1773,6 +1778,7 @@ class Dropdown(Btn):
                 anchor="w",
             )
             row.pack(fill="x")
+            self._rows.append((v, row))
             here = row if chosen else here
 
         rows.update_idletasks()
@@ -1805,18 +1811,84 @@ class Dropdown(Btn):
             y = max(4, self.winfo_rooty() - root.winfo_rooty() - view - 4)
         top.place(x=x, y=y, width=w, height=view)
         top.lift()
+        self._canvas, self._view = canvas, view
+        self._index = next(
+            (i for i, (v, _) in enumerate(self._rows) if v == self.value), 0
+        )
 
         # Local grab, inside this app only: a click outside the list lands on
         # the list widget and closes it, so it behaves like a menu without
         # asking the window manager for anything.
         top.bind("<Button-1>", lambda e: e.widget is top and self._close())
-        top.bind("<Escape>", lambda e: self._close())
         canvas.bind("<Button-1>", lambda e: self._close())  # empty space under the rows
+        self._bind_open_keys()
         try:
             top.grab_set()
             top.focus_set()
         except tk.TclError:
             pass
+
+    def _bind_open_keys(self) -> None:
+        """Arrows, Home/End, Enter and Escape work while the list is open.
+
+        Bound on the window, not on the frame: a Frame does not take keyboard
+        focus on macOS, so bindings on it never fire. Every one of them is
+        removed again in `_close`, and each returns "break" so the same key
+        does not also reach whatever is behind the list.
+
+        The click handler is the "click outside closes it" rule. The grab makes
+        an outside click arrive at the frame instead, which the frame's own
+        binding already handles; this covers the cases where the grab did not
+        take (a click on the title bar, a failed grab).
+        """
+        root = self.winfo_toplevel()
+        for sequence, handler in (
+            ("<Up>", lambda e: self._move(-1)),
+            ("<Down>", lambda e: self._move(1)),
+            ("<Home>", lambda e: self._jump(0)),
+            ("<End>", lambda e: self._jump(len(self._rows) - 1)),
+            ("<Return>", lambda e: self._take()),
+            ("<KP_Enter>", lambda e: self._take()),
+            ("<Button-1>", self._click_anywhere),
+        ):
+            self._keys.append((sequence, root.bind(sequence, handler, add="+")))
+
+    def _move(self, step: int) -> str:
+        return self._jump(self._index + step)
+
+    def _jump(self, index: int) -> str:
+        if not self._rows:
+            return "break"
+        self._index = max(0, min(len(self._rows) - 1, index))
+        for i, (_, row) in enumerate(self._rows):
+            row.configure(
+                bg=ACCENT if i == self._index else SURFACE,
+                fg=INK if i == self._index else TEXT,
+            )
+        if self._canvas is not None:
+            _, row = self._rows[self._index]
+            total = max(1, self._canvas.bbox("all")[3])
+            self._canvas.yview_moveto(
+                max(0.0, (row.winfo_y() - self._view / 2) / total)
+            )
+        return "break"
+
+    def _take(self) -> str:
+        if self._rows:
+            self._choose(self._rows[self._index][0])
+        return "break"
+
+    def _click_anywhere(self, event) -> None:
+        if self._pop is not None and not self._is_inside(event.widget):
+            self._close()
+
+    def _is_inside(self, widget) -> bool:
+        w: Any = widget
+        while w is not None:
+            if w is self._pop:
+                return True
+            w = getattr(w, "master", None)
+        return False
 
     def _choose(self, value):
         self._close()
@@ -1826,11 +1898,18 @@ class Dropdown(Btn):
             self._on_pick(value)
 
     def _close(self):
+        for sequence, funcid in self._keys:
+            with contextlib.suppress(tk.TclError):
+                self.winfo_toplevel().unbind(sequence, funcid)
+        self._keys.clear()
         if self._pop:
             with contextlib.suppress(tk.TclError):
                 self._pop.grab_release()
             self._pop.destroy()
             self._pop = None
+        self._rows = []
+        self._index = 0
+        self._canvas = None
 
 
 # --------------------------------------------------------------------------- #

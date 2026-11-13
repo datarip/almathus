@@ -883,14 +883,370 @@ _PRESUB = {
     "en": (),
 }
 
+# --- the six languages num2words cannot spell ------------------------------- #
+#
+# num2words has no converter for Chinese, Hindi, Gujarati, Georgian, Kyrgyz or
+# Uzbek, which used to leave those six keypad-only: no words, no Vosk grammar,
+# no parser. They are written out here instead — 0..100, the range the rest of
+# the table machinery works in — so they get the same strict "numbers and
+# nothing else" rule as every generated language.
+#
+# Chinese, Georgian, Kyrgyz and Uzbek compose regularly and are built from their
+# units and tens below; Hindi and Gujarati give every number from 1 to 99 its
+# own word, so those two are written out in full. The words are the standard
+# forms a maths teacher would use; none of these six has been tried on a real
+# microphone yet, which is what the language table's 🔊 status says.
+
+_ZH_DIGITS = ("零", "一", "二", "三", "四", "五", "六", "七", "八", "九")
+
+
+def _zh_numbers() -> tuple[str, ...]:
+    """0..100 in Mandarin: 十 marks the tens, 百 a hundred (二十一 = 21)."""
+    out = [_ZH_DIGITS[0], *_ZH_DIGITS[1:], "十"]
+    out += [f"十{_ZH_DIGITS[d]}" for d in range(1, 10)]  # 11..19
+    for ten in range(2, 10):
+        out.append(f"{_ZH_DIGITS[ten]}十")
+        out += [f"{_ZH_DIGITS[ten]}十{_ZH_DIGITS[d]}" for d in range(1, 10)]
+    out.append("一百")
+    return tuple(out)
+
+
+_KA_LOW = (
+    "ნული",
+    "ერთი",
+    "ორი",
+    "სამი",
+    "ოთხი",
+    "ხუთი",
+    "ექვსი",
+    "შვიდი",
+    "რვა",
+    "ცხრა",
+    "ათი",
+    "თერთმეტი",
+    "თორმეტი",
+    "ცამეტი",
+    "თოთხმეტი",
+    "თხუთმეტი",
+    "თექვსმეტი",
+    "ჩვიდმეტი",
+    "თვრამეტი",
+    "ცხრამეტი",
+)
+# 20, 40, 60, 80. The units between them are "twenty-and-seven" (ოცდაშვიდი).
+_KA_TWENTIES = ("ოცი", "ორმოცი", "სამოცი", "ოთხმოცი")
+
+
+def _ka_numbers() -> tuple[str, ...]:
+    """0..100 in Georgian: each twenty carries the next nineteen on -და-."""
+    out = list(_KA_LOW)
+    for twenty in _KA_TWENTIES:
+        out.append(twenty)
+        out += [f"{twenty[:-1]}და{low}" for low in _KA_LOW[1:20]]
+    out.append("ასი")
+    return tuple(out)
+
+
+_KY_UNITS = (
+    "нөл",
+    "бир",
+    "эки",
+    "үч",
+    "төрт",
+    "беш",
+    "алты",
+    "жети",
+    "сегиз",
+    "тогуз",
+    "он",
+)
+_KY_TENS = (
+    "жыйырма",
+    "отуз",
+    "кырк",
+    "элүү",
+    "алтымыш",
+    "жетимиш",
+    "сексен",
+    "токсон",
+)
+
+
+def _composed(
+    units: tuple[str, ...], tens: tuple[str, ...], hundred: str
+) -> tuple[str, ...]:
+    """0..100 where 11..19 are "ten + unit" and 21..99 are "tens + unit"."""
+    out = list(units)
+    out += [f"{units[10]} {units[d]}" for d in range(1, 10)]
+    for ten in tens:
+        out.append(ten)
+        out += [f"{ten} {units[d]}" for d in range(1, 10)]
+    out.append(hundred)
+    return tuple(out)
+
+
+_UZ_UNITS = (
+    "nol",
+    "bir",
+    "ikki",
+    "uch",
+    "toʻrt",
+    "besh",
+    "olti",
+    "yetti",
+    "sakkiz",
+    "toʻqqiz",
+    "oʻn",
+)
+_UZ_TENS = (
+    "yigirma",
+    "oʻttiz",
+    "qirq",
+    "ellik",
+    "oltmish",
+    "yetmish",
+    "sakson",
+    "toʻqson",
+)
+
+_HI_NUMBERS = (
+    "शून्य",
+    "एक",
+    "दो",
+    "तीन",
+    "चार",
+    "पाँच",
+    "छह",
+    "सात",
+    "आठ",
+    "नौ",
+    "दस",
+    "ग्यारह",
+    "बारह",
+    "तेरह",
+    "चौदह",
+    "पंद्रह",
+    "सोलह",
+    "सत्रह",
+    "अठारह",
+    "उन्नीस",
+    "बीस",
+    "इक्कीस",
+    "बाईस",
+    "तेईस",
+    "चौबीस",
+    "पच्चीस",
+    "छब्बीस",
+    "सत्ताईस",
+    "अट्ठाईस",
+    "उनतीस",
+    "तीस",
+    "इकतीस",
+    "बत्तीस",
+    "तैंतीस",
+    "चौंतीस",
+    "पैंतीस",
+    "छत्तीस",
+    "सैंतीस",
+    "अड़तीस",
+    "उनतालीस",
+    "चालीस",
+    "इकतालीस",
+    "बयालीस",
+    "तैंतालीस",
+    "चवालीस",
+    "पैंतालीस",
+    "छियालीस",
+    "सैंतालीस",
+    "अड़तालीस",
+    "उनचास",
+    "पचास",
+    "इक्यावन",
+    "बावन",
+    "तिरपन",
+    "चौवन",
+    "पचपन",
+    "छप्पन",
+    "सत्तावन",
+    "अट्ठावन",
+    "उनसठ",
+    "साठ",
+    "इकसठ",
+    "बासठ",
+    "तिरसठ",
+    "चौंसठ",
+    "पैंसठ",
+    "छियासठ",
+    "सड़सठ",
+    "अड़सठ",
+    "उनहत्तर",
+    "सत्तर",
+    "इकहत्तर",
+    "बहत्तर",
+    "तिहत्तर",
+    "चौहत्तर",
+    "पचहत्तर",
+    "छिहत्तर",
+    "सतहत्तर",
+    "अठहत्तर",
+    "उनासी",
+    "अस्सी",
+    "इक्यासी",
+    "बयासी",
+    "तिरासी",
+    "चौरासी",
+    "पचासी",
+    "छियासी",
+    "सत्तासी",
+    "अट्ठासी",
+    "नवासी",
+    "नब्बे",
+    "इक्यानवे",
+    "बानवे",
+    "तिरानवे",
+    "चौरानवे",
+    "पंचानवे",
+    "छियानवे",
+    "सत्तानवे",
+    "अट्ठानवे",
+    "निन्यानवे",
+    "सौ",
+)
+
+_GU_NUMBERS = (
+    "શૂન્ય",
+    "એક",
+    "બે",
+    "ત્રણ",
+    "ચાર",
+    "પાંચ",
+    "છ",
+    "સાત",
+    "આઠ",
+    "નવ",
+    "દસ",
+    "અગિયાર",
+    "બાર",
+    "તેર",
+    "ચૌદ",
+    "પંદર",
+    "સોળ",
+    "સત્તર",
+    "અઢાર",
+    "ઓગણીસ",
+    "વીસ",
+    "એકવીસ",
+    "બાવીસ",
+    "તેવીસ",
+    "ચોવીસ",
+    "પચ્ચીસ",
+    "છવ્વીસ",
+    "સત્તાવીસ",
+    "અઠ્ઠાવીસ",
+    "ઓગણત્રીસ",
+    "ત્રીસ",
+    "એકત્રીસ",
+    "બત્રીસ",
+    "તેત્રીસ",
+    "ચોત્રીસ",
+    "પાંત્રીસ",
+    "છત્રીસ",
+    "સાડત્રીસ",
+    "આડત્રીસ",
+    "ઓગણચાલીસ",
+    "ચાલીસ",
+    "એકતાલીસ",
+    "બેતાલીસ",
+    "તેતાલીસ",
+    "ચુંમાલીસ",
+    "પિસ્તાલીસ",
+    "છેતાલીસ",
+    "સુડતાલીસ",
+    "અડતાલીસ",
+    "ઓગણપચાસ",
+    "પચાસ",
+    "એકાવન",
+    "બાવન",
+    "ત્રેપન",
+    "ચોપન",
+    "પંચાવન",
+    "છપ્પન",
+    "સત્તાવન",
+    "અઠ્ઠાવન",
+    "ઓગણસાઠ",
+    "સાઠ",
+    "એકસઠ",
+    "બાસઠ",
+    "ત્રેસઠ",
+    "ચોસઠ",
+    "પાંસઠ",
+    "છાસઠ",
+    "સડસઠ",
+    "અડસઠ",
+    "ઓગણોતેર",
+    "સિત્તેર",
+    "એકોતેર",
+    "બોતેર",
+    "તોતેર",
+    "ચુમોતેર",
+    "પંચોતેર",
+    "છોતેર",
+    "સિત્યોતેર",
+    "ઇઠ્યોતેર",
+    "ઓગણાએંસી",
+    "એંસી",
+    "એક્યાસી",
+    "બ્યાસી",
+    "ત્ર્યાસી",
+    "ચોર્યાસી",
+    "પંચ્યાસી",
+    "છ્યાસી",
+    "સિત્યાસી",
+    "ઈઠ્યાસી",
+    "નેવ્યાસી",
+    "નેવું",
+    "એકાણું",
+    "બાણું",
+    "ત્રાણું",
+    "ચોરાણું",
+    "પંચાણું",
+    "છન્નું",
+    "સત્તાણું",
+    "અઠ્ઠાણું",
+    "નવ્વાણું",
+    "સો",
+)
+
+_TABLE_NUMBERS: dict[str, tuple[str, ...]] = {
+    "cn": _zh_numbers(),
+    "hi": _HI_NUMBERS,
+    "gu": _GU_NUMBERS,
+    "ka": _ka_numbers(),
+    "ky": _composed(_KY_UNITS, _KY_TENS, "жүз"),
+    "uz": _composed(_UZ_UNITS, _UZ_TENS, "yuz"),
+}
+
 # What a recognizer emits for "something I have no word for". Never an answer.
 _UNKNOWN_TOKENS = {"unk", "[unk]", "<unk>", "unknown"}
 
 
 def _strip_accents(s: str) -> str:
-    return "".join(
-        c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn"
-    )
+    """Lower-case folding for Latin letters only.
+
+    Accents are decoration on a Latin letter ("é" is "e" typed carelessly), but
+    a combining mark is part of the letter almost everywhere else: stripping
+    Gujarati's vowel signs turns નેવું (90) into નવ (9), and Hindi's matras into
+    a consonant skeleton that several numbers share. Only a character whose own
+    name says LATIN is decomposed and folded.
+    """
+    out = []
+    for ch in unicodedata.normalize("NFC", s):
+        kept = ch
+        if unicodedata.name(ch, "").startswith("LATIN"):
+            folded = unicodedata.normalize("NFD", ch)
+            kept = "".join(c for c in folded if unicodedata.category(c) != "Mn")
+        out.append(kept)
+    return "".join(out)
 
 
 def _hand_key(lang: str) -> str | None:
@@ -930,18 +1286,58 @@ def _tokenize(text: str, lang: str) -> list[str]:
     return low.split()
 
 
+def _aliases(text: str, lang: str) -> tuple[str, ...]:
+    """Other spellings a recognizer may hand back for the same table entry.
+
+    Uzbek writes some vowels with ʻ (U+02BB) and some corpora use an ASCII
+    apostrophe instead, so both forms are accepted for the same number: a child
+    refused over a punctuation mark would look like a broken microphone.
+    """
+    if lang != "uz":
+        return ()
+    variants = {text.replace("ʻ", "'"), text.replace("ʻ", "")}
+    return tuple(sorted(variants - {text}))
+
+
+def _table_phrases(
+    spellings: tuple[str, ...], lang: str
+) -> tuple[dict[tuple[str, ...], int], str]:
+    """Canonical phrases and the Vosk grammar, from written-out number words."""
+    phrases: dict[tuple[str, ...], int] = {}
+    words: set[str] = set()
+    for n, text in enumerate(spellings):
+        for spelling in (text, *_aliases(text, lang)):
+            tokens = tuple(_tokenize(spelling, lang))
+            if tokens:
+                phrases.setdefault(tokens, n)
+            words.update(spelling.split())
+        if lang == "cn" and len(text) > 1:
+            # A Chinese decoder may return 二十一 as one word or as its
+            # characters spaced apart; both readings are the same number.
+            phrases.setdefault(tuple(text), n)
+            words.update(text)
+    grammar = json.dumps([" ".join(sorted(words)), "[unk]"])
+    return phrases, grammar
+
+
 @functools.cache
 def _generated(lang: str) -> tuple[dict[tuple[str, ...], int], str] | None:
     """Canonical 0..100 phrases and the Vosk grammar for a generated language.
 
-    Returns ``None`` when the language has no num2words converter — the six the
-    library lacks (Hindi, Gujarati, Chinese, Georgian, Kyrgyz, Uzbek) — or when
-    num2words is not installed at all. Those languages simply run keypad-only,
-    the same contract as a missing voice stack everywhere else.
+    The six languages num2words cannot spell (Chinese, Hindi, Gujarati,
+    Georgian, Kyrgyz, Uzbek) come from ``_TABLE_NUMBERS``; every other
+    non-hand-tuned language is built from num2words. ``None`` means the language
+    has no number words at all — num2words is not installed, or the code is in
+    neither source — and voice stays off for it, the same contract as a missing
+    voice stack everywhere else.
 
     Cached: the tables are built once per language per process, on the STT
-    thread, from a library that is pure Python and quick to call.
+    thread, from data that is pure Python and quick to walk.
     """
+    table = _TABLE_NUMBERS.get(lang)
+    if table is not None:
+        phrases, grammar = _table_phrases(table, lang)
+        return (phrases, grammar) if phrases else None
     entry = languages.BY_CODE.get(lang)
     n2w = entry.num2words if entry is not None else None
     if n2w is None:
@@ -950,22 +1346,12 @@ def _generated(lang: str) -> tuple[dict[tuple[str, ...], int], str] | None:
         from num2words import num2words
     except Exception:
         return None
-    phrases: dict[tuple[str, ...], int] = {}
-    words: set[str] = set()
     try:
-        for n in range(101):
-            tokens = tuple(_tokenize(num2words(n, lang=n2w), lang))
-            if tokens:
-                phrases[tokens] = n
-                words.update(tokens)
+        spellings = tuple(num2words(n, lang=n2w) for n in range(101))
     except Exception:
         return None
-    if not phrases:
-        return None
-    # Vosk reads the grammar as one space-joined word list, plus "[unk]" for
-    # "that was speech, but not a word I have".
-    grammar = json.dumps([" ".join(sorted(words)), "[unk]"])
-    return phrases, grammar
+    phrases, grammar = _table_phrases(spellings, lang)
+    return (phrases, grammar) if phrases else None
 
 
 def _strict_generated(

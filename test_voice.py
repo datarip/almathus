@@ -99,6 +99,22 @@ CASES = [
     # French "trois"); without this the card would have scored 2.
     ("two", "fr", None),
     ("huit", "en", None),
+    # -- the six languages num2words cannot spell -------------------------- #
+    # Chinese, Hindi, Gujarati, Georgian, Kyrgyz and Uzbek get their words from
+    # a table in voice.py. The full 0..100 round trip is in table_failures();
+    # these are the cases that pin the shape of each language.
+    ("七", "cn", [7]),
+    ("二十三", "cn", [23]),
+    ("二 十 三", "cn", [23]),  # a Chinese decoder may space the characters
+    ("सैंतालीस", "hi", [47]),
+    ("સિત્તેર", "gu", [70]),
+    ("ოცდაშვიდი", "ka", [27]),
+    ("жыйырма жети", "ky", [27]),
+    ("yigirma yetti", "uz", [27]),
+    ("o'n", "uz", [10]),  # an ASCII apostrophe for the ʻ the table uses
+    ("yigirma ettinchi", "uz", None),  # a number plus a word: refuse it
+    ("धन्यवाद", "hi", None),
+    ("谢谢", "cn", None),
 ]
 
 
@@ -292,6 +308,26 @@ def sidecar_failures() -> list[str]:
     return failures
 
 
+def table_failures() -> list[str]:
+    """Every written-out number word is recognized as itself, 0..100.
+
+    The six languages num2words cannot spell get their words from
+    ``voice._TABLE_NUMBERS``. A word that is missing, mis-indexed or shadowed by
+    a longer phrase would parse as the wrong number — the card would score the
+    wrong answer — so the whole table is walked, not a sample.
+    """
+    failures: list[str] = []
+    for lang, spellings in voicemod._TABLE_NUMBERS.items():
+        if voicemod._grammar_for(lang) is None:
+            failures.append(f"  {lang}: no Vosk grammar, voice would stay off")
+            continue
+        for n, spelling in enumerate(spellings):
+            got = strict_numbers(spelling, lang)
+            if got != [n]:
+                failures.append(f"  {lang} {spelling!r}: got {got!r}, expected {[n]}")
+    return failures
+
+
 def main() -> int:
     failures = []
     for text, lang, expected in CASES:
@@ -301,6 +337,7 @@ def main() -> int:
     failures += voice_failures()
     failures += spoken_failures()
     failures += sidecar_failures()
+    failures += table_failures()
     total = (
         len(CASES)
         + len(VOICE_CASES)
@@ -310,6 +347,8 @@ def main() -> int:
         + 1  # the sidecar round trip
         + len(languages.LANGUAGES)  # every language has an espeak mapping
         + len(voices.VOICES)  # every catalog entry is complete
+        + len(voicemod._TABLE_NUMBERS)  # every table language has a grammar
+        + sum(len(t) for t in voicemod._TABLE_NUMBERS.values())
     )
     for line in failures:
         print(line)

@@ -22,7 +22,9 @@ curve so the printed line is the same line, only sharper.
 
 Text is encoded as WinAnsi (cp1252), which covers French and English; an accent
 the encoding lacks falls back to its base letter, and anything left over (the
-emoji in the screen titles) is dropped rather than printed as garbage.
+emoji in the screen titles) is dropped rather than printed as garbage. Scripts
+WinAnsi cannot represent are the caller's problem: the progress screen asks
+:func:`supports_text` and prints English labels instead of blank ones.
 """
 
 from __future__ import annotations
@@ -277,6 +279,31 @@ def _fold(text: str) -> str:
     # Stripped, so a screen title whose emoji was just dropped ("📈 Mes progrès")
     # does not print with a hole where the icon used to be.
     return "".join(out).strip()
+
+
+def supports_text(text: str) -> bool:
+    """Can this text be printed without losing a letter or a digit?
+
+    Emoji and decorative punctuation are expected to vanish (the screen titles
+    carry them); an alphabet WinAnsi lacks — Cyrillic, Arabic, CJK, Indic — is
+    not. Callers use this to pick an English label rather than print a blank.
+    """
+    for ch in text or "":
+        if unicodedata.category(ch)[0] not in ("L", "N"):
+            continue
+        try:
+            ch.encode("cp1252")
+        except UnicodeEncodeError:
+            bare = "".join(
+                c
+                for c in unicodedata.normalize("NFKD", ch)
+                if not unicodedata.combining(c)
+            )
+            try:
+                bare.encode("cp1252")
+            except UnicodeEncodeError:
+                return False
+    return True
 
 
 def _char_width(ch: str, bold: bool) -> int:

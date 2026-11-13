@@ -1,6 +1,19 @@
 # 🧮 Almathus
 
-A kid-friendly mental-math game — additions, subtractions, multiplications and
+A very simple game I made for a child so we could stop arguing about math practicing ;-)
+
+The game is suitable for 6-8 year old children. For now it only covers additions, subtractions, multiplications and
+divisions. Planning to add harder levels later on.
+
+The exercises are directly inspired by her speech and language therapist math exercises. 
+
+It consists of short timed sessions where the child is asked to solve random 2-number operations displayed on a card.
+
+The time to solve each card is recorded
+
+The intersting part in this MVP was to leverage STT for math cards questions and TTS for recording and validating answers.
+
+For now it only covers additions, subtractions, multiplications and
 divisions of small positive integers, with big colorful numbers, a live
 stopwatch, and per-card timing so a parent can see which operations need work.
 
@@ -463,10 +476,12 @@ languages tested end to end, on a real microphone. 🔊 **Voice** — the number
 words are generated automatically and the language *should* work, but it has not
 been tried yet. ⌨️ **Keypad only** — no number words exist for this language, so
 voice answering stays off and the game is played on the keypad. The on-screen
-labels are only translated for French and English, and other languages fall back
-to English until a translation is added — but what the game **says** is in the
-chosen language: the operator word ("7 fois 4", "7 times 4", "7 por 4") and the
-recap sentence are translated for all 32 languages.
+labels and month names are translated for every language in the picker, and what
+the game **says** is in the chosen language too: the operator word
+("7 fois 4", "7 times 4", "7 por 4") and the recap sentence are translated for
+all 32 languages. A label missing from a new language falls back to English
+rather than to a raw key; the PDF report prints English labels for scripts its
+built-in Latin font cannot draw.
 
 **Feedback is very welcome.** Real-mic reports are the only way the untested
 languages get verified, and the quickest way to fix one. If a spoken number is

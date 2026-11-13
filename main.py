@@ -43,6 +43,7 @@ from tkinter import filedialog, ttk
 from tkinter import font as tkfont
 from typing import Any, ClassVar, Literal
 
+import i18n
 import languages
 import pdfreport
 import results as resultslog
@@ -77,159 +78,11 @@ RANGES = {
 # 0 is excluded: it would make division undefined and +0 / ×0 pointless.
 NUM_MIN, NUM_MAX = 1, 10
 
-# The language the app runs in. Only fr/en have translated strings today; the
-# others fall back to English in T() while their voice/number support is real.
+# The language the app runs in. Every supported language has screen text (see
+# i18n.py); a missing entry still falls back to English rather than a raw key.
 DEFAULT_LANG = "fr"  # used until a language is chosen and its model installed
 LANG = DEFAULT_LANG  # resolved at startup by resolve_language()
 
-STRINGS = {
-    "fr": {
-        "title": "Almathus",
-        "how_many": "Combien de cartes ?",
-        "choose_numbers": "Avec quels nombres ?",
-        "numbers_hint": "Touche un nombre pour l'allumer ou l'éteindre",
-        "choose_mode": "Choisis ton opération",
-        "addition": "Addition",
-        "subtraction": "Soustraction",
-        "multiplication": "Multiplication",
-        "division": "Division",
-        "go": "GO !",
-        "timer_total": "Temps total",
-        "timer_card": "Cette carte",
-        "card_of": "Carte {n} / {total}",
-        "retry_round": "🔁 On rejoue ce qu'on a raté !",
-        "score": "Score",
-        "total_time": "Temps total",
-        "avg_time": "Temps moyen / carte",
-        "slowest": "Les plus longues :",
-        "again": "Rejouer",
-        "quit": "Quitter",
-        "correct": "Bravo ! 🎉",
-        "wrong": "Presque ! La réponse était {a}",
-        "voice_toggle": "🎤 Répondre à la voix",
-        "dictation_toggle": "🔊 Lire la carte",
-        "girly_toggle": "👑 Mode princesse",
-        "language_toggle": "🌐 Langue",
-        "language_title": "Langue de l'application",
-        "language_intro": "Choisissez la langue de l'application et téléchargez son modèle de reconnaissance et sa voix. Ils seront conservés pour les prochaines fois.",
-        "language_skip": "Continuer sans voix",
-        "language_downloading": "Téléchargement de",
-        "voice_downloading": "Téléchargement de la voix",
-        "language_once": "Cela n'arrive qu'une fois ; tout est conservé pour la prochaine fois.",
-        "language_error": "Impossible d'installer",
-        "language_retry": "Réessayer",
-        "voice_off_hint": "🎤 Voix indisponible : {reason}",
-        "listening": "🎧 à l'écoute…",
-        "thinking": "🤔 …",
-        "wait_answer": "Attends la fin de la question, puis réponds…",
-        "articulate_tip_title": "🗣️ Avant de commencer",
-        "articulate_tip": "Parle fort et articule bien, comme si tu parlais à quelqu'un juste à côté de toi.",
-        "articulate_tip_go": "Réponds à la fin de la question, quand tu vois « GO ! ».",
-        "didnt_get": "Je n'ai pas compris, réessaie 🎤",
-        "too_quiet": "🔊 Plus fort ! Je t'entends à peine",
-        "mic_denied": "Micro non autorisé — Réglages ▸ Confidentialité ▸ Microphone",
-        "progress": "📈 Mes progrès",
-        "back": "← Retour",
-        "progress_title": "📈 Mes progrès",
-        "chart_title": "Temps moyen par jour",
-        "axis_grade": "Notes",
-        "legend_time": "Temps moyen",
-        "legend_grade": "Note moyenne",
-        "avg_label": "moyenne",
-        "no_results": "Pas encore de résultats — joue une partie !",
-        "col_date": "Date",
-        "col_family": "Famille",
-        "col_time": "Temps",
-        "col_cards": "Cartes",
-        "col_note": "Note",
-        "col_avg": "Temps moyen / carte",
-        "col_difficult": "Difficultés",
-        "n_sessions": "{n} sessions",
-        "month_all": "Tous les mois",
-        "month_tip": "Filtrer par mois",
-        "no_month_results": "Rien pour ce mois — choisis-en un autre",
-        "pdf_button": "📄 PDF",
-        "pdf_tip": "Exporter en PDF",
-        "pdf_dialog": "Enregistrer mes progrès en PDF",
-        "pdf_exported_on": "Exporté le {when}",
-        "pdf_footer": "Almathus · page {page} / {total}",
-        "pdf_saved": "✓ PDF enregistré",
-        "pdf_failed": "Échec de l'export PDF",
-    },
-    "en": {
-        "title": "Almathus",
-        "how_many": "How many cards?",
-        "choose_numbers": "With which numbers?",
-        "numbers_hint": "Tap a number to switch it on or off",
-        "choose_mode": "Choose your operation",
-        "addition": "Addition",
-        "subtraction": "Subtraction",
-        "multiplication": "Multiplication",
-        "division": "Division",
-        "go": "GO!",
-        "timer_total": "Total time",
-        "timer_card": "This card",
-        "card_of": "Card {n} / {total}",
-        "retry_round": "🔁 Let's redo the ones we missed!",
-        "score": "Score",
-        "total_time": "Total time",
-        "avg_time": "Avg time / card",
-        "slowest": "Slowest ones:",
-        "again": "Play again",
-        "quit": "Quit",
-        "correct": "Well done! 🎉",
-        "wrong": "Almost! The answer was {a}",
-        "voice_toggle": "🎤 Answer by voice",
-        "dictation_toggle": "🔊 Read the card",
-        "girly_toggle": "👑 Girly mode",
-        "language_toggle": "🌐 Language",
-        "language_title": "App language",
-        "language_intro": "Choose the app language and download its recognizer model and its voice. They are kept for next time.",
-        "language_skip": "Continue without voice",
-        "language_downloading": "Downloading",
-        "voice_downloading": "Downloading the voice",
-        "language_once": "This happens once; everything is kept for next time.",
-        "language_error": "Could not install",
-        "language_retry": "Try again",
-        "voice_off_hint": "🎤 Voice unavailable: {reason}",
-        "listening": "🎧 listening…",
-        "thinking": "🤔 …",
-        "wait_answer": "Wait for the question to end, then answer…",
-        "articulate_tip_title": "🗣️ Before you start",
-        "articulate_tip": "Speak up and say each number clearly, as if talking to someone right beside you.",
-        "articulate_tip_go": "Answer at the end of the question, when you see \u201cGO!\u201d.",
-        "didnt_get": "I didn't catch that, try again 🎤",
-        "too_quiet": "🔊 Louder! I can barely hear you",
-        "mic_denied": "Mic not allowed — Settings ▸ Privacy ▸ Microphone",
-        "progress": "📈 My progress",
-        "back": "← Back",
-        "progress_title": "📈 My progress",
-        "chart_title": "Average time per day",
-        "axis_grade": "Grades",
-        "legend_time": "Average time",
-        "legend_grade": "Average grade",
-        "avg_label": "average",
-        "no_results": "No results yet — play a game!",
-        "col_date": "Date",
-        "col_family": "Family",
-        "col_time": "Time",
-        "col_cards": "Cards",
-        "col_note": "Grade",
-        "col_avg": "Avg time / card",
-        "col_difficult": "Difficulty",
-        "n_sessions": "{n} sessions",
-        "month_all": "All months",
-        "month_tip": "Filter by month",
-        "no_month_results": "Nothing for this month — pick another one",
-        "pdf_button": "📄 PDF",
-        "pdf_tip": "Export to PDF",
-        "pdf_dialog": "Save my progress as PDF",
-        "pdf_exported_on": "Exported on {when}",
-        "pdf_footer": "Almathus · page {page} / {total}",
-        "pdf_saved": "✓ PDF saved",
-        "pdf_failed": "PDF export failed",
-    },
-}
 
 # The operator as it is said out loud, per language. A card is read as
 # "7 × 4" -> "<seven> <word> <four>", so each entry has to sit between two
@@ -418,10 +271,9 @@ OP_SPOKEN = {
     },
 }
 
-# The recap sentence, spoken after the fanfare. It lives here rather than in
-# STRINGS because only fr and en have translated screens: looking a spoken
-# string up through T() would have fallen back to the English sentence for every
-# other language, which is exactly the half-English reading this table removes.
+# The recap sentence, spoken after the fanfare. It lives here, not in i18n.py,
+# because it is heard and never drawn: it has no place in the screen dictionary
+# and must stay separate from the equivalent printed labels.
 # Neutral phrasing, so it fits a boy or a girl; {c} correct out of {n}.
 SPOKEN_SCORE = {
     "fr": "Tu as eu {c} sur {n}.",
@@ -469,46 +321,33 @@ def spoken_score(lang: str, correct: int, total: int) -> str:
     return template.format(c=correct, n=total)
 
 
-# Month names written out, rather than `strftime("%B")`: that one follows the
-# operating system's locale, which has nothing to do with the language the app
-# was started in — a French app on an English Mac would say "July".
-MONTHS = {
-    "fr": (
-        "janvier",
-        "février",
-        "mars",
-        "avril",
-        "mai",
-        "juin",
-        "juillet",
-        "août",
-        "septembre",
-        "octobre",
-        "novembre",
-        "décembre",
-    ),
-    "en": (
-        "January",
-        "February",
-        "March",
-        "April",
-        "May",
-        "June",
-        "July",
-        "August",
-        "September",
-        "October",
-        "November",
-        "December",
-    ),
-}
-
-
 def T(key: str, **kw) -> str:
-    # A language with no translated strings yet falls back to English rather
-    # than to raw keys: a speakable setup and settings screen beats a cryptic one.
-    s = STRINGS.get(LANG, STRINGS["en"]).get(key, key)
+    # Missing text falls back to English rather than to raw keys: a speakable
+    # setup and settings screen beats a cryptic one.
+    s = i18n.text(LANG, key)
     return s.format(**kw) if kw else s
+
+
+def pdf_text(key: str, **kw) -> str:
+    """A label for the PDF report, in English when the script cannot print.
+
+    The report has no Unicode font, so a Cyrillic, Arabic or CJK label would
+    otherwise come out blank. The screen still uses :func:`T`; only paper falls
+    back.
+    """
+    s = T(key, **kw)
+    if pdfreport.supports_text(s):
+        return s
+    english = i18n.text("en", key)
+    return english.format(**kw) if kw else english
+
+
+def month_label_pdf(ym: tuple[int, int]) -> str:
+    """The report's month heading, using English if the script cannot print."""
+    label = month_label(ym)
+    if pdfreport.supports_text(label):
+        return label
+    return f"{i18n.month('en', ym[1])} {ym[0]}"
 
 
 WHEEL_LINE = 22  # px one line of scrolling is worth — about a table row
@@ -599,7 +438,7 @@ def month_label(ym: tuple[int, int] | None) -> str:
     """
     if ym is None:
         return T("month_all")
-    name = MONTHS.get(LANG, MONTHS["en"])[ym[1] - 1]
+    name = i18n.month(LANG, ym[1])
     return f"{name[:1].upper()}{name[1:]} {ym[0]}"
 
 
@@ -5293,26 +5132,28 @@ class Almathus(tk.Tk):
                 self._chart,
                 palette=THEMES[THEME],
                 labels={
-                    "title": T("progress_title"),
-                    "subtitle": T(
+                    "title": pdf_text("progress_title"),
+                    "subtitle": pdf_text(
                         "pdf_exported_on", when=stamp.strftime("%d/%m/%Y %H:%M")
                     ),
                     # The month it covers, named on the report itself; empty when
                     # the whole history is being printed.
-                    "period": "" if self._month is None else month_label(self._month),
-                    "chart_title": T("chart_title"),
-                    "axis_grade": T("axis_grade"),
-                    "legend_time": T("legend_time"),
-                    "legend_grade": T("legend_grade"),
-                    "n_sessions": T("n_sessions", n=len(self._sessions)),
-                    "footer": T("pdf_footer"),
-                    "date": T("col_date"),
-                    "famille": T("col_family"),
-                    "temps": T("col_time"),
-                    "cartes": T("col_cards"),
-                    "note": T("col_note"),
-                    "temps_moyen": T("col_avg"),
-                    "difficultes": T("col_difficult"),
+                    "period": (
+                        "" if self._month is None else month_label_pdf(self._month)
+                    ),
+                    "chart_title": pdf_text("chart_title"),
+                    "axis_grade": pdf_text("axis_grade"),
+                    "legend_time": pdf_text("legend_time"),
+                    "legend_grade": pdf_text("legend_grade"),
+                    "n_sessions": pdf_text("n_sessions", n=len(self._sessions)),
+                    "footer": pdf_text("pdf_footer"),
+                    "date": pdf_text("col_date"),
+                    "famille": pdf_text("col_family"),
+                    "temps": pdf_text("col_time"),
+                    "cartes": pdf_text("col_cards"),
+                    "note": pdf_text("col_note"),
+                    "temps_moyen": pdf_text("col_avg"),
+                    "difficultes": pdf_text("col_difficult"),
                 },
                 when=stamp,
             )

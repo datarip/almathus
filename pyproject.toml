@@ -63,6 +63,7 @@ exclude = ["/sidecar"]
 # sidecar is a separate GPL program, not a module of the game.
 include = [
     "main.py",
+    "i18n.py",
     "languages.py",
     "voice.py",
     "voices.py",

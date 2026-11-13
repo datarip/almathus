@@ -1785,17 +1785,21 @@ class Dropdown(Btn):
             if here is not None:  # open on the month you are on
                 canvas.yview_moveto(max(0.0, (here.winfo_y() - view / 2) / h))
 
-        # Hang it under the button, pushed back inside the screen if it overruns.
+        # Hang it under the button, and flip it above when the screen runs out:
+        # a popup placed past the bottom edge is invisible, and a grab on an
+        # invisible popup takes every click in the app with it.
         top.update_idletasks()
-        x = min(
-            max(self.winfo_rootx(), 4),
-            self.winfo_screenwidth() - top.winfo_reqwidth() - 4,
-        )
-        top.wm_geometry(f"+{x}+{self.winfo_rooty() + self.winfo_height() + 4}")
+        x = min(max(self.winfo_rootx(), 4), self.winfo_screenwidth() - w - 4)
+        below = self.winfo_rooty() + self.winfo_height() + 4
+        y = below
+        if below + view > self.winfo_screenheight() - 4:
+            y = max(4, self.winfo_rooty() - view - 4)  # open upwards instead
+        top.wm_geometry(f"+{x}+{y}")
         top.wm_deiconify()
 
         # The grab hands every click outside the list to the Toplevel itself —
         # which is how clicking anywhere else (this button included) closes it.
+        top.bind("<ButtonPress-1>", lambda e: e.widget is top and self._close())
         top.bind("<ButtonRelease-1>", lambda e: e.widget is top and self._close())
         top.bind("<Escape>", lambda e: self._close())
         try:
@@ -1803,6 +1807,13 @@ class Dropdown(Btn):
             top.focus_set()
         except tk.TclError:
             pass
+        # A grab is only safe if the window it belongs to is on screen. If the
+        # window manager refused the deiconify, the popup is invisible while
+        # still holding every click: the app looks frozen, with no dialog and
+        # no beachball. Check once, and let go if the list never appeared.
+        top.after(
+            250, lambda: self._pop is top and not top.winfo_viewable() and self._close()
+        )
 
     def _choose(self, value):
         self._close()
@@ -2902,6 +2913,11 @@ class Almathus(tk.Tk):
         # thread-safe channel: worker threads (STT/TTS) post callables here and
         # the pump runs them on the Tk main loop — never touch Tk off-thread.
         self._ui_queue: queue.Queue = queue.Queue()
+        # Heartbeat for the hang watchdog: the pump stamps this every 40ms while
+        # the event loop is alive, so a frozen window can be identified instead
+        # of guessed at.
+        self._beat = time.monotonic()
+        self._modal = False  # a native dialog is open: the loop is meant to wait
         self._pump()
 
         # The header band (`_header_band`) is measured from the type, so
@@ -3003,6 +3019,7 @@ class Almathus(tk.Tk):
     def _pump(self):
         if self._stopping:
             return  # the window is going away; stop rescheduling
+        self._beat = time.monotonic()
         while True:
             try:
                 fn = self._ui_queue.get_nowait()
@@ -5115,14 +5132,20 @@ class Almathus(tk.Tk):
             self._flash_pdf_status(T("no_month_results"), MUTED)
             return
         stamp = datetime.now().astimezone()
-        path = filedialog.asksaveasfilename(
-            parent=self,
-            title=T("pdf_dialog"),
-            defaultextension=".pdf",
-            initialdir=str(resultslog.RESULTS_DIR),
-            initialfile=pdfreport.default_filename(LANG, stamp, self._month),
-            filetypes=[("PDF", "*.pdf")],
-        )
+        # The native save sheet stops the Tk loop on purpose: tell the hang
+        # watchdog that a silent event loop here is expected.
+        self._modal = True
+        try:
+            path = filedialog.asksaveasfilename(
+                parent=self,
+                title=T("pdf_dialog"),
+                defaultextension=".pdf",
+                initialdir=str(resultslog.RESULTS_DIR),
+                initialfile=pdfreport.default_filename(LANG, stamp, self._month),
+                filetypes=[("PDF", "*.pdf")],
+            )
+        finally:
+            self._modal = False
         if not path:  # the parent changed their mind
             return
         try:
@@ -5270,6 +5293,35 @@ class Almathus(tk.Tk):
             pass  # never let logging break the game
 
 
+def _watch_hangs(app: Almathus, threshold: float = 4.0) -> None:
+    """Dump every thread's stack to stderr when the UI stops ticking.
+
+    A freeze with no beachball is a callback that never came back: Tk stops
+    pumping, nothing is printed, and the evidence is gone once the app is force
+    quit. The pump stamps a heartbeat every 40ms; this notices when the stamp
+    stops moving and reports the stacks once per stall, so the next freeze names
+    the line it happened on instead of its symptoms.
+    """
+
+    def watch() -> None:
+        reported = 0.0
+        while not app._stopping:
+            time.sleep(0.5)
+            stalled = time.monotonic() - app._beat
+            if app._modal or stalled < threshold:
+                continue
+            if time.monotonic() - reported < 15.0:
+                continue  # one report per stall, not one per sample
+            reported = time.monotonic()
+            print(f"[hang] UI frozen for {stalled:.1f}s", file=sys.stderr)
+            for thread_id, frame in sys._current_frames().items():
+                print(f"[hang] thread {thread_id}", file=sys.stderr)
+                traceback.print_stack(frame, file=sys.stderr)
+            sys.stderr.flush()
+
+    threading.Thread(target=watch, daemon=True, name="hang-watch").start()
+
+
 def main():
     if relaunch_as_app_bundle():  # macOS: let the bundle own the process, not Zed
         return
@@ -5277,6 +5329,7 @@ def main():
     resolve_language()  # sets the module's LANG before any widget reads it
     resultslog.migrate_legacy()  # a log left in the checkout follows the user
     app = Almathus()
+    _watch_hangs(app)
     try:
         app.mainloop()
     finally:

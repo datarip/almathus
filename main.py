@@ -1131,6 +1131,12 @@ BTN_GAP = 8  # px between an icon and its label
 # ones shrink the box to fit, so it stays responsive rather than fixed.
 CONTENT_MAX = 1400
 
+# Overflow the settings page absorbs before it shows a scrollbar. The column
+# ends in 16 px of padding, so a handful of pixels can be given back without
+# clipping anything a reader came for — and a bar for two pixels reads as a
+# rendering fault, not as a page with more to see.
+FIT_SLACK = 6
+
 # The window the menu was drawn for. The type is sized once for the display the
 # app opens on, from this design: a window resize reflows the page and never
 # re-scales its text. The floor keeps the type readable on a small display;
@@ -1426,10 +1432,11 @@ class RoundedRect:
             c.coords(self._edges[1], r, h - bw, w - r, h)
             c.coords(self._edges[2], 0, r, bw, h - r)
             c.coords(self._edges[3], w - bw, r, w, h - r)
-        # Two fill bands: their union stops at every straight edge, leaving
+        # Two fill bands: the vertical one between the corner tiles, the
+        # horizontal one between the top and bottom edges. Their union leaves
         # exactly the four corner squares to the tiles.
         c.coords(self._fills[0], bw, r, w - bw, h - r)
-        c.coords(self._fills[1], r, bw, w - r, h - r)
+        c.coords(self._fills[1], r, bw, w - r, h - bw)
         for item, (x, y) in zip(
             self._corners,
             ((0, 0), (w - r, 0), (0, h - r), (w - r, h - r)),
@@ -3420,7 +3427,12 @@ class Almathus(tk.Tk):
             # fixed width: pinned to CONTENT_MAX it made a page with no
             # horizontal content scrollable sideways on any narrower window, and
             # left it off-centre once the window grew past that width.
-            need_bar = h > ch
+            #
+            # A few pixels of overflow are not worth a scrollbar: the column's
+            # own bottom padding absorbs them, and a full-height thumb beside a
+            # page that visibly fits reads as a fault. Only a real overflow (a
+            # row that would be cut off) gets the bar.
+            need_bar = h > ch + FIT_SLACK
             region: tuple[int, int, int, int] | tuple[()] = (
                 (0, 0, cw, h) if need_bar else ()
             )

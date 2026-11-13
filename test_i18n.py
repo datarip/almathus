@@ -53,6 +53,33 @@ def test_placeholders_survive_translation():
             )
 
 
+# The progress screen's vocabulary: its title, the table's columns, the chart's
+# legend and axes, the month filter and the PDF button. These are the strings a
+# parent reads when they look at a child's progress, so a column left in English
+# is the gap nobody notices until the screen is in Arabic.
+PROGRESS_KEYS = [
+    key
+    for key in ENGLISH
+    if key.startswith(("col_", "legend_", "month_", "no_", "pdf_"))
+] + ["progress", "progress_title", "chart_title", "axis_grade", "n_sessions"]
+
+# Words that are legitimately the same in the target language and in English:
+# "PDF" is a format name; "Date" is how French writes date; French and Catalan
+# both say "sessions"; the footer is a product name plus "page".
+SAME_AS_ENGLISH_OK = {"pdf_button", "pdf_footer", "col_date", "n_sessions"}
+
+
+def test_progress_headers_are_translated():
+    """No language is left with an English column heading."""
+    for code, strings in i18n.STRINGS.items():
+        if code.startswith("en"):
+            continue  # the source language, by definition
+        for key in PROGRESS_KEYS:
+            if key in SAME_AS_ENGLISH_OK:
+                continue
+            assert strings[key] != ENGLISH[key], f"{code}/{key} is still English"
+
+
 def test_every_dictionary_has_twelve_months():
     """The month chip can name any month, in every language."""
     for code, months in i18n.MONTHS.items():
@@ -71,6 +98,7 @@ def main() -> int:
         test_every_registry_language_resolves,
         test_every_dictionary_has_the_english_keys,
         test_placeholders_survive_translation,
+        test_progress_headers_are_translated,
         test_every_dictionary_has_twelve_months,
         test_missing_key_falls_back_to_english_not_the_raw_key,
     )

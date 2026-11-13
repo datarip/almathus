@@ -58,10 +58,11 @@ python3 main.py
 Settings → *My progress*, or the recap after a game. It reads the results file.
 
 - **Chart** — average time per day on a real calendar axis, one point per day,
-  with that day's grade on a right-hand axis (`0/20` … `20/20`). A month filter,
-  and a hover that names the date, the families, the session count, the average
-  and the grade. A day with no score leaves a gap in the grade line instead of
-  reading as a zero.
+  with that day's grade on a right-hand axis, written out of the deck the grades
+  were mostly played in (`0/20` … `20/20` for a child on 20-card decks). A month
+  filter, and a hover that names the date, the families, the session count, the
+  average and the grade. A day with no score leaves a gap in the grade line
+  instead of reading as a zero.
 - **Table** — every session, newest first: grade, average time per card, and the
   five cards that session fought with.
 - **📄 PDF** — an A4 report with the same chart drawn as vectors and the table
@@ -96,46 +97,42 @@ about when your file lacks it.
 ### Header
 
 ```csv
-date,famille,temps,cartes,note,temps_moyen_par_carte,difficultes
-2026-06-16,-1,0:31,,,,
-2026-07-28,-2 et -3,1:35.4,20,18,4.8,"17 - 4, 13 - 4, 9 - 4, 6 - 4, 20 - 4"
-```
-
-The English header (`LANG = "en"`) is:
-
-```csv
 date,family,time,cards,grade,average_time_per_card,difficulty
+2026-06-16,-1,0:31,,,,
+2026-07-28,-2 and -3,1:35.4,20,18,4.8,"17 - 4, 13 - 4, 9 - 4, 6 - 4, 20 - 4"
 ```
 
-| Field | 🇫🇷 | 🇬🇧 | Meaning |
-|---|---|---|---|
-| date | `date` | `date` | day the session was played |
-| famille | `famille` | `family` | which family was drilled — `-3`, `-1 et -2`, `x7` |
-| temps | `temps` | `time` | total time of the session |
-| cartes | `cartes` | `cards` | how many cards were asked |
-| note | `note` | `grade` | cards right on the first try |
-| temps moyen | `temps_moyen_par_carte` | `average_time_per_card` | `temps / cartes` |
-| difficultés | `difficultes` | `difficulty` | the five cards that session fought with |
+| Header | Meaning |
+|---|---|
+| `date` | day the session was played |
+| `family` | which family was drilled — `-3`, `-2 and -3`, `x7` |
+| `time` | total time of the session |
+| `cards` | how many cards were asked |
+| `grade` | cards right on the first try |
+| `average_time_per_card` | `time / cards` |
+| `difficulty` | the five cards that session fought with |
 
-**Either language is read**, in any column order. Header matching ignores case,
-accents, spaces and underscores (`Temps`, `temps moyen par carte` and `temps_moyen`
-all work), and a few synonyms are accepted — see `ALIASES` in `results.py`.
-Columns the app doesn't know are left untouched when it appends.
+The app writes the header in whatever language it is running in — a French
+install writes the same seven columns in French — and **both are read**, in any
+column order. Matching ignores case, accents, spaces and underscores (`Temps`,
+`Average time per card` and `temps_moyen` all work), and a few synonyms are
+accepted, listed in `ALIASES` (`results.py`). Columns the app does not know are
+left untouched when it appends.
 
 ### Editing it by hand
 
 | Column | What you can write |
 |---|---|
-| **date** | `2026-06-16`, `16/06/2026`, or `16/06`. **Empty repeats the row above**, like the blank cells on the paper sheet. |
-| **famille** | free text. The app writes the operator sign then the numbers switched on: `-3`, `-1 et -2`, `x7`, `+1–10`. ASCII signs (`+ - x /`) so the column stays easy to type. |
-| **temps** | `1:23` · `1:23.4` · `1'23` · `1'23"4` · `83"` · `83` · `83.4` · `1,23`. A comma followed by exactly two digits below 60 is the minute separator (`1,29` = 1 min 29 s); otherwise it is a decimal point (`32,60` = 32.6 s). **Use a dot for a decimal.** |
-| **cartes** | an integer, or empty when unknown (the old paper rows). |
-| **note** | cards right on the first try, as a bare number (`15`) — the denominator is the `cartes` cell beside it. A hand-written `15/20` keeps only the numerator. |
-| **temps moyen** | plain seconds. Empty means it is computed as `temps / cartes`. |
-| **difficultés** | the hardest cards, hardest first: `18 - 4, 11 - 4, 13 - 4`. **The next session reads this cell back**, so writing a card in is a way to say *drill this tomorrow*. |
+| **date** | `2026-06-16`, `16/06/2026`, `16/06/26`, `16-06-2026`, `16.06.2026`, `2026/06/16`, or short `16/06` · `16-06` · `16.06`. **Empty repeats the row above**, like the blank cells on the paper sheet. |
+| **family** | free text. The app writes the operator sign then the numbers switched on: `-3`, `-2 and -3`, `x7`, `+1–10`. ASCII signs (`+ - x /`) so the column stays easy to type. |
+| **time** | `1:23` · `1:23.4` · `1'23` · `1'23"4` · `83"` · `83` · `83.4` · `1,23`. A comma followed by exactly two digits below 60 is the minute separator (`1,29` = 1 min 29 s); otherwise it is a decimal point (`32,60` = 32.6 s). **Use a dot for a decimal.** |
+| **cards** | an integer, or empty when unknown (the old paper rows). |
+| **grade** | cards right on the first try, as a bare number (`15`) — the denominator is the `cards` cell beside it. A hand-written `15/20` keeps only the numerator. |
+| **average time per card** | plain seconds. Empty means it is computed as `time / cards`. |
+| **difficulty** | the hardest cards, hardest first: `18 - 4, 11 - 4, 13 - 4`. **The next session reads this cell back**, so writing a card in is a way to say *drill this tomorrow*. |
 
-Rows that can't be read are skipped, never rewritten. The file ships seeded with
-the sessions from the paper sheet (16/06 → 12/07).
+Rows that can't be read are skipped, never rewritten. A fresh install starts with
+the header line and no rows.
 
 ### Difficulties, and the revision they drive
 
@@ -153,8 +150,8 @@ switched on. So switching from *−4* to *×2* leaves the *−4* revision waitin
 than dealing a card that doesn't belong. Revision never takes more than **half the
 deck** — five carried-over cards need a deck of twenty.
 
-> The *temps moyen / carte* column is **not** the average on the recap screen. The
-> recap averages the time spent thinking on each card; this column divides the
+> The *average time per card* column is **not** the average on the recap screen.
+> The recap averages the time spent thinking on each card; this column divides the
 > whole session — answer pauses and the reinforcement round included — by the card
 > count, so it always matches the two columns beside it.
 
@@ -164,8 +161,8 @@ deck** — five carried-over cards need a deck of twenty.
 |---|---|
 | Number ranges | `RANGES` in `main.py`: addition and subtraction use operands **0–20** (never negative); multiplication and division use factors **0–10** (division always divides evenly) |
 | Number words | generated from `num2words`, except Chinese, Hindi, Gujarati, Georgian, Kyrgyz and Uzbek — written out in `_TABLE_NUMBERS` (`voice.py`) |
-| Language | `LANG = "fr"` or `"en"` in `main.py`; the spoken voice, the spoken phrases and the number parser all follow it |
-| Remembered choices | `prefs.json` (dictation, theme, voice) |
+| Language | chosen in the app (*App language* on the settings screen, or the chip in the top-right corner) and remembered in `prefs.json`; `DEFAULT_LANG` in `main.py` only decides what an install starts on |
+| Remembered choices | `prefs.json` — language, dictation, theme, number selection |
 | Results folder | `ALMATHUS_RESULTS_DIR` |
 
 ## 🎙️ Voice
@@ -175,7 +172,7 @@ when its dependencies are missing. The keypad always works.
 
 ### Speech out
 
-One voice on every OS: **Piper**, one model per language (~60 MB), downloaded at
+One voice on every OS: **Piper**, one model per language (63–128 MB), downloaded at
 setup. The game never imports it — it starts `sidecar/piper_sidecar.py` and
 exchanges text and PCM over stdin/stdout, which keeps the GPL engine out of the MIT
 app. Source runs need `--extra sidecar`; packaged builds ship a frozen helper, and
@@ -189,7 +186,8 @@ app. Source runs need `--extra sidecar`; packaged builds ship a frozen helper, a
   language's adult voices, women first — English gets Samantha, not a 1994
   MacinTalk novelty voice.
 - `ALMATHUS_TTS_VOICE` picks another voice (a name for the OS backends, an `.onnx`
-  path for Piper); `ALMATHUS_TTS_BACKEND=say|espeak|piper` forces a backend.
+  path for Piper); `ALMATHUS_TTS_BACKEND=say|espeak|pyttsx3|piper` forces
+  one (`sidecar` is accepted for `piper`, `auto` is the default).
 
 **French numbers are said the way a teacher says them.** Conversation drops the
 final consonant of *six*, *huit* and *dix* and reads *plus* as /ply/, which is
@@ -234,7 +232,8 @@ Every stage can only ever say *not an answer*, and then the card stays up.
 **Nothing takes a card off the screen but an answer.**
 
 0. **Listen to the room.** A few hundred milliseconds after the app opens, it
-   opens the mic for ~2s and measures the noise, then closes it — on its own
+   opens the mic for `ALMATHUS_VOICE_CALIB_SECS` (1.5s by default) and measures
+   the noise, then closes it — on its own
    thread, nothing shown. It repeats at the start of a game, and stays current
    between answers from the silence either side of them. Where you play changes
    what a spoken answer looks like: a bedroom reads near nothing, a terrace with a
@@ -279,7 +278,7 @@ Every stage can only ever say *not an answer*, and then the card stays up.
 ### Models and languages
 
 The language picker on first run downloads only that language's Vosk model
-(30–160 MB) into a per-user folder: `~/Library/Application Support/Almathus/models`
+(32–304 MB) into a per-user folder: `~/Library/Application Support/Almathus/models`
 on macOS, `%LOCALAPPDATA%\Almathus\models` on Windows,
 `~/.local/share/almathus/models` on Linux. Switch any time from settings or the
 chip in the corner; a downloaded model is reused. `ALMATHUS_VOSK_MODEL=/path`
@@ -356,6 +355,13 @@ All optional, all with measured defaults:
 | `ALMATHUS_VOICE_DENOISE` | `auto` | `1` always subtract the room, `0` never, `auto` only when there is noise to subtract |
 | `ALMATHUS_VOICE_DENOISE_ALPHA` | `1.5` | how hard to subtract it. Higher removes more noise and risks warbling artifacts |
 
+The rest of `voice.py`'s knobs are for a room that defeats all of the above and
+are best left alone: `ALMATHUS_VOICE_NACF` (`0.40`), `ALMATHUS_VOICE_ONSET_OVER_ROOM`
+(`2.5`), `ALMATHUS_VOICE_ONSET_FLOOR` and `ALMATHUS_VOICE_OFFSET_FLOOR` (`20`),
+`ALMATHUS_VOICE_MIN_LEVEL_BLIND` (`120`), `ALMATHUS_VOICE_DENOISE_FLOOR` (`0.12`)
+and `ALMATHUS_VOICE_DENOISE_MIN_ROOM` (`15`). Each carries the measurement it came
+from in the comment beside it.
+
 ### Enabling it
 
 ```bash
@@ -367,7 +373,7 @@ uv sync --extra voice --extra sidecar --group dev
 ```
 
 First run asks for a language and downloads its Vosk model plus its Piper voice
-(~60 MB; 109 MB for Ukrainian, 122 MB for Kazakh). **macOS needs microphone
+(63–128 MB; 114 MB for Ukrainian, 128 MB for Kazakh). **macOS needs microphone
 permission** for your terminal app — *System Settings → Privacy & Security →
 Microphone*; if capture is silent, the card shows a permission hint.
 
@@ -384,8 +390,8 @@ ALMATHUS_VOICE_DEBUG=1 uv run almathus
 You get capture setup (rate, block size, which detector), why a recording ended,
 the raw Vosk alternatives with the parsed number and elapsed ms, **why an utterance
 was refused**, and model load failures that are otherwise swallowed. Each capture
-is copied to `/tmp/almathus_capture.wav`, so you can hear what the recognizer
-heard. Nothing outside `voice.py` reads the variable.
+is copied to `almathus_capture.wav` in the system temp folder (`/tmp` on Linux,
+`/var/folders/…` on macOS), so you can hear what the recognizer heard. Nothing outside `voice.py` reads the variable.
 
 ### Tests
 
@@ -424,7 +430,8 @@ openings of a card.
 
 ## Roadmap
 
-- Language toggle on the settings screen.
-- Per-operation breakdown on the progress screen, from `stats/*.json` — which
-  facts are still slow, not just the session total.
-- VAD thresholds and timeouts in `voice.py`, if a room is noisy.
+- Per-operation breakdown on the progress screen, from `stats/*.json` (written
+  today, read by nothing) — which facts are still slow, not just the session
+  total.
+- Real-microphone verification for the languages marked 🔊, starting with the six
+  hand-written tables.

@@ -2921,7 +2921,12 @@ class Almathus(tk.Tk):
         # of guessed at.
         self._beat = time.monotonic()
         self._modal = False  # a native dialog is open: the loop is meant to wait
+        self._fit_job = None  # pending "match the type to the real window" timer
         self._pump()
+        # The type is settled again whenever the window settles: a tiling
+        # window manager can give it a smaller frame than the display, and a
+        # page laid out for the display then overflows.
+        self.bind("<Configure>", self._schedule_fit_type, add="+")
 
         # The header band (`_header_band`) is measured from the type, so
         # `_scale_fonts` has already set it before the top bar places itself:
@@ -3070,25 +3075,59 @@ class Almathus(tk.Tk):
         self._scale_fonts()
 
     def _page_scale(self) -> float:
-        """The share of the design size the display this window opened on gets.
+        """The share of the design size this window actually gets.
 
         The menu was drawn for a 1440x900 window. Both dimensions matter: a
-        short display cannot hold the column and a narrow one cannot hold the
+        short window cannot hold the column and a narrow one cannot hold the
         tiles. Capped at 1.0 so a big screen keeps the design size rather than
         stretching it, and floored so the type stays readable — past the floor
         the page scrolls instead of shrinking further.
 
-        Deliberately *not* a function of the window's current size: dragging an
-        edge reflows the page, it does not resize the text. Re-deciding the type
-        from the window on every `<Configure>` is what made a drag explode and
-        collapse the whole UI between the design size and the floor, several
-        times a second.
+        Measured from the window, not from the display: `wm_maxsize` answers
+        what the window *could* be, and a tiling window manager hands back a
+        smaller frame than that (826 px of content on a 900 px screen here). The
+        page then laid itself out for a window 40 px taller than the one it had,
+        and the settings column overflowed into a scrollbar on a desktop with
+        room to spare. Before the window is mapped there is no size to measure,
+        so the display stands in and `_fit_type` corrects it once it is.
 
-        Quantized to 1/40th, as a font change re-lays out every label there is.
+        Quantized downwards to 1/40th: a font change re-lays out every label
+        there is, and rounding up is how a page that just fits ends up 4 px too
+        tall. The caller debounces it, so a drag reflows the page continuously
+        while the type moves at most one step per settle.
         """
-        w, h = self.winfo_screenwidth(), self._usable_height()
-        scale = min(w / PAGE_W, h / PAGE_H)
-        return round(max(SCALE_MIN, min(1.0, scale)) * 40) / 40
+        w, h = self.winfo_width(), self.winfo_height()
+        if w <= 1 or h <= 1:  # not mapped yet: the display is all we know
+            w, h = self.winfo_screenwidth(), self._usable_height()
+        scale = max(SCALE_MIN, min(1.0, w / PAGE_W, h / PAGE_H))
+        return math.floor(scale * 40) / 40
+
+    def _schedule_fit_type(self, event=None) -> None:
+        """Re-fit the type shortly after the window stops changing size.
+
+        Only the window's own Configure counts: every child widget carries the
+        window in its bindtags, so their resizes arrive here too. Debounced so a
+        drag reflows the page live and the type moves once, when it settles.
+        """
+        if event is not None and event.widget is not self:
+            return
+        if self._fit_job is not None:
+            with contextlib.suppress(tk.TclError):
+                self.after_cancel(self._fit_job)
+        self._fit_job = self.after(250, self._apply_fit_type)
+
+    def _apply_fit_type(self) -> None:
+        self._fit_job = None
+        if self._stopping or not self.winfo_exists():
+            return
+        scale = self._page_scale()
+        if scale != self._type_scale:
+            self._scale_fonts(scale)
+            # The settings column's height is measured from its widgets, and
+            # those have just changed size: let it re-read them.
+            fit = getattr(self, "_last_fit_scrolled", None)
+            if callable(fit):
+                fit()
 
     def _scale_fonts(self, scale: float | None = None) -> None:
         """Resize every named font for the display.
@@ -3144,6 +3183,7 @@ class Almathus(tk.Tk):
         self.sfx.stop()
 
     def _clear(self):
+        self._last_fit_scrolled = None  # the settings screen is being taken down
         if self._tick_job:
             self.after_cancel(self._tick_job)
             self._tick_job = None
@@ -3311,6 +3351,10 @@ class Almathus(tk.Tk):
             if not need_bar and canvas.yview()[0] != 0.0:
                 canvas.yview_moveto(0)
             scrollbar.set(*canvas.yview())
+
+        # A type change re-sizes every label, so the column's height has to be
+        # measured again: `_apply_fit_type` calls this back.
+        self._last_fit_scrolled = fit_scrolled
 
         # One packed column, top to bottom. Never .place() the content here: a
         # placed frame is not part of the packing flow, so it silently lands on

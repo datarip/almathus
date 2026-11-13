@@ -163,6 +163,7 @@ deck** — five carried-over cards need a deck of twenty.
 | What | Where |
 |---|---|
 | Number ranges | `RANGES` in `main.py`: addition and subtraction use operands **0–20** (never negative); multiplication and division use factors **0–10** (division always divides evenly) |
+| Number words | generated from `num2words`, except Chinese, Hindi, Gujarati, Georgian, Kyrgyz and Uzbek — written out in `_TABLE_NUMBERS` (`voice.py`) |
 | Language | `LANG = "fr"` or `"en"` in `main.py`; the spoken voice, the spoken phrases and the number parser all follow it |
 | Remembered choices | `prefs.json` (dictation, theme, voice) |
 | Results folder | `ALMATHUS_RESULTS_DIR` |
@@ -289,22 +290,22 @@ bypasses the store, `ALMATHUS_MODELS_DIR` moves it.
 | العربية | Arabic | `vosk-model-small-ar-0.3` | 104 MB | 🔊 Voice |
 | العربية (تونس) | Arabic (Tunisian) | `vosk-model-small-ar-tn-0.1-linto` | 166 MB | 🔊 Voice |
 | Català | Catalan | `vosk-model-small-ca-0.4` | 43 MB | 🔊 Voice |
-| 中文 | Chinese | `vosk-model-small-cn-0.22` | 44 MB | ⌨️ Keypad only |
+| 中文 | Chinese | `vosk-model-small-cn-0.22` | 44 MB | 🔊 Voice |
 | Čeština | Czech | `vosk-model-small-cs-0.4-rhasspy` | 46 MB | 🔊 Voice |
 | Nederlands | Dutch | `vosk-model-small-nl-0.22` | 40 MB | 🔊 Voice |
 | Esperanto | Esperanto | `vosk-model-small-eo-0.42` | 44 MB | 🔊 Voice |
 | فارسی | Farsi | `vosk-model-small-fa-0.42` | 53 MB | 🔊 Voice |
 | Français | French | `vosk-model-small-fr-0.22` | 42 MB | ✅ Tested |
-| ქართული | Georgian | `vosk-model-small-ka-0.42` | 46 MB | ⌨️ Keypad only |
+| ქართული | Georgian | `vosk-model-small-ka-0.42` | 46 MB | 🔊 Voice |
 | Deutsch | German | `vosk-model-small-de-0.15` | 46 MB | 🔊 Voice |
-| ગુજરાતી | Gujarati | `vosk-model-small-gu-0.42` | 108 MB | ⌨️ Keypad only |
-| हिन्दी | Hindi | `vosk-model-small-hi-0.22` | 44 MB | ⌨️ Keypad only |
+| ગુજરાતી | Gujarati | `vosk-model-small-gu-0.42` | 108 MB | 🔊 Voice |
+| हिन्दी | Hindi | `vosk-model-small-hi-0.22` | 44 MB | 🔊 Voice |
 | English (India) | Indian English | `vosk-model-small-en-in-0.4` | 38 MB | ✅ Tested |
 | Italiano | Italian | `vosk-model-small-it-0.22` | 50 MB | 🔊 Voice |
 | 日本語 | Japanese | `vosk-model-small-ja-0.22` | 50 MB | 🔊 Voice |
 | Қазақша | Kazakh | `vosk-model-small-kz-0.42` | 60 MB | 🔊 Voice |
 | 한국어 | Korean | `vosk-model-small-ko-0.22` | 87 MB | 🔊 Voice |
-| Кыргызча | Kyrgyz | `vosk-model-small-ky-0.42` | 51 MB | ⌨️ Keypad only |
+| Кыргызча | Kyrgyz | `vosk-model-small-ky-0.42` | 51 MB | 🔊 Voice |
 | Polski | Polish | `vosk-model-small-pl-0.22` | 53 MB | 🔊 Voice |
 | Português | Portuguese | `vosk-model-small-pt-0.3` | 32 MB | 🔊 Voice |
 | Русский | Russian | `vosk-model-small-ru-0.22` | 46 MB | 🔊 Voice |
@@ -316,18 +317,20 @@ bypasses the store, `ALMATHUS_MODELS_DIR` moves it.
 | English (UK) | UK English | `vosk-model-small-en-gb-0.15` | 43 MB | ✅ Tested |
 | Українська | Ukrainian | `vosk-model-small-uk-v3-small` | 144 MB | 🔊 Voice |
 | English (US) | US English | `vosk-model-small-en-us-0.15` | 41 MB | ✅ Tested |
-| Oʻzbekcha | Uzbek | `vosk-model-small-uz-0.22` | 51 MB | ⌨️ Keypad only |
+| Oʻzbekcha | Uzbek | `vosk-model-small-uz-0.22` | 51 MB | 🔊 Voice |
 | Tiếng Việt | Vietnamese | `vosk-model-small-vn-0.4` | 34 MB | 🔊 Voice |
 
-The registry (`languages.py`) lists 32 Vosk languages. Five have no Piper model
-(Esperanto, Gujarati, Kyrgyz, Tajik, Uzbek) and six have no number spellings in
-`num2words` (Hindi, Gujarati, Chinese, Georgian, Kyrgyz, Uzbek), so those run
-keypad-only for answering.
+The registry (`languages.py`) lists 32 Vosk languages, and every one of them
+answers by voice. Thirty get their number words from `num2words`; the six it
+cannot spell — Chinese, Hindi, Gujarati, Georgian, Kyrgyz and Uzbek — are written
+out in `voice.py` (`_TABLE_NUMBERS`), which feeds both the Vosk grammar and the
+strict parser. Five languages have no Piper model (Esperanto, Gujarati, Kyrgyz,
+Tajik, Uzbek), so *speaking* falls back to the OS voice there.
 
 **Status.** ✅ **Tested** — French and English (US/UK/India) end to end on a real
-microphone. 🔊 **Voice** — number words are generated automatically and it *should*
-work, but nobody has tried it. ⌨️ **Keypad only** — no number words, so voice
-answering stays off. Labels, month names, the operator word ("7 fois 4", "7 times
+microphone. 🔊 **Voice** — the words are there and the grammar is built, but
+nobody has tried it on a real mic yet; the hand-written tables are the least
+proven of the lot. Labels, month names, the operator word ("7 fois 4", "7 times
 4") and the recap sentence are translated for all 32 languages; a missing label
 falls back to English, and the PDF prints English where its built-in Latin font
 cannot draw the script.

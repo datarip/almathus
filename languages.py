@@ -33,9 +33,9 @@ _BASE_URL = "https://alphacephei.com/vosk/models/"
 _APP_DIR = "Almathus"
 
 # How each language is spelled out by num2words, where the library can do it.
-# Two names differ from ours (en-in -> en_IN; Chinese has no converter). A
-# language absent here runs keypad-only for voice, which is the documented
-# degradation for the six num2words cannot spell: hi, gu, cn, ka, ky, uz.
+# Two names differ from ours (en-in -> en_IN; Chinese has no converter). The six
+# num2words cannot spell (hi, gu, cn, ka, ky, uz) have their 0..100 words written
+# out in voice._TABLE_NUMBERS instead, so they answer by voice like the rest.
 _NUM2WORDS: dict[str, str] = {
     "fr": "fr",
     "en-us": "en",

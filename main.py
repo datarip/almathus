@@ -2921,12 +2921,7 @@ class Almathus(tk.Tk):
         # of guessed at.
         self._beat = time.monotonic()
         self._modal = False  # a native dialog is open: the loop is meant to wait
-        self._fit_job = None  # pending "match the type to the real window" timer
         self._pump()
-        # The type is settled again whenever the window settles: a tiling
-        # window manager can give it a smaller frame than the display, and a
-        # page laid out for the display then overflows.
-        self.bind("<Configure>", self._schedule_fit_type, add="+")
 
         # The header band (`_header_band`) is measured from the type, so
         # `_scale_fonts` has already set it before the top bar places itself:
@@ -2950,6 +2945,15 @@ class Almathus(tk.Tk):
 
         self._install_exit_handlers()
         self.show_settings()
+        # The window has no frame yet, so the type was sized from the display.
+        # Settle it against the frame the window manager hands back: see
+        # `_settle_type`. Bounded to the first seconds, so a later resize never
+        # resizes the type.
+        self._settle_job = None
+        self._settled_size = (0, 0)
+        self._settle_deadline = time.monotonic() + 4.0
+        self.bind("<Configure>", self._schedule_settle, add="+")
+        self._schedule_settle()
         # ...and once the menu is up, listen to the room. Deliberately after the
         # first screen is drawn: it must never be something the child waits for.
         self.after(700, self._calibrate_mic)
@@ -3102,34 +3106,47 @@ class Almathus(tk.Tk):
         scale = max(SCALE_MIN, min(1.0, w / PAGE_W, h / PAGE_H))
         return math.floor(scale * 40) / 40
 
-    def _schedule_fit_type(self, event=None) -> None:
-        """Re-fit the type shortly after the window stops changing size.
+    def _settle_type(self) -> None:
+        """Size the type to the frame the window manager actually gave us.
 
-        Only the window's own Configure counts: every child widget carries the
-        window in its bindtags, so their resizes arrive here too. Debounced so a
-        drag reflows the page live and the type moves once, when it settles.
+        The first pass runs before there is a window, so it can only size the
+        type from the display; a tiling window manager hands back a smaller
+        frame than that, and the settings column laid out for the display
+        overflows into a scrollbar on a desktop with room to spare. This runs
+        again when the frame changes, but only in the first seconds of the
+        window's life: that is when the window manager places it, and after that
+        a resize reflows the page without resizing the type.
+
+        By redrawing the screen, never by patching it: a font change under built
+        widgets leaves every canvas button measured for the old size (one
+        resize pass emptied half the labels), and re-deciding the type from the
+        window on every `<Configure>` is what made a drag collapse the UI.
         """
-        if event is not None and event.widget is not self:
+        self._settle_job = None
+        if self._stopping or time.monotonic() > self._settle_deadline:
             return
-        if self._fit_job is not None:
-            with contextlib.suppress(tk.TclError):
-                self.after_cancel(self._fit_job)
-        self._fit_job = self.after(250, self._apply_fit_type)
-
-    def _apply_fit_type(self) -> None:
-        self._fit_job = None
-        if self._stopping or not self.winfo_exists():
-            return
+        size = (self.winfo_width(), self.winfo_height())
+        if size == self._settled_size:
+            return  # the frame did not move: nothing to settle
+        self._settled_size = size
         scale = self._page_scale()
-        if scale != self._type_scale:
-            self._scale_fonts(scale)
-            # The settings column's height is measured from its widgets, and
-            # those have just changed size: let it re-read them.
-            fit = getattr(self, "_last_fit_scrolled", None)
-            if callable(fit):
-                fit()
+        if scale == self._type_scale:
+            return
+        self._scale_fonts(scale, remeasure=False)
+        self.show_settings()  # nothing else can be on screen this early
 
-    def _scale_fonts(self, scale: float | None = None) -> None:
+    def _schedule_settle(self, event=None) -> None:
+        """Re-check the type when the window itself changes size, once settled."""
+        if event is not None and event.widget is not self:
+            return  # every child carries the window in its bindtags
+        if self._stopping or time.monotonic() > self._settle_deadline:
+            return
+        if self._settle_job is not None:
+            with contextlib.suppress(tk.TclError):
+                self.after_cancel(self._settle_job)
+        self._settle_job = self.after(300, self._settle_type)
+
+    def _scale_fonts(self, scale: float | None = None, remeasure: bool = True) -> None:
         """Resize every named font for the display.
 
         Tk holds its own handle on a named font, so reconfiguring it resizes
@@ -3149,7 +3166,8 @@ class Almathus(tk.Tk):
             font: tkfont.Font = getattr(self, name)
             font.configure(size=max(11, round(size * scale)), weight=weight)
         self._type_scale = scale
-        self._remeasure_buttons()
+        if remeasure:  # a rebuild is cheaper and safer than patching canvases
+            self._remeasure_buttons()
         self._header_band = self._measure_header_band()
         self._refresh_title_icon()
         # The question pill is measured from the type, so it is stale now.
@@ -3183,7 +3201,6 @@ class Almathus(tk.Tk):
         self.sfx.stop()
 
     def _clear(self):
-        self._last_fit_scrolled = None  # the settings screen is being taken down
         if self._tick_job:
             self.after_cancel(self._tick_job)
             self._tick_job = None
@@ -3312,12 +3329,16 @@ class Almathus(tk.Tk):
             # The height is read fresh, not from the cached measurement: the
             # footer can fold onto more rows after the first pass, and a stale
             # height left the new rows outside the scroll region.
+            # Measured from the column, not the holder: a Reingold "measure the
+            # thing you then resize" loop, where the holder's height was set to
+            # the last measurement and read back as the next one. A narrow window
+            # (one wrapped row) therefore left the column permanently taller and
+            # the scrollbar on a page that fits.
             h = holder.winfo_reqheight() or holder_h[0]
             x = (cw - box) // 2
             if (box, x, h) != (last["box"], last["x"], last["h"]):
                 canvas.itemconfigure(window, width=box)
                 canvas.coords(window, (x, 0))
-                canvas.itemconfigure(window, height=h)
                 last["box"], last["x"], last["h"] = box, x, h
             # A page with nothing to scroll gets no scroll region at all. An
             # empty region cannot be scrolled, dragged or bounced — not by a
@@ -3351,10 +3372,6 @@ class Almathus(tk.Tk):
             if not need_bar and canvas.yview()[0] != 0.0:
                 canvas.yview_moveto(0)
             scrollbar.set(*canvas.yview())
-
-        # A type change re-sizes every label, so the column's height has to be
-        # measured again: `_apply_fit_type` calls this back.
-        self._last_fit_scrolled = fit_scrolled
 
         # One packed column, top to bottom. Never .place() the content here: a
         # placed frame is not part of the packing flow, so it silently lands on
@@ -3482,6 +3499,8 @@ class Almathus(tk.Tk):
         footer = tk.Frame(col, bg=BG)
         footer.pack(fill="x", pady=(18, 2))
 
+        settle: dict[str, str | None] = {"job": None}  # the follow-up measurement
+
         def refit(_event=None) -> None:
             """Keep the page box and the scroll region in step with the view.
 
@@ -3499,6 +3518,19 @@ class Almathus(tk.Tk):
                 return
             fit_scrolled()
             holder_h[0] = holder.winfo_reqheight() or holder_h[0]
+            # One more measurement once the burst of Configure events is over:
+            # the last one arrives before the page has its final height, which
+            # left a scroll region on a page that fits (and a missing one on a
+            # page that does not).
+            if settle["job"] is not None:
+                with contextlib.suppress(tk.TclError):
+                    canvas.after_cancel(settle["job"])
+            settle["job"] = canvas.after(80, settle_fit)
+
+        def settle_fit() -> None:
+            settle["job"] = None
+            if canvas.winfo_exists():
+                fit_scrolled()
 
         self._build_voice_toggle(footer)
         self._build_dictation_toggle(footer)

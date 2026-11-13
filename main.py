@@ -590,13 +590,6 @@ def capped_scroll(pixels: float) -> int:
     return step if pixels > 0 else -step
 
 
-def _pad_pair(pad: int | tuple[int, int]) -> tuple[int, int]:
-    """A `pady` from `pack_info()` — one number or two — as (top, bottom)."""
-    if isinstance(pad, tuple):
-        return pad
-    return pad, pad
-
-
 def month_label(ym: tuple[int, int] | None) -> str:
     """A `(year, month)` as a person says it: `Juillet 2026` / `July 2026`.
 
@@ -1138,22 +1131,16 @@ BTN_GAP = 8  # px between an icon and its label
 # ones shrink the box to fit, so it stays responsive rather than fixed.
 CONTENT_MAX = 1400
 
-# How much of the settings page's spacing between rows is kept when the column
-# is too tall for the window: the gaps are scaled by one of these, roomiest
-# first, and the largest that fits wins. The last step is half the air, never
-# none of it — two panels with no gap between them read as one broken panel, so
-# a page that still does not fit at 0.5 scrolls instead of gluing itself shut.
-GAP_SCALES = (1.0, 0.9, 0.8, 0.7, 0.6, 0.5)
-
-# The window the menu was drawn for: its type and its margins are proportional
-# to this. The floor is the smallest share of that design the page will use —
-# below it the page scrolls rather than shrinking further, because the type has
-# to stay readable.
+# The window the menu was drawn for. The type is sized once for the display the
+# app opens on, from this design: a window resize reflows the page and never
+# re-scales its text. The floor keeps the type readable on a small display;
+# below it the page scrolls rather than shrinking further.
 PAGE_W, PAGE_H = 1440, 900
 SCALE_MIN = 0.6
 
 
 _ROUND_CACHE: dict[tuple, tk.PhotoImage] = {}
+_CORNER_CACHE: dict[tuple[int, str, str | None, int, str], tk.PhotoImage] = {}
 
 
 def _hex_rgb(color: str) -> tuple[int, int, int]:
@@ -1209,8 +1196,9 @@ def rounded_photo(
 ) -> tk.PhotoImage:
     """An antialiased rounded rectangle as a Tk image, cached per shape/colour.
 
-    Buttons redraw on every hover and panels on every resize, so the raster is
-    kept: a colour called for again is served from `_ROUND_CACHE`."""
+    For shapes built once and kept — the question pill, the answer field, the
+    window icon — where a single raster is simpler than corner tiles. Anything
+    that changes size while a window is dragged uses `RoundedRect` instead."""
     key = (w, h, radius, fill, border, border_width)
     cached = _ROUND_CACHE.get(key)
     if cached is not None:
@@ -1285,12 +1273,178 @@ def rounded_photo(
     return img
 
 
+def corner_photo(
+    radius: int,
+    fill: str,
+    border: str | None,
+    border_width: int,
+    corner: Literal["nw", "ne", "sw", "se"],
+) -> tk.PhotoImage:
+    """One quarter of a rounded corner, as a small cached raster.
+
+    Panels and buttons change width while a window is dragged, and rebuilding
+    their whole (often near-megapixel) raster each time is what made the drag
+    stutter. Only the corners need antialiasing: the straight edges are exact
+    rectangles, so they are drawn as canvas items and only these radius-sized
+    tiles are rasterized — once per shape and colour, then reused at any size.
+    """
+    r = max(1, radius)
+    bw = max(0, min(border_width, r))
+    key = (r, fill, border, bw, corner)
+    cached = _CORNER_CACHE.get(key)
+    if cached is not None:
+        return cached
+    if len(_CORNER_CACHE) > 1024:
+        _CORNER_CACHE.clear()
+    fill_rgb = _hex_rgb(fill)
+    border_rgb = _hex_rgb(border) if border else fill_rgb
+    ri = max(0, r - bw)
+    px = bytearray(r * r * 4)
+    for y in range(r):
+        for x in range(r):
+            # Fold the corner back onto the top-left quadrant: the rounded edge
+            # depends on the radius there, never on the size of the box.
+            lx = x if corner in ("nw", "sw") else r - 1 - x
+            ly = y if corner in ("nw", "ne") else r - 1 - y
+            a_out = _rrect_alpha(lx, ly, 2 * r, 2 * r, r, 0, 0)
+            if a_out <= 0.0:
+                continue
+            a_in = (
+                _rrect_alpha(lx, ly, 2 * (r - bw), 2 * (r - bw), ri, bw, bw)
+                if bw and ri > 0
+                else (0.0 if bw else a_out)
+            )
+            t = a_in / a_out
+            i = (y * r + x) * 4
+            px[i] = round(fill_rgb[0] * t + border_rgb[0] * (1 - t))
+            px[i + 1] = round(fill_rgb[1] * t + border_rgb[1] * (1 - t))
+            px[i + 2] = round(fill_rgb[2] * t + border_rgb[2] * (1 - t))
+            px[i + 3] = round(a_out * 255)
+    img = tk.PhotoImage(data=base64.b64encode(_png_bytes(r, r, px)), format="png")
+    _CORNER_CACHE[key] = img
+    return img
+
+
+class RoundedRect:
+    """A rounded rectangle painted on a canvas with reusable items.
+
+    The straight parts are ordinary rectangles and the four corners are cached
+    radius-sized tiles. Rebuilding those ten items for every pixel of a drag is
+    measurably slower than moving the ones already there — a canvas restacks
+    and repaints on each create and delete — so they are made once and then
+    only their coordinates (and, on a colour change, their fill) move.
+    """
+
+    def __init__(self, canvas: tk.Canvas, tags: str | tuple[str, ...] = ()) -> None:
+        self.canvas = canvas
+        self.tags = tags
+        self._style: tuple[int, int, bool, str, str | None] | None = None
+        self._size = (0, 0)
+        self._edges: list[int] = []
+        self._fills: list[int] = []
+        self._corners: list[int] = []
+
+    def draw(
+        self,
+        w: int,
+        h: int,
+        radius: int,
+        fill: str,
+        border: str | None = None,
+        border_width: int = 0,
+    ) -> bool:
+        """Fit the shape to `w`×`h`. Returns whether its items were rebuilt."""
+        w, h = max(1, w), max(1, h)
+        r = max(0, min(radius, w // 2, h // 2))
+        bw = max(0, min(border_width, r))
+        has_edge = bool(border and bw)
+        style = (r, bw, has_edge, fill, border if has_edge else None)
+        if style != self._style:
+            self._style = style
+            self._rebuild(w, h, r, bw, fill, border, has_edge)
+            self._size = (w, h)
+            return True
+        if (w, h) != self._size:
+            self._size = (w, h)
+            self._layout(w, h, r, bw)
+        return False
+
+    def _rebuild(
+        self,
+        w: int,
+        h: int,
+        r: int,
+        bw: int,
+        fill: str,
+        border: str | None,
+        has_edge: bool,
+    ) -> None:
+        c = self.canvas
+        for item in self._edges + self._fills + self._corners:
+            c.delete(item)
+        if has_edge:
+            edge = border or ""
+            self._edges = [
+                c.create_rectangle(0, 0, 0, 0, fill=edge, outline="", tags=self.tags)
+                for _ in range(4 if r else 1)
+            ]
+        else:
+            self._edges = []
+        self._fills = [
+            c.create_rectangle(0, 0, 0, 0, fill=fill, outline="", tags=self.tags)
+            for _ in range(2 if r else 1)
+        ]
+        self._corners = []
+        if r:
+            corners: tuple[tuple[Literal["nw", "ne", "sw", "se"], int, int], ...] = (
+                ("nw", 0, 0),
+                ("ne", w - r, 0),
+                ("sw", 0, h - r),
+                ("se", w - r, h - r),
+            )
+            self._corners = [
+                c.create_image(
+                    0,
+                    0,
+                    anchor="nw",
+                    image=corner_photo(r, fill, border, bw, name),
+                    tags=self.tags,
+                )
+                for name, _, _ in corners
+            ]
+        self._layout(w, h, r, bw)
+
+    def _layout(self, w: int, h: int, r: int, bw: int) -> None:
+        c = self.canvas
+        if r == 0:
+            if self._edges:
+                c.coords(self._edges[0], 0, 0, w, h)
+            c.coords(self._fills[0], bw, bw, w - bw, h - bw)
+            return
+        if self._edges:
+            c.coords(self._edges[0], r, 0, w - r, bw)
+            c.coords(self._edges[1], r, h - bw, w - r, h)
+            c.coords(self._edges[2], 0, r, bw, h - r)
+            c.coords(self._edges[3], w - bw, r, w, h - r)
+        # Two fill bands: their union stops at every straight edge, leaving
+        # exactly the four corner squares to the tiles.
+        c.coords(self._fills[0], bw, r, w - bw, h - r)
+        c.coords(self._fills[1], r, bw, w - r, h - r)
+        for item, (x, y) in zip(
+            self._corners,
+            ((0, 0), (w - r, 0), (0, h - r), (w - r, h - r)),
+            strict=True,
+        ):
+            c.coords(item, x, y)
+
+
 class RoundedPanel:
     """A rounded, bordered panel drawn behind an inner frame.
 
-    A Tk frame is square, so the panel is a canvas carrying the rounded raster;
-    the content lives in a frame set *inside* it, far enough from the edges that
-    its own square corners sit over the rounded fill and never show."""
+    A Tk frame is square, so the panel is a canvas with the rounded shape
+    painted as canvas items; the content lives in a frame set *inside* it, far
+    enough from the edges that its own square corners sit over the rounded fill
+    and never show."""
 
     def __init__(
         self,
@@ -1309,53 +1463,67 @@ class RoundedPanel:
         self.canvas = tk.Canvas(parent, bg=page or BG, highlightthickness=0, bd=0)
         self.inner = tk.Frame(self.canvas, bg=self.fill)
         self._win = self.canvas.create_window(pad, pad, window=self.inner, anchor="nw")
-        self._size = (0, 0)
+        self._bg = RoundedRect(self.canvas, "bg")
+        self._canvas_h = 0
         # Tracked from the events rather than re-asked: `winfo_reqheight` inside
         # a `<Configure>` handler forces a fresh layout pass each time, and that
         # is what made dragging a window edge stutter.
         self._inner_h = self.inner.winfo_reqheight()
         self._inner_w = self.inner.winfo_reqwidth()
         self._win_w = 0
+        self._win_x = -1
         self.canvas.bind("<Configure>", self._fit)
         self.inner.bind("<Configure>", self._fit)
 
     def _fit(self, event=None) -> None:
+        if self._inner_w < 2:  # content was added after the panel was built
+            self._inner_w = max(1, self.inner.winfo_reqwidth())
         if event is not None and event.widget is self.inner:
             self._inner_h = event.height
+            # The *requested* width, not the width the item was given: that is
+            # the content's own size, which is what the panel centres. Asked
+            # only when something other than us moved the frame: asking on every
+            # event would force a fresh child layout on each drag step.
+            if event.width != self._win_w:
+                self._inner_w = max(1, self.inner.winfo_reqwidth())
         w = event.width if event is not None and event.widget is self.canvas else None
         if w is None:
             w = self.canvas.winfo_width()
         if w <= 1:
             w = self._inner_w + 2 * self.pad
         h = self._inner_h + 2 * self.pad
-        inner_w = max(1, w - 2 * self.pad)
-        if (w, h) == self._size:
-            return
         # Only touch the canvas height when it moved: setting the same height
         # still re-lays out the whole page, and during a width drag it never does.
-        if h != self._size[1]:
+        if h != self._canvas_h:
             self.canvas.configure(height=h)
-        # Restretch the content only when its width moved — that is what lays
-        # the children out again, so leaving it alone the rest of the time is
-        # what keeps a drag smooth.
-        if inner_w != self._win_w:
-            self.canvas.itemconfigure(self._win, width=inner_w)
-            self._win_w = inner_w
-        self._size = (w, h)
-        self.canvas.coords(self._win, self.pad, self.pad)
-        self._img = rounded_photo(w, h, self.radius, self.fill, self.border, 1)
-        self.canvas.delete("bg")
-        self.canvas.create_image(0, 0, anchor="nw", image=self._img, tags="bg")
-        self.canvas.tag_lower("bg")
+            self._canvas_h = h
+        # The content keeps its natural width and is *centred* in the panel, so
+        # a wider panel moves it and never re-lays it out. Stretching the inner
+        # frame to the panel's width on every drag step reflowed every chip in
+        # it for nothing: they are a centred row, not a stretching one. It only
+        # shrinks when the panel is genuinely too narrow for them.
+        content_w = max(1, min(self._inner_w, w - 2 * self.pad))
+        if content_w != self._win_w:
+            self.canvas.itemconfigure(self._win, width=content_w)
+            self._win_w = content_w
+        x = max(self.pad, (w - content_w) // 2)
+        if x != self._win_x:
+            self.canvas.coords(self._win, x, self.pad)
+            self._win_x = x
+        # Rectangles and cached corner tiles, not a panel-sized raster: a width
+        # drag only moves items, so it stays smooth at any size.
+        if self._bg.draw(w, h, self.radius, self.fill, self.border, 1):
+            self.canvas.tag_lower("bg")
 
 
 class Btn(tk.Canvas):
     """A rounded button, drawn on a canvas.
 
-    A Tk widget has square corners, so the shape is an antialiased raster with
-    the text (and optional icon) painted on top. The `tk.Label`-like surface the game
-    used before is kept — `text`, `bg`, `fg`, `set_colors`, `anchor`, an icon with
-    `compound` — so no caller cares how it is drawn.
+    A Tk widget has square corners, so the shape is painted as canvas items —
+    antialiased corner tiles over exact straight edges — with the text (and
+    optional icon) on top. The `tk.Label`-like surface the game used before is
+    kept — `text`, `bg`, `fg`, `set_colors`, `anchor`, an icon with `compound` —
+    so no caller cares how it is drawn.
 
     `bg` is the button's *fill*; the canvas behind it takes the parent's colour,
     so the corners blend into the page instead of showing a box around them.
@@ -1398,12 +1566,15 @@ class Btn(tk.Canvas):
         self._radius = radius
         self._hover = False
         self._cfg_size: tuple[int, int] | None = None
+        self._text_item: int | None = None
+        self._ink = (0.0, 0.0)
         page = self._parent_bg(parent)
         super().__init__(
             parent, highlightthickness=0, bd=0, bg=page, cursor="hand2", **kw
         )
         self._reqw, self._reqh = self._measure()
         super().configure(width=self._reqw, height=self._reqh)
+        self._bg = RoundedRect(self)
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_press)
@@ -1421,6 +1592,17 @@ class Btn(tk.Canvas):
         if (event.width, event.height) == self._cfg_size:
             return
         self._cfg_size = (event.width, event.height)
+        # A centred label with no icon only has to move: rebuilding the text
+        # item (and asking Tk for its ink box) for every drag step is what made
+        # the operation tiles and the footer switches cost a frame each.
+        if self._text_item is not None and self._image is None:
+            w, h = event.width, event.height
+            if w > 1 and h > 1:
+                fill = self._abg if self._hover else self._fill
+                self._bg.draw(w, h, self._corner(w, h), fill)
+                dx, dy = self._ink
+                self.coords(self._text_item, w / 2 + dx, h / 2 + dy)
+                return
         self._redraw()
 
     # -- compatible, Label-like surface ------------------------------------ #
@@ -1527,35 +1709,63 @@ class Btn(tk.Canvas):
             h = self._reqh
         fill = self._abg if self._hover else self._fill
         fg = self._afg if self._hover else self._fg
-        self.delete("all")
-        self._bg_photo = rounded_photo(w, h, self._corner(w, h), fill)
-        self.create_image(0, 0, anchor="nw", image=self._bg_photo)
+        # The background keeps its items between repaints; only the text and
+        # icon are rebuilt. A button stretched by the window (the operation
+        # tiles, the footer switches) then costs a few coordinate moves per
+        # drag step instead of a fresh raster.
+        self.delete("fg")
+        self._text_item = None
+        self._ink = (0.0, 0.0)
+        self._bg.draw(w, h, self._corner(w, h), fill)
         cy = h / 2
         if self._image is not None:
             iw = self._image.width()
             gap = BTN_GAP if self._text else 0
             content = iw + gap + self._font.measure(self._text)
             x = self._padx if self._anchor == "w" else (w - content) / 2
-            self.create_image(x, cy, image=self._image, anchor="w")
+            self.create_image(x, cy, image=self._image, anchor="w", tags="fg")
             self.create_text(
-                x + iw + gap, cy, text=self._text, font=self._font, fill=fg, anchor="w"
+                x + iw + gap,
+                cy,
+                text=self._text,
+                font=self._font,
+                fill=fg,
+                anchor="w",
+                tags="fg",
             )
         elif self._anchor == "w":
             self.create_text(
-                self._padx, cy, text=self._text, font=self._font, fill=fg, anchor="w"
+                self._padx,
+                cy,
+                text=self._text,
+                font=self._font,
+                fill=fg,
+                anchor="w",
+                tags="fg",
             )
         else:
             item = self.create_text(
-                w / 2, cy, text=self._text, font=self._font, fill=fg, anchor="center"
+                w / 2,
+                cy,
+                text=self._text,
+                font=self._font,
+                fill=fg,
+                anchor="center",
+                tags="fg",
             )
             # Anchor "center" centres the text's *layout* box, which leaves a
             # lone glyph like "+" or "−" a pixel or two off: the em box has more
             # ascent than descent, and the glyph does not fill it. Nudge by the
-            # ink box so the mark the child sees sits dead in the middle.
+            # ink box so the mark the child sees sits dead in the middle. The
+            # nudge is kept, so a resize can move the same item without asking
+            # Tk to measure the ink again.
             box = self.bbox(item)
             if box is not None:
                 x0, y0, x1, y1 = box
-                self.move(item, w / 2 - (x0 + x1) / 2, cy - (y0 + y1) / 2)
+                dx, dy = w / 2 - (x0 + x1) / 2, cy - (y0 + y1) / 2
+                self.move(item, dx, dy)
+                self._ink = (dx, dy)
+            self._text_item = item
 
     # -- interaction -------------------------------------------------------- #
     def _on_enter(self, _e):
@@ -2703,16 +2913,16 @@ class Almathus(tk.Tk):
         # share this module with a torn-down one (the tests do, one window per
         # case), so the cache starts empty rather than handing back a dead image.
         _ROUND_CACHE.clear()
+        _CORNER_CACHE.clear()
         apply_theme(load_theme())  # before any widget reads a color
         self.title(T("title"))
         self.configure(bg=BG)
         self.minsize(720, 640)
         # Set before the first font pass: `_scale_fonts` re-renders the menu's
-        # drawing, and at that point the menu has not been built yet. The fit
-        # cap is read by the font scale, which also runs there.
+        # drawing, and at that point the menu has not been built yet.
         self._title_icon_label: tk.Label | None = None
-        self._fit_cap = 1.0
-        self._fit_room = (0, 0)  # the canvas size that cap was set in
+        self._pinned_size: tuple[int, int] | None = None
+        self._pin_job: str | None = None
         # Maximize to fill the screen as a normal window — NOT macOS' native
         # fullscreen mode (which hides the menu bar and jumps to its own space).
         self._maximize()
@@ -2737,6 +2947,12 @@ class Almathus(tk.Tk):
         user-sized follows it down to its minimum. That is what made the whole
         UI jump on a theme flip. Pinned to the window's own size, the request
         never moves, so the window never does either.
+
+        Applied once the drag pauses, not per pixel: re-sizing the box is a
+        fresh layout of the whole page, and doing it on every `<Configure>` was
+        a measurable share of the cost of dragging an edge. During the drag the
+        window is user-sized, so a request that lags by a few pixels changes
+        nothing on screen.
         """
         if event is not None and event.widget is not self:
             return
@@ -2749,7 +2965,22 @@ class Almathus(tk.Tk):
         w, h = self.winfo_width(), self.winfo_height()
         if w <= 1 or h <= 1:
             return
-        self.container.configure(width=w, height=max(1, h - top))
+        target = (w, max(1, h - top))
+        if target == getattr(self, "_pinned_size", None):
+            return
+        self._pinned_size = target
+        pending = getattr(self, "_pin_job", None)
+        if pending is not None:
+            self.after_cancel(pending)
+        self._pin_job = self.after(120, self._apply_pin)
+
+    def _apply_pin(self) -> None:
+        self._pin_job = None
+        target = getattr(self, "_pinned_size", None)
+        container = getattr(self, "container", None)
+        if target is None or container is None or not container.winfo_exists():
+            return
+        container.configure(width=target[0], height=target[1])
 
     def _usable_height(self) -> int:
         """How tall a window may actually be here — not how tall the screen is.
@@ -2808,12 +3039,6 @@ class Almathus(tk.Tk):
         self._pill_size: tuple[int, int] | None = None  # cached question-pill size
         self._lang_job = None  # the language page's pending download-poll timer
         self._lang_polling = False
-        # The settings page's row gaps: their sizes as built and the share of
-        # them currently on screen. Kept on the window, not captured in a
-        # closure, because the fit is re-decided every time the window resizes.
-        self._gap_basis: list[tuple[tk.Widget, tuple[int, int]]] = []
-        self._gap_scale = 1.0
-        self._fitting = False  # re-entrancy latch for the page fit
 
         # sound effects (a no-op if no command-line player is installed)
         self.sfx = sfx.Sound(SOUNDS_DIR)
@@ -2901,6 +3126,7 @@ class Almathus(tk.Tk):
             "_advance_job",
             "_voice_job",
             "_fanfare_job",
+            "_pin_job",
         ):
             pending = getattr(self, job, None)
             if pending is not None:
@@ -2948,9 +3174,9 @@ class Almathus(tk.Tk):
 
     # -- fonts ------------------------------------------------------------- #
     # The page's type at the size it was drawn for (a 1440x900 window).
-    # `_scale_fonts` applies the window's own scale to these, so the text
-    # follows the window in proportion instead of sitting at whatever the
-    # screen happened to be when the app started.
+    # `_scale_fonts` applies the display's scale to these, once, so the text
+    # fits the screen instead of sitting at whatever size it happened to start
+    # at — and stays put while the window is resized.
     FONT_SPECS: ClassVar[dict[str, tuple[int, Literal["normal", "bold"]]]] = {
         "f_giant": (120, "bold"),
         "f_huge": (90, "bold"),
@@ -2967,9 +3193,9 @@ class Almathus(tk.Tk):
     }
 
     def _make_fonts(self):
-        # Created at the design size and then scaled for this window, rather
+        # Created at the design size and then scaled for the display, rather
         # than created already scaled: `_scale_fonts` needs the same base sizes
-        # to go back to when the window grows again.
+        # to apply a different share of the design later.
         for name, (size, weight) in self.FONT_SPECS.items():
             setattr(
                 self, name, tkfont.Font(family="Helvetica", size=size, weight=weight)
@@ -2978,34 +3204,33 @@ class Almathus(tk.Tk):
         self._scale_fonts()
 
     def _page_scale(self) -> float:
-        """The share of the design size this window gets.
+        """The share of the design size the display this window opened on gets.
 
-        The menu was drawn for a 1440x900 window, and both dimensions matter: a
-        short window cannot hold the column and a narrow one cannot hold the
+        The menu was drawn for a 1440x900 window. Both dimensions matter: a
+        short display cannot hold the column and a narrow one cannot hold the
         tiles. Capped at 1.0 so a big screen keeps the design size rather than
         stretching it, and floored so the type stays readable — past the floor
         the page scrolls instead of shrinking further.
 
-        `_fit_cap` is the other half: a window a little too short for the type
-        its size asks for gives the difference back here, rather than leaving
-        the page to scroll for the sake of it.
+        Deliberately *not* a function of the window's current size: dragging an
+        edge reflows the page, it does not resize the text. Re-deciding the type
+        from the window on every `<Configure>` is what made a drag explode and
+        collapse the whole UI between the design size and the floor, several
+        times a second.
 
-        Quantized to 1/40th: a font change re-lays out every label on the page,
-        and a pixel of drag must not do that.
+        Quantized to 1/40th, as a font change re-lays out every label there is.
         """
-        w, h = self.winfo_width(), self.winfo_height()
-        if w <= 1 or h <= 1:  # not mapped yet: the window will be the screen
-            w, h = self.winfo_screenwidth(), self._usable_height()
-        scale = min(w / PAGE_W, h / PAGE_H, self._fit_cap)
+        w, h = self.winfo_screenwidth(), self._usable_height()
+        scale = min(w / PAGE_W, h / PAGE_H)
         return round(max(SCALE_MIN, min(1.0, scale)) * 40) / 40
 
     def _scale_fonts(self, scale: float | None = None) -> None:
-        """Resize every named font for a window of this size.
+        """Resize every named font for the display.
 
         Tk holds its own handle on a named font, so reconfiguring it resizes
-        every label that uses it: the whole app follows the window without a
-        widget being rebuilt, and nothing is left at the size of the screen the
-        app started on.
+        every label that uses it: the whole app fits the display without a
+        widget being rebuilt. Run once, at startup: the type belongs to the
+        display, not to whatever size the window happens to be.
 
         The header band and the menu's drawing are measured from the type, so
         they are refreshed with it — the wordmark beside the drawing is a label
@@ -3342,67 +3567,23 @@ class Almathus(tk.Tk):
         footer = tk.Frame(col, bg=BG)
         footer.pack(fill="x", pady=(18, 2))
 
-        # The gaps between the rows as built, before any fit scales them. Every
-        # fit is measured from these and never from what is on screen — that is
-        # what makes it reversible: a window made small, then large again, gets
-        # its air back instead of keeping the tight layout the small one asked
-        # for (which left the panels glued together, with no way to recover).
-        self._gap_basis = [
-            (w, _pad_pair(w.pack_info()["pady"])) for w in col.pack_slaves()
-        ]
-        self._gap_basis.append((col, _pad_pair(col.pack_info()["pady"])))
-        self._gap_scale = 1.0
-        # A rebuilt page is new content: whatever type the last one gave back
-        # to fit its own footer does not apply to this one until it is measured.
-        self._fit_cap = 1.0
-        self._fit_room = (0, 0)
-
         def refit(_event=None) -> None:
-            """Re-decide the page fit: the gaps between the rows, and how much
-            of the column the view can show.
+            """Keep the page box and the scroll region in step with the view.
 
-            Run on every canvas resize and after the footer re-lays itself, not
-            once at build time: the room the page has is not a constant, and a
-            decision taken for one window size is wrong for the next.
+            A resize reflows the page and nothing else: the type is sized for
+            the display when the app starts, so dragging an edge stretches the
+            rows and slides the box instead of re-scaling every label and
+            re-deciding the spacing. A page too tall for the view scrolls.
 
-            The footer can also fold onto more rows *after* the first
-            measurement, when the window maps and the real width is known;
-            without this the region kept the old, shorter height and the new
-            rows could not be scrolled to.
-
-            Guarded against re-entry: the layout passes it sets off deliver more
-            <Configure> events than it was called for, and each would otherwise
-            start the whole measurement again."""
-            if self._fitting or not canvas.winfo_exists():
+            The footer can fold onto more rows *after* the first measurement,
+            when the window maps and the real width is known; without this the
+            region kept the old, shorter height and the new rows could not be
+            scrolled to.
+            """
+            if not canvas.winfo_exists():
                 return
-            self._fitting = True
-            try:
-                # The page box has to match the view before anything is
-                # measured: the footer folds by width, and a fit decided on the
-                # rows of the old width is decided against a page that no
-                # longer exists.
-                fit_scrolled()
-                # A cap is only good for the room it was decided in: the page
-                # gains or loses a footer row just by being resized, so the
-                # decision is remade from the design size for every new box.
-                room = (canvas.winfo_width(), canvas.winfo_height())
-                if room != self._fit_room:
-                    self._fit_room = room
-                    self._fit_cap = 1.0
-                self._scale_fonts()
-                # Air first, then type: the page gives back the gaps down to
-                # their floor, and only a page still too tall at that floor
-                # trades text size for the room. One pass can undo the other's
-                # arithmetic (smaller text leaves room for wider gaps), so it
-                # repeats until it settles — two passes in practice.
-                for _ in range(3):
-                    need = self._fit_column(col, canvas)
-                    if not self._shrink_type(canvas, need):
-                        break
-                holder_h[0] = holder.winfo_reqheight()
-                fit_scrolled()
-            finally:
-                self._fitting = False
+            fit_scrolled()
+            holder_h[0] = holder.winfo_reqheight() or holder_h[0]
 
         self._build_voice_toggle(footer)
         self._build_dictation_toggle(footer)
@@ -3415,8 +3596,7 @@ class Almathus(tk.Tk):
         # gaps, even over the fixed title — reaches the canvas.
         self._bind_wheel_tree(f, scroll_by)
         # Bound here, where both halves of the fit are ready to answer: the
-        # canvas' size is what decides them, and it changes more than once per
-        # drag, so this cannot be a one-shot decision.
+        # canvas' size decides the page box, and it changes on every drag step.
         canvas.bind("<Configure>", refit)
         refit()  # measure now, not only on the first <Configure>
 
@@ -3431,115 +3611,6 @@ class Almathus(tk.Tk):
         bind_wheel(widget, scroll)
         for child in widget.winfo_children():
             self._bind_wheel_tree(child, scroll)
-
-    def _fit_column(self, col, canvas) -> int:
-        """Give up the gaps between the panels rather than the bottom of the column.
-
-        A packed column taller than its window is not shrunk to fit, it is cut
-        off — and what goes is whatever is packed last, which here is the row of
-        toggles. Nothing marks the loss: on a 900 px display the voice and
-        dictation switches were simply not on the screen, on exactly the size of
-        laptop most likely to be running this.
-
-        How tall the column comes out cannot be predicted — the labels are
-        translated, the fonts are scaled to the display, and the footer may have
-        folded onto a second row — so it is measured, and the whitespace between
-        the panels is handed back a step at a time until the whole of it fits.
-        The panels themselves are never touched; it is the air between them that
-        goes, and the screen is merely tighter rather than missing a row.
-
-        The height to fit is the *canvas*', not the window's: the fixed title
-        and the top bar sit above the canvas, so measuring against the whole
-        window left the column a title too tall and the page scrolled even in
-        full screen.
-
-        The gaps are always scaled from the sizes recorded when the page was
-        built, and this runs again on every resize, so the fit is a property of
-        the window on screen rather than of the window the page happened to be
-        built in. Scaling whatever is on screen instead compounded with each
-        pass, and left the panels glued together for good once a small window
-        had squeezed them: making the window large again could not undo it.
-
-        The steps are *measured in arithmetic, not by laying the page out*: the
-        rows' padding is part of the column's request, so subtracting the
-        padding currently applied leaves a content height that no scale changes.
-        Laying the page out costs tens of milliseconds here, and trying each
-        step with a real layout made a resize stutter.
-
-        Returns the height the page ended up with, which is what tells the
-        caller whether it still needs to trade type for room.
-        """
-        if not canvas.winfo_exists() or not self._gap_basis:
-            return 0
-        self.update_idletasks()
-        avail = canvas.winfo_height()
-        if avail <= 1:
-            # Not laid out yet: the first <Configure> will decide, and deciding
-            # now would be deciding against a canvas that has no size at all —
-            # the fallback screen height is twice the room a rebuilt page ends
-            # up with, so every step looks like it fits and nothing is given
-            # back when the real size arrives.
-            return 0
-
-        basis = self._gap_basis
-        k = self._gap_scale
-        # The column's own padding is not in its request (the page around it
-        # adds that), so it is left out here and counted again in `needed`.
-        applied = sum(
-            round(top * k) + round(bottom * k) for _, (top, bottom) in basis[:-1]
-        )
-        content = col.winfo_reqheight() - applied
-
-        def needed(scale: float) -> int:
-            return content + sum(
-                round(top * scale) + round(bottom * scale) for _, (top, bottom) in basis
-            )
-
-        # Roomiest first: the largest share of the gaps that still fits. The
-        # column only grows with the scale, so the first step that fits is the
-        # best one, and asking is arithmetic — no layout pass is spent on a
-        # step the page does not take. That is also what makes the fit
-        # reversible: nothing is remembered about why the gaps went, so a
-        # window with room again simply gets the roomiest layout back.
-        k = GAP_SCALES[-1]
-        for step in GAP_SCALES:
-            if needed(step) <= avail:
-                k = step
-                break
-        if k != self._gap_scale:
-            for w, (top, bottom) in basis:
-                w.pack_configure(pady=(round(top * k), round(bottom * k)))
-            self._gap_scale = k
-            self.update_idletasks()
-        return needed(k)
-
-    def _shrink_type(self, canvas, need: int) -> bool:
-        """Trade type size for room when even the tightest gaps are too tall.
-
-        The gaps stop at half their air, so past that the only thing left to
-        give is the size of the text — a step at a time, never below the floor
-        `_page_scale` keeps. Without this, a window a few pixels short of the
-        page sat there scrollable by a few pixels, with every part visible and
-        nothing to say what the scroll was for.
-
-        The saving is remembered in `_fit_cap` while the page keeps the same
-        room: `_page_scale` alone would hand the type straight back on the next
-        pass, and the page would flicker between the two.
-
-        Returns whether the type moved, so the caller can fit the gaps again.
-        """
-        avail = canvas.winfo_height()
-        if avail <= 1 or need <= avail or self._type_scale <= SCALE_MIN:
-            return False
-        # The page is close to linear in the type size, so the ratio of the room
-        # to the need is the right step to take. Rounded down: rounding a step
-        # back up would leave the page exactly as tall as it was.
-        cap = math.floor(self._type_scale * avail / need * 40) / 40
-        if cap >= self._fit_cap:
-            return False
-        self._fit_cap = max(SCALE_MIN, cap)
-        self._scale_fonts()
-        return True
 
     def _layout_footer(self, footer, on_relayout=None) -> None:
         """Lay the switches out in as many columns as their labels fit.
@@ -3570,13 +3641,23 @@ class Almathus(tk.Tk):
             return
         pad = 10
         laid: list[int] = [0]  # the per-row count currently on screen
+        last_avail = [-1]
 
         def relayout(_event=None) -> None:
             if not footer.winfo_exists():
                 return
-            avail = footer.winfo_width()
+            # The column's width, not the footer's: unpacking the switches to
+            # re-grid them briefly collapses the footer onto its own request,
+            # and reading it back here would decide the layout from a width
+            # that exists only mid-rebuild — which re-entered this function
+            # until the page had been laid out twenty times for one drag step.
+            parent = footer.master
+            avail = parent.winfo_width() if parent is not None else 1
             if avail <= 1:  # not mapped yet; the page box is the best estimate
                 avail = self._page_room()
+            if avail == last_avail[0]:  # nothing to decide for this width
+                return
+            last_avail[0] = avail
             widest = max(b.winfo_reqwidth() for b in buttons) + 2 * pad
             # Every switch asks for the same width. The grid stretches them to
             # its cells anyway, but Tk only levels its uniform columns when
@@ -3620,8 +3701,11 @@ class Almathus(tk.Tk):
                     pady=6,
                 )
             if on_relayout is not None:
-                self.update_idletasks()
-                on_relayout()
+                # Deferred, not called here: measuring the new rows now would
+                # need a nested `update_idletasks` from inside the Configure
+                # handler that started this, and the layout it forces delivers
+                # more Configure events back into this same closure.
+                footer.after_idle(on_relayout)
 
         # Re-decide when the window is resized, not only at build time.
         footer.bind("<Configure>", relayout, add="+")

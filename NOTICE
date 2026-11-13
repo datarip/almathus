@@ -15,5 +15,6 @@ part: `sidecar/` is excluded from it. The sidecar is distributed from this
 repository or as a frozen helper beside a packaged app, never inside the game's
 package.
 
-Voice models downloaded at setup and the audio samples in `assets/sounds/`
-keep their own licences; see `docs/shipping.md` and `assets/README.md`.
+Voice models downloaded at setup and the third-party pictures and audio under
+`assets/` — the flags, the app icon, the four sound samples — keep their own
+licences; see `docs/shipping.md` and `assets/README.md`.

@@ -6,4 +6,4 @@ rewrites this file from the git tag before freezing; the committed value is the
 version of the working tree.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

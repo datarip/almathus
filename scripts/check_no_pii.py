@@ -6,24 +6,25 @@ Two modes, both exit non-zero on the first problem found:
     python3 scripts/check_no_pii.py --history    # every blob and message in every ref
     python3 scripts/check_no_pii.py --worktree   # the files git tracks right now
 
-The point is not the current tree — that was cleaned by hand once and would stay
-clean for a while on its own. The point is that a commit, a paste or a careless
-`git add -A` cannot quietly put the child's session log, a home path or a token
-back into a public repository, and that the ignore rules that keep them out
-cannot be deleted without CI noticing.
+This file carries only patterns that are the same for every checkout: home
+paths, addresses, credentials. Anything specific to one machine or one person
+belongs in a private denylist, never here:
+
+    ALMATHUS_PII_PATTERNS   newline-separated regexes, extra things to refuse
+    ALMATHUS_PII_IGNORE     newline-separated paths that must stay ignored
+
+Both are unset in CI. Run with them set on a machine that holds the private
+material, and both scans cover it without the repository ever naming it.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
-
-# This file is the one place the patterns are written down, so it matches
-# itself. It is never a source of data.
-SELF = "scripts/check_no_pii.py"
 
 #: (regex, human name). Every pattern is valid both as a POSIX extended regex
 #: for `git grep` and as a Python regex, so the two scans cannot drift apart.
@@ -31,48 +32,47 @@ SELF = "scripts/check_no_pii.py"
 PATTERNS: list[tuple[str, str]] = [
     (r"/(Users|home)/[A-Za-z0-9._-]+", "absolute home path"),
     (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "email address"),
-    (
-        r"(^|[^A-Za-z])(family|family|family|family|family)([^A-Za-z]|$)",
-        "family detail",
-    ),
-    (r"example-account", "local account name"),
     (r"AKIA[0-9A-Z]{16}", "AWS access key"),
     (r"gh[pousr]_[A-Za-z0-9]{20,}", "GitHub token"),
     (r"-----BEGIN [A-Z ]*PRIVATE KEY-----", "private key"),
     (r"sk-[A-Za-z0-9]{20,}", "API key"),
 ]
 
-#: Addresses that are meant to be there. Dependabot's own commit messages carry
-#: support@github.com, and every bot identity ends in the GitHub privacy domain.
-#: A personal address at any other domain still fails.
+#: Addresses that are meant to be there. Bot identities and GitHub's own mail
+#: all end in these; a personal address at any other domain still fails.
 EMAIL_OK_DOMAINS = ("@users.noreply.github.com", "@github.com")
 
-#: Paths that must never be tracked. Kept in one list because a stray
-#: `.gitignore` edit is exactly how they would come back.
+#: Local runtime data. These are named in the README as the folders the game
+#: writes to, so listing them here gives nothing away.
 IGNORED = (
     "results/results.csv",
     "stats/20260101-000000-addition.json",
-    "models/vosk-model-small-fr-0.22/x",
+    "models/any-model/x",
     "prefs.json",
-    ".claude/settings.local.json",
-    "docs/shipping.md",
-    "screenshots/boy-1-welcome.png",
-    "assets/README.md",
-    "AGENTS.md",
-    "archived/assets/old/mario.svg",
 )
 
-#: Paths that must stay tracked: the published licence record and the two
-#: screenshots the README shows. If one of these becomes ignored, the public
-#: repo silently loses an attribution or an image.
+#: The published licence record and the art the README shows. If one of these
+#: becomes ignored, the public repo silently loses an attribution or an image.
 NOT_IGNORED = (
-    "assets/screenshots/boy-mode.png",
-    "assets/screenshots/girly-mode.png",
-    "assets/sounds/CREDITS.md",
-    "assets/flags/README.md",
     "LICENSE",
     "NOTICE",
+    "assets/sounds/CREDITS.md",
+    "assets/flags/README.md",
 )
+
+
+def extra_patterns() -> list[tuple[str, str]]:
+    raw = os.environ.get("ALMATHUS_PII_PATTERNS", "")
+    return [(line, "private denylist") for line in raw.splitlines() if line.strip()]
+
+
+def all_patterns() -> list[tuple[str, str]]:
+    return PATTERNS + extra_patterns()
+
+
+def extra_ignored() -> tuple[str, ...]:
+    raw = os.environ.get("ALMATHUS_PII_IGNORE", "")
+    return tuple(line.strip() for line in raw.splitlines() if line.strip())
 
 
 def run(*args: str) -> subprocess.CompletedProcess[str]:
@@ -80,9 +80,9 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, capture_output=True, text=True, check=False)  # noqa: S603
 
 
-def reason_for(text: str) -> str | None:
+def reason_for(text: str, patterns: list[tuple[str, str]]) -> str | None:
     """Name of the first pattern that matches `text`, honouring the email exception."""
-    for pattern, name in PATTERNS:
+    for pattern, name in patterns:
         for match in re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE):
             if name == "email address" and match.group(0).lower().endswith(
                 EMAIL_OK_DOMAINS
@@ -92,13 +92,13 @@ def reason_for(text: str) -> str | None:
     return None
 
 
-def check_worktree() -> list[str]:
+def check_worktree(patterns: list[tuple[str, str]]) -> list[str]:
     problems: list[str] = []
     listing = run("git", "ls-files", "-z")
     if listing.returncode != 0:
         return ["git ls-files failed — is this a repository?"]
     for name in listing.stdout.split("\0"):
-        if not name or name == SELF:
+        if not name:
             continue
         try:
             raw = Path(name).read_bytes()
@@ -109,19 +109,19 @@ def check_worktree() -> list[str]:
         except UnicodeDecodeError:
             continue  # binary
         for number, line in enumerate(text.splitlines(), 1):
-            reason = reason_for(line)
+            reason = reason_for(line, patterns)
             if reason:
                 problems.append(f"{name}:{number}: {reason}")
     return problems
 
 
-def check_history() -> list[str]:
+def check_history(patterns: list[tuple[str, str]]) -> list[str]:
     problems: list[str] = []
     revs = run("git", "rev-list", "--all").stdout.split()
     if not revs:
         return ["no commits found"]
 
-    for pattern, name in PATTERNS:
+    for pattern, name in patterns:
         result = run(
             "git", "grep", "-I", "-n", "-E", "-i", "--no-color", "-e", pattern, *revs
         )
@@ -134,17 +134,14 @@ def check_history() -> list[str]:
             parts = line.split(":", 3)
             if len(parts) < 3:
                 continue
-            path = parts[1]
-            if path == SELF:
+            # Re-decide from the line itself: a grep hit may be a whitelisted
+            # address even though some other pattern in the alternation matched.
+            if reason_for(parts[-1], patterns) is None:
                 continue
-            if name == "email address" and parts[-1].strip().lower().endswith(
-                EMAIL_OK_DOMAINS
-            ):
-                continue
-            problems.append(f"{path}: {name} in a committed blob")
+            problems.append(f"{parts[1]}: {name} in a committed blob")
 
     for message in run("git", "log", "--all", "--format=%B%x00").stdout.split("\0"):
-        reason = reason_for(message)
+        reason = reason_for(message, patterns)
         if reason:
             problems.append(f"commit message: {reason} in {message.strip()[:100]!r}")
     return problems
@@ -152,7 +149,7 @@ def check_history() -> list[str]:
 
 def check_ignore_rules() -> list[str]:
     problems: list[str] = []
-    for path in IGNORED:
+    for path in IGNORED + extra_ignored():
         if run("git", "check-ignore", "-q", path).returncode != 0:
             problems.append(f".gitignore no longer ignores {path}")
     for path in NOT_IGNORED:
@@ -175,11 +172,12 @@ def main(argv: list[str]) -> int:
     if not (args.history or args.worktree):
         parser.error("choose --history or --worktree")
 
+    patterns = all_patterns()
     problems: list[str] = []
     if args.history:
-        problems += check_history()
+        problems += check_history(patterns)
     if args.worktree:
-        problems += check_worktree()
+        problems += check_worktree(patterns)
     problems += check_ignore_rules()
 
     if problems:

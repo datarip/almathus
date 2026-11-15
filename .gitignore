@@ -28,12 +28,11 @@ almathus_capture.wav
 # NOTICE instead.
 /docs/
 
-# Local-only asset notes: dev rationale and the retired-asset graveyard pointer.
-# The published credits live in assets/sounds/CREDITS.md and
-# assets/flags/README.md, which are tracked.
+# Local-only asset notes. The published credits live in
+# assets/sounds/CREDITS.md and assets/flags/README.md, which are tracked.
 /assets/README.md
 
-# Local graveyard for retired assets: kept on disk for reference, never tracked.
+# Retired assets, kept on disk for reference and never tracked.
 /archived/
 
 # Local macOS dev launcher (see main.relaunch_as_app_bundle): keeps a bare

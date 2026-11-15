@@ -33,17 +33,16 @@ WHEEL_REQUIRED = (
     "assets/flags/README.md",
 )
 
-#: Substrings that must never appear in either artefact.
+#: Substrings that must never appear in either artefact. Only names that the
+#: public repository already mentions — the README documents results/, stats/
+#: and models/ as the folders the game writes to.
 FORBIDDEN = (
     "sidecar/piper_sidecar",
     "piper_sidecar.py",
-    "/docs/",
-    "docs/shipping.md",
-    "assets/README.md",
     "results/",
     "stats/",
     "models/",
-    "AGENTS.md",
+    ".onnx",
 )
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "almathus"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A kid-friendly mental-math game (Tkinter)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -50,6 +50,10 @@ almathus = "main:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+# One source of truth: `version.py`, which packaging/build.py stamps from the tag.
+path = "version.py"
+
 [tool.hatch.build.targets.sdist]
 # The sidecar is a separate GPL-3.0 program, not part of the game package. Keep
 # it out of the PyPI source archive so both distribution artefacts are MIT;
@@ -63,6 +67,7 @@ exclude = ["/sidecar"]
 # sidecar is a separate GPL program, not a module of the game.
 include = [
     "main.py",
+    "version.py",
     "i18n.py",
     "languages.py",
     "voice.py",

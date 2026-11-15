@@ -368,9 +368,18 @@ def _sidecar_command() -> list[str] | None:
         return [str(path)]
     beside = Path(sys.executable).resolve().parent
     for name in ("piper-sidecar", "piper-sidecar.exe"):
-        candidate = beside / name
-        if candidate.is_file():
-            return [str(candidate)]
+        # A one-directory freeze of the sidecar keeps its own _internal folder,
+        # so both programs cannot share a directory: the helper sits in a
+        # subfolder of its own, with the executable still called the same. On
+        # macOS that subfolder is Contents/Resources, because a nested Python
+        # tree under Contents/MacOS stops the app bundle from being signed.
+        for candidate in (
+            beside / name,
+            beside / name / name,
+            beside.parent / "Resources" / name / name,
+        ):
+            if candidate.is_file():
+                return [str(candidate)]
     script = Path(__file__).resolve().parent / "sidecar" / "piper_sidecar.py"
     if script.is_file():
         return [sys.executable, str(script)]

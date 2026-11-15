@@ -20,8 +20,10 @@ bundle. Silence is the failure mode, so silence is what is checked:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -131,6 +133,98 @@ def accept_sidecar(bundle: Path, model: Path | None) -> None:
         proc.wait(timeout=60)
 
 
+def app_dir(out: Path) -> Path:
+    """Where the game's own executable lives, on each OS."""
+    if sys.platform == "darwin":
+        return out / "Almathus.app" / "Contents" / "MacOS"
+    return out / "Almathus"
+
+
+def stage(out: Path, version: str) -> Path:
+    """Put the two programs together and add everything a bundle must carry.
+
+    The sidecar keeps its own `_internal` folder, so it cannot share a
+    directory with the app: it goes in a subfolder named after its executable,
+    which is the second place `voice._sidecar_command` looks.
+    """
+    home = app_dir(out)
+    if not home.is_dir():
+        raise SystemExit(f"missing {home} — freeze the app first")
+    # On macOS the helper goes in Contents/Resources: a nested Python tree inside
+    # Contents/MacOS makes codesign treat its .dist-info folders as broken
+    # bundles and refuse to sign the app at all.
+    helper = (
+        out / "Almathus.app" / "Contents" / "Resources" / "piper-sidecar"
+        if sys.platform == "darwin"
+        else home / "piper-sidecar"
+    )
+    shutil.copytree(out / "piper-sidecar", helper, dirs_exist_ok=True)
+    write_licences(home)
+    write_source_offer(home, version)
+    return home
+
+
+def write_licences(home: Path) -> None:
+    """GPL text, plus every installed package's own licence, next to the app."""
+    dest = home / "licenses"
+    dest.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT / "sidecar" / "LICENSE", dest / "GPL-3.0.txt")
+
+    import importlib.metadata as md
+
+    rows = []
+    for dist in md.distributions():
+        name = (dist.metadata["Name"] or "").strip()
+        if not name:
+            continue
+        licence = (
+            dist.metadata.get("License-Expression")
+            or (dist.metadata.get("License") or "").strip().splitlines()[0:1]
+            or ["see file"]
+        )
+        if isinstance(licence, list):
+            licence = licence[0] if licence else "see file"
+        rows.append((name, dist.version or "?", licence))
+        # `_path` is the dist-info folder, private but the only way to find it.
+        dist_info = getattr(dist, "_path", None)
+        source = dist_info / "licenses" if dist_info else None
+        if source and source.is_dir():
+            shutil.copytree(source, dest / name, dirs_exist_ok=True)
+
+    rows.sort(key=lambda row: row[0].lower())
+    table = "\n".join(f"| {n} | {v} | {lic} |" for n, v, lic in rows)
+    (dest / "THIRD-PARTY.md").write_text(
+        "# Third-party components\n\n"
+        "Every package that was present in the build environment. Voice models are\n"
+        "not shipped: they are downloaded at first run and keep their own licences.\n\n"
+        "| Package | Version | Licence |\n|---|---|---|\n"
+        f"{table}\n",
+        encoding="utf-8",
+    )
+    print(f"licences: {len(rows)} packages + the GPL text")
+
+
+def source_offer(version: str) -> str:
+    return (
+        "Almathus voice engine — GPL-3.0 source offer\n"
+        "===========================================\n\n"
+        "This product contains piper-sidecar, a separate program licensed under the\n"
+        "GNU General Public License, version 3 or later. It links piper-tts and\n"
+        "espeak-ng, which is why it cannot be MIT like the rest of the game.\n\n"
+        f"The exact corresponding source for version {version} is available at:\n\n"
+        f"  https://github.com/datarip/almathus/releases/tag/v{version}\n\n"
+        "as almathus-voice-" + version + ".tar.gz, and on request for three years.\n"
+        "It contains the sidecar source, the pinned engine sources and the build\n"
+        "script used to produce this binary.\n\n"
+        "The game itself is MIT; see licenses/ and the LICENSE file in the\n"
+        "repository.\n"
+    )
+
+
+def write_source_offer(home: Path, version: str) -> None:
+    (home / "install.txt").write_text(source_offer(version), encoding="utf-8")
+
+
 def accept_app(out: Path) -> None:
     """The MIT/GPL split has to survive freezing, not just the wheel build."""
     bundle = out / ("Almathus.app" if sys.platform == "darwin" else "Almathus")
@@ -144,6 +238,65 @@ def accept_app(out: Path) -> None:
     if leaks:
         raise SystemExit(f"GPL engine leaked into the app bundle: {leaks[:5]}")
     print(f"app bundle at {bundle}, no piper/espeak inside")
+
+
+def codesign(path: Path) -> None:
+    """Ad-hoc signature: unsigned is "damaged", ad-hoc is "unidentified developer"."""
+    if sys.platform != "darwin":
+        return
+    run("codesign", "--force", "--deep", "--sign", "-", "--timestamp=none", str(path))
+
+
+def package(out: Path, version: str) -> list[Path]:
+    arch = platform.machine()
+    stem = f"Almathus-{version}-{'macos' if sys.platform == 'darwin' else 'windows' if os.name == 'nt' else 'linux'}-{arch}"
+    made: list[Path] = []
+
+    if sys.platform == "darwin":
+        app = out / "Almathus.app"
+        # The helper is signed first: signing the app afterwards seals its contents.
+        codesign(app / "Contents" / "Resources" / "piper-sidecar" / SIDECAR_NAME)
+        codesign(app)
+        run("codesign", "--verify", "--deep", "--strict", str(app))
+        archive = out / f"{stem}.zip"
+        run("ditto", "-c", "-k", "--keepParent", str(app), str(archive))
+        made.append(archive)
+        dmg = out / f"{stem}.dmg"
+        run(
+            "hdiutil",
+            "create",
+            "-volname",
+            "Almathus",
+            "-srcfolder",
+            str(app),
+            "-ov",
+            "-format",
+            "UDZO",
+            str(dmg),
+        )
+        made.append(dmg)
+    elif os.name == "nt":
+        archive = out / f"{stem}.zip"
+        shutil.make_archive(
+            str(archive.with_suffix("")), "zip", root_dir=out, base_dir="Almathus"
+        )
+        made.append(archive)
+    else:
+        archive = out / f"{stem}.tar.gz"
+        run("tar", "-czf", str(archive), "-C", str(out), "Almathus")
+        made.append(archive)
+
+    sums = out / "SHA256SUMS"
+    sums.write_text(
+        "".join(
+            f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+            for path in made
+        ),
+        encoding="utf-8",
+    )
+    for path in made:
+        print(f"artefact: {path.name} ({path.stat().st_size // 1_000_000} MB)")
+    return made
 
 
 def main(argv: list[str]) -> int:
@@ -183,6 +336,10 @@ def main(argv: list[str]) -> int:
     if args.only in ("app", "all"):
         freeze("almathus.spec", out)
         accept_app(out)
+
+    if args.only == "all":
+        stage(out, args.version or "0.0.0")
+        package(out, args.version or "0.0.0")
 
     return 0
 

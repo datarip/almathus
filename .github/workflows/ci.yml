@@ -85,12 +85,21 @@ jobs:
           enable-cache: true
           python-version: "3.12"
 
-      - name: Audio and display libraries (Linux)
+      - name: Audio, display and Tk libraries (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libportaudio2 xvfb
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2 xvfb python3-tk
 
       - name: Install
-        run: uv sync --extra voice --group dev
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # uv's managed Python is built without tkinter on Linux, so the Tk
+            # tests need the system interpreter plus python3-tk. The README says
+            # as much for a source install; CI just does it for you.
+            uv sync --python /usr/bin/python3 --extra voice --group dev
+          else
+            uv sync --extra voice --group dev
+          fi
 
       - name: Pure tests (Linux, headless)
         if: runner.os == 'Linux'

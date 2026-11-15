@@ -10,7 +10,7 @@ section: the wheel and the sdist carry only the MIT part of the project.
 
   * no `sidecar/` in either — it is a separate GPL-3.0 program, and a package
     that contained it would be a GPL-3.0 distribution, not an MIT one;
-  * no private material (`docs/`, `assets/README.md`, results, stats, models);
+  * no local runtime data (results, stats, models);
   * the runtime files and assets the game reads at run time are present, and
     so is the CC BY attribution for the sounds, which must travel with them.
 """

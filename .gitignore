@@ -1,21 +1,58 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Build output
 build/
 dist/
-results/
-stats/
-models/
-prefs.json
-.DS_Store
+
+# Local runtime data: the child's own sessions, models, preferences.
+# Kept on disk, never published.
+/results/
+/stats/
+/models/
+/prefs.json
+almathus_capture.wav
+*.log
+
+# Working screenshots. The two the README shows live in assets/screenshots/
+# and are tracked, so this is anchored to the top-level directory.
+/screenshots/
+
+# Private notes, packaging plans and the release runbook: development material,
+# never published. The public repo carries the licence facts in README.md and
+# NOTICE instead.
+/docs/
+
+# Local-only asset notes: dev rationale and the retired-asset graveyard pointer.
+# The published credits live in assets/sounds/CREDITS.md and
+# assets/flags/README.md, which are tracked.
+/assets/README.md
 
 # Local graveyard for retired assets: kept on disk for reference, never tracked.
-archived/
+/archived/
 
 # Local macOS dev launcher (see main.relaunch_as_app_bundle): keeps a bare
 # Tk run from registering under the editor bundle. Never part of a release.
-Almathus.app/
+/Almathus.app/
 
 # Developer-only material: not part of the game or its wheel.
-AGENTS.md
-tools/
+/AGENTS.md
+.claude/
+/tools/
+
+# macOS
+.DS_Store
+._*
+
+# Signing material — must never be committed
+*.p12
+*.pfx
+*.cer
+*.mobileprovision
+*.key
+.env

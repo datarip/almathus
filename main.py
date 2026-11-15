@@ -7,7 +7,7 @@ Pure-stdlib Tkinter app. Runs anywhere Python has Tk:
 Flow:  Settings -> 5-4-3-2-1-GO! countdown -> cards -> reinforcement round -> recap.
 Per-card time is measured so a parent can see which operations need work.
 
-Four moments of that flow have a sound (see sfx.py and assets/README.md): the
+Four moments of that flow have a sound (see sfx.py and assets/sounds/CREDITS.md): the
 countdown, a right answer, a wrong one, and the winner's music over the recap.
 They need a command-line player on PATH and are silently skipped without one.
 

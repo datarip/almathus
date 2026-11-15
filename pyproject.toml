@@ -8,7 +8,7 @@ license = "MIT"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Datarip" }]
 # The sidecar/ tree is a separate GPL-3.0 program and is not part of the wheel;
-# see docs/shipping.md for why the app and the voice engine have different licences.
+# keeps the GPL engine out of the MIT app; see NOTICE and README.md > Licensing.
 dependencies = []
 
 [project.optional-dependencies]

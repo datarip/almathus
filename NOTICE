@@ -17,4 +17,5 @@ package.
 
 Voice models downloaded at setup and the third-party pictures and audio under
 `assets/` — the flags, the app icon, the four sound samples — keep their own
-licences; see `docs/shipping.md` and `assets/README.md`.
+licences; see `assets/sounds/CREDITS.md`, `assets/flags/README.md` and the
+Licensing section of `README.md`.

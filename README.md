@@ -347,19 +347,40 @@ scores at once, and both dictation modes open a card correctly.
 
 ## Licensing
 
-- The game's code and its wheel are **MIT**, see [`LICENSE`](LICENSE).
-- [`sidecar/`](sidecar/) is a separate **GPL-3.0** program; see
-  [`sidecar/LICENSE`](sidecar/LICENSE). It owns Piper and espeak-ng so the game
-  does not have to; an installer that bundles it is a GPL-3.0 combined work and
-  must carry its source and license. The wheel never contains it.
-- Voice models are downloaded at setup and keep their own licenses; the sounds
-  are CC0 / CC BY ([`assets/README.md`](assets/README.md)); the flags are MIT.
-- The app icon shown at the top (`assets/icon.svg`) is VistaCreate stock artwork:
-  allowed inside the app, but its license does not clearly permit using it as a
-  logo or trademark; see [`assets/README.md`](assets/README.md#licence).
-- The shipping matrix and the per-OS packaging steps are in
-  [`docs/shipping.md`](docs/shipping.md); [`NOTICE`](NOTICE) records the MIT/GPL
-  split.
+The repository is split by component, and the split is the point:
+
+| Part | What it is | Licence |
+|---|---|---|
+| The game's code — `main.py`, `voice.py`, `i18n.py`, `results.py`, … | the Python game | **MIT** ([`LICENSE`](LICENSE)) |
+| [`sidecar/`](sidecar/) | separate program that owns the voice engine | **GPL-3.0** ([`sidecar/LICENSE`](sidecar/LICENSE)) |
+| `piper-tts`, `espeak-ng` (inside the sidecar) | neural TTS and its phonemizer | **GPL-3.0** |
+| Voice models (`.onnx`) | downloaded at setup, not in the repo | per-model; mostly MIT / CC BY, some **CC BY-NC** |
+| `assets/sounds/*.mp3` | the four game sounds | **CC0** and **CC BY 3.0/4.0** ([`CREDITS`](assets/sounds/CREDITS.md)) |
+| `assets/flags/*.svg` | flag-icons 7.5.0 | **MIT** ([`README`](assets/flags/README.md)) |
+| `assets/icon.svg`, `assets/icon.icns` | the app icon | VistaCreate stock artwork, **not MIT** |
+| `num2words` | number words | **LGPL-2.1** (commercial use allowed) |
+| `vosk` | speech recognition | **Apache-2.0** |
+
+**The game never imports Piper.** That boundary is the reason the voice is a
+separate program: the app starts `sidecar/piper_sidecar.py` as another process
+and talks to it over stdin/stdout, so the GPL engine stays out of the MIT
+program. The Python package — wheel and sdist — therefore contains only the MIT
+part; `sidecar/` is excluded from both, and a wheel install falls back to the OS
+voice.
+
+**A bundle that contains the frozen sidecar is GPL-3.0, not MIT.** If you
+distribute an installer that ships `piper-sidecar` beside the app, that
+installer is a combined work: ship the GPL-3.0 text and the corresponding source
+of the sidecar, and say where to get it. The source repository, the wheel and
+the sdist stay MIT. [`NOTICE`](NOTICE) records the split.
+
+Two smaller things worth knowing:
+
+- The app icon shown at the top is VistaCreate stock artwork. Its licence allows
+  the picture inside a piece of software but forbids using it as a logo or a
+  trademark, so do not adopt the drawing as your own mark. Replace it with
+  artwork drawn for the app if it ever ships as a named product.
+- Never ship a **CC BY-NC** voice model in a paid build.
 
 ## Roadmap
 

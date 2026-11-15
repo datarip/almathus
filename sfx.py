@@ -12,7 +12,7 @@ that would otherwise talk over the speech synthesizer.
 
 The samples live in `assets/sounds/` and are named after the moment they mark,
 not after the game they were cut from, so a parent can drop in their own mp3
-under the same name (see assets/README.md).
+under the same name (see assets/sounds/CREDITS.md).
 """
 
 from __future__ import annotations

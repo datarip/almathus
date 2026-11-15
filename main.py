@@ -601,7 +601,29 @@ def _app_root() -> Path:
 APP_DIR = _app_root()
 ASSETS_DIR = APP_DIR / "assets"
 SOUNDS_DIR = ASSETS_DIR / "sounds"
-PREFS_FILE = APP_DIR / "prefs.json"
+
+
+def _prefs_dir() -> Path:
+    """The per-user folder for ``prefs.json``.
+
+    Preferences are the one thing the app *writes* under its own name, so they
+    cannot live beside the code: a packaged app is read-only, and writing inside
+    ``Almathus.app`` invalidates its signature. The folder is the same one the
+    language models use, so a user has one place to look.
+    """
+    override = os.environ.get("ALMATHUS_PREFS_DIR")
+    if override:
+        return Path(override)
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    elif os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return base / "Almathus"
+
+
+PREFS_FILE = _prefs_dir() / "prefs.json"
 
 COUNTDOWN_STEPS = 3  # 3-2-1, then GO!
 # countdown.mp3 is three beeps and a launch tone, laid out on an exact one-second
@@ -628,11 +650,28 @@ def read_prefs() -> dict:
     return prefs if isinstance(prefs, dict) else {}
 
 
+def migrate_legacy_prefs() -> None:
+    """Adopt a ``prefs.json`` left in a source checkout, once.
+
+    Before the move to the per-user folder the file sat beside the code, so an
+    existing checkout has the family's language and theme in it. It is copied,
+    not moved: the old file is ignored by git and harmless, and leaving it alone
+    means a checkout shared read-only still works.
+    """
+    legacy = APP_DIR / "prefs.json"
+    if legacy == PREFS_FILE or PREFS_FILE.exists() or not legacy.exists():
+        return
+    with contextlib.suppress(OSError, ValueError):
+        PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PREFS_FILE.write_text(legacy.read_text(encoding="utf-8"), encoding="utf-8")
+
+
 def write_prefs(**updates) -> None:
     """Merge and write. Writing the whole file from one caller's value would
     drop every other preference, so each key is folded into what is on disk."""
     # A read-only install must never break the game.
     with contextlib.suppress(OSError):
+        PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
         PREFS_FILE.write_text(json.dumps(read_prefs() | updates), encoding="utf-8")
 
 
@@ -5546,6 +5585,7 @@ def main():
         choose_language_at_startup()  # asks only when no speech model is installed
     resolve_language()  # sets the module's LANG before any widget reads it
     resultslog.migrate_legacy()  # a log left in the checkout follows the user
+    migrate_legacy_prefs()  # ...and so do the remembered choices
     app = Almathus()
     if smoke_ms:
         app.after(int(smoke_ms), app.destroy)

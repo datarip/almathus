@@ -2857,9 +2857,13 @@ def relaunch_as_app_bundle() -> bool:
     """
     if sys.platform != "darwin" or _running_in_app_bundle():
         return False
+    if getattr(sys, "frozen", False):
+        # A frozen build is already the identity macOS should see. Launching
+        # anything from here would be a second copy of the same app.
+        return False
     if os.environ.get("ALMATHUS_IN_APP") == "1":  # the bundled copy starting up
         return False
-    bundle = Path(__file__).resolve().parent / "Almathus.app"
+    bundle = APP_DIR / "Almathus.app"
     if not bundle.is_dir():
         return False
     try:

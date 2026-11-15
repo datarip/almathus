@@ -27,6 +27,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -247,56 +248,131 @@ def codesign(path: Path) -> None:
     run("codesign", "--force", "--deep", "--sign", "-", "--timestamp=none", str(path))
 
 
+APPIMAGE_URL = (
+    "https://github.com/AppImage/appimagetool/releases/download/continuous/"
+    "appimagetool-x86_64.AppImage"
+)
+ISCC_CANDIDATES = (
+    r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    r"C:\Program Files\Inno Setup 6\ISCC.exe",
+)
+
+
 def package(out: Path, version: str) -> list[Path]:
     arch = platform.machine()
-    stem = f"Almathus-{version}-{'macos' if sys.platform == 'darwin' else 'windows' if os.name == 'nt' else 'linux'}-{arch}"
+    os_name = (
+        "macos"
+        if sys.platform == "darwin"
+        else "windows"
+        if os.name == "nt"
+        else "linux"
+    )
+    stem = f"Almathus-{version}-{os_name}-{arch}"
     made: list[Path] = []
 
     if sys.platform == "darwin":
-        app = out / "Almathus.app"
-        # The helper is signed first: signing the app afterwards seals its contents.
-        codesign(app / "Contents" / "Resources" / "piper-sidecar" / SIDECAR_NAME)
-        codesign(app)
-        run("codesign", "--verify", "--deep", "--strict", str(app))
-        archive = out / f"{stem}.zip"
-        run("ditto", "-c", "-k", "--keepParent", str(app), str(archive))
-        made.append(archive)
-        dmg = out / f"{stem}.dmg"
-        run(
-            "hdiutil",
-            "create",
-            "-volname",
-            "Almathus",
-            "-srcfolder",
-            str(app),
-            "-ov",
-            "-format",
-            "UDZO",
-            str(dmg),
-        )
-        made.append(dmg)
+        made += package_macos(out, stem)
     elif os.name == "nt":
-        archive = out / f"{stem}.zip"
-        shutil.make_archive(
-            str(archive.with_suffix("")), "zip", root_dir=out, base_dir="Almathus"
-        )
-        made.append(archive)
+        made += package_windows(out, stem, version, arch)
     else:
-        archive = out / f"{stem}.tar.gz"
-        run("tar", "-czf", str(archive), "-C", str(out), "Almathus")
-        made.append(archive)
+        made += package_linux(out, stem)
 
     sums = out / "SHA256SUMS"
     sums.write_text(
         "".join(
-            f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
-            for path in made
+            f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in made
         ),
         encoding="utf-8",
     )
     for path in made:
         print(f"artefact: {path.name} ({path.stat().st_size // 1_000_000} MB)")
     return made
+
+
+def package_macos(out: Path, stem: str) -> list[Path]:
+    app = out / "Almathus.app"
+    # The helper is signed first: signing the app afterwards seals its contents.
+    codesign(app / "Contents" / "Resources" / "piper-sidecar" / SIDECAR_NAME)
+    codesign(app)
+    run("codesign", "--verify", "--deep", "--strict", str(app))
+    archive = out / f"{stem}.zip"
+    run("ditto", "-c", "-k", "--keepParent", str(app), str(archive))
+    dmg = out / f"{stem}.dmg"
+    run(
+        "hdiutil",
+        "create",
+        "-volname",
+        "Almathus",
+        "-srcfolder",
+        str(app),
+        "-ov",
+        "-format",
+        "UDZO",
+        str(dmg),
+    )
+    return [archive, dmg]
+
+
+def package_windows(out: Path, stem: str, version: str, arch: str) -> list[Path]:
+    made: list[Path] = []
+    zip_path = out / f"{stem}.zip"
+    shutil.make_archive(
+        str(zip_path.with_suffix("")), "zip", root_dir=out, base_dir="Almathus"
+    )
+    made.append(zip_path)
+
+    iscc = shutil.which("iscc") or next(
+        (p for p in ISCC_CANDIDATES if Path(p).exists()), None
+    )
+    if not iscc:
+        print("Inno Setup not found: leaving the installer out (the zip still works)")
+        return made
+    run(
+        str(iscc),
+        f"/DVERSION={version}",
+        f"/DARCH={arch}",
+        f"/DOUTDIR={out}",
+        str(ROOT / "packaging" / "windows" / "installer.iss"),
+    )
+    made += sorted(out.glob(f"{stem}.exe"))
+    return made
+
+
+def package_linux(out: Path, stem: str) -> list[Path]:
+    made: list[Path] = []
+    archive = out / f"{stem}.tar.gz"
+    run("tar", "-czf", str(archive), "-C", str(out), "Almathus")
+    made.append(archive)
+
+    appimage = build_appimage(out, stem)
+    if appimage:
+        made.append(appimage)
+    return made
+
+
+def build_appimage(out: Path, stem: str) -> Path | None:
+    """An AppDir, then appimagetool. Returns None when the tool cannot be had."""
+    appdir = out / "Almathus.AppDir"
+    shutil.rmtree(appdir, ignore_errors=True)
+    shutil.copytree(out / "Almathus", appdir / "usr" / "bin" / "Almathus")
+    shutil.copyfile(ROOT / "packaging" / "linux" / "AppRun", appdir / "AppRun")
+    (appdir / "AppRun").chmod(0o755)
+    shutil.copyfile(
+        ROOT / "packaging" / "linux" / "almathus.desktop", appdir / "almathus.desktop"
+    )
+    shutil.copyfile(ROOT / "assets" / "icon.png", appdir / "almathus.png")
+
+    tool = ROOT / "build" / "appimagetool"
+    if not tool.exists():
+        tool.parent.mkdir(parents=True, exist_ok=True)
+        urllib.request.urlretrieve(APPIMAGE_URL, tool)
+        tool.chmod(0o755)
+
+    target = out / f"{stem}.AppImage"
+    env = dict(os.environ, ARCH="x86_64", APPIMAGE_EXTRACT_AND_RUN="1", VERSION="")
+    print(f"+ appimagetool {appdir} {target}")
+    subprocess.run([str(tool), str(appdir), str(target)], check=True, env=env)  # noqa: S603
+    return target
 
 
 def main(argv: list[str]) -> int:

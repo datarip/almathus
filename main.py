@@ -583,9 +583,25 @@ OP_SYMBOL = {
 }
 
 STATS_DIR = resultslog.stats_dir()
-PREFS_FILE = Path(__file__).resolve().parent / "prefs.json"
-ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
+
+def _app_root() -> Path:
+    """Where the read-only app files live: a source checkout, or a frozen bundle.
+
+    PyInstaller collects ``assets/`` under ``sys._MEIPASS`` in a one-file build and
+    beside the executable in a one-directory build, and sets ``_MEIPASS`` in both,
+    so one branch covers them. Nothing here is writable: preferences and results
+    have their own per-user homes.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return Path(__file__).resolve().parent
+
+
+APP_DIR = _app_root()
+ASSETS_DIR = APP_DIR / "assets"
 SOUNDS_DIR = ASSETS_DIR / "sounds"
+PREFS_FILE = APP_DIR / "prefs.json"
 
 COUNTDOWN_STEPS = 3  # 3-2-1, then GO!
 # countdown.mp3 is three beeps and a launch tone, laid out on an exact one-second

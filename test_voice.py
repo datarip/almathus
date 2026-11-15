@@ -254,9 +254,13 @@ for line in sys.stdin:
 
 def sidecar_failures() -> list[str]:
     try:
-        import sounddevice  # the voice extra
-    except ImportError:
-        return []  # nothing to test without the playback stack
+        import sounddevice
+    except Exception:  # noqa: BLE001 - a build box has no audio server to open
+        # ImportError when the voice extra is absent, PortAudioError when there is
+        # no sound server (CI runners, containers). Either way there is nothing to
+        # test here, and a failed import must not be reported as a failure.
+        print("(no audio stack on this machine: skipping the sidecar playback tests)")
+        return []
 
     failures: list[str] = []
     with tempfile.TemporaryDirectory() as tmp:

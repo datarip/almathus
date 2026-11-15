@@ -240,6 +240,35 @@ def accept_app(out: Path) -> None:
         raise SystemExit(f"GPL engine leaked into the app bundle: {leaks[:5]}")
     print(f"app bundle at {bundle}, no piper/espeak inside")
 
+    # The optional stacks are imported inside functions and fall back when they
+    # are missing, which is right for a player and wrong for a build: a bundle
+    # without libvosk.dyld starts, speaks through the sidecar, and quietly has
+    # no microphone. Only running the frozen binary can tell.
+    exe = (
+        bundle / "Contents" / "MacOS" / "Almathus"
+        if sys.platform == "darwin"
+        else bundle / ("Almathus.exe" if os.name == "nt" else "Almathus")
+    )
+    report = out / "self-test.txt"
+    result = subprocess.run(  # noqa: S603  (fixed argv: the binary we just built)
+        [str(exe)],
+        check=False,  # a non-zero exit IS the failure being looked for
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env=dict(
+            os.environ, ALMATHUS_SELF_TEST="1", ALMATHUS_SELF_TEST_OUT=str(report)
+        ),
+    )
+    # A windowed binary loses stdout on some runners, so the app writes the
+    # report to a file as well; prefer that.
+    text = report.read_text(encoding="utf-8") if report.exists() else result.stdout
+    print(text.strip())
+    if result.returncode != 0:
+        raise SystemExit(
+            "a bundled dependency failed to import:\n" + text + result.stderr
+        )
+
 
 def codesign(path: Path) -> None:
     """Ad-hoc signature: unsigned is "damaged", ad-hoc is "unidentified developer"."""

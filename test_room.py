@@ -50,10 +50,26 @@ def whispered(rng, n, amp):
     return room(rng, n, amp) * 3  # turbulence, no vocal folds — no pitch
 
 
+def new_input() -> voice.SpeechInput:
+    """A SpeechInput whose numpy is loaded even without an audio device.
+
+    ``voice._probe`` imports numpy and sounddevice in one try block, so a machine
+    with no sound server (a CI runner, a container) ends up with neither — and the
+    room maths this file exercises needs numpy. Everything here is synthesised,
+    so the device is irrelevant and only the maths has to be present.
+    """
+    s = voice.SpeechInput("fr")
+    if getattr(s, "_np", None) is None:
+        import numpy
+
+        s._np = numpy
+    return s
+
+
 def capture(noise_amp, body, calibrated=True):
     """Feed the recorder a card's worth of audio: room, then this, then room."""
     rng = np.random.default_rng(3)
-    s = voice.SpeechInput("fr")
+    s = new_input()
     s._active_stream, s._rec_sr, s._blk = object(), SR, BLK
     if calibrated:
         pre = room(rng, SR * 2, noise_amp)
@@ -115,7 +131,7 @@ def main() -> int:
     # -- the room is the quiet part of the window, not its average ---------- #
     # A word, a door or a cough in the run-up must not be taken for the room and
     # take the gate up with it — that is how a session goes progressively deaf.
-    s = voice.SpeechInput("fr")
+    s = new_input()
     quiet = list(room(rng, SR, 60).reshape(-1, BLK))
     loud = list((spoken(BLK * 10, amp=4000) + room(rng, BLK * 10, 60)).reshape(-1, BLK))
     s._learn_room(quiet, SR)
@@ -129,7 +145,7 @@ def main() -> int:
     )
 
     # -- subtracting the room ------------------------------------------------ #
-    s = voice.SpeechInput("fr")
+    s = new_input()
     n = int(SR * 0.6)
     noise = room(rng, SR * 2, 300)
     s._learn_room([noise[i : i + BLK] for i in range(0, SR * 2 - BLK, BLK)], SR)

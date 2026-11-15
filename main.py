@@ -5578,7 +5578,40 @@ def _watch_hangs(app: Almathus, threshold: float = 4.0) -> None:
     threading.Thread(target=watch, daemon=True, name="hang-watch").start()
 
 
+def _self_test() -> None:
+    """Report whether the optional stacks survived freezing, then exit.
+
+    The game imports them inside functions and falls back when they are missing,
+    which is right for a player and wrong for a build: a bundle without
+    libvosk.dyld starts, speaks through the sidecar, and quietly has no
+    microphone. packaging/build.py runs this in the frozen binary.
+    """
+    import importlib
+
+    failed = 0
+    report = []
+    for name in ("vosk", "sounddevice", "webrtcvad", "numpy", "scipy", "num2words"):
+        try:
+            importlib.import_module(name)
+        except Exception as exc:  # noqa: BLE001 - reporting is the whole job here
+            failed += 1
+            report.append(f"{name}: FAILED {type(exc).__name__}: {exc}")
+        else:
+            report.append(f"{name}: ok")
+    text = "\n".join(report) + "\n"
+    print(text, end="", flush=True)
+    # A windowed binary has no console on Windows and loses stdout on some
+    # runners, so the report is also written where the build can read it.
+    destination = os.environ.get("ALMATHUS_SELF_TEST_OUT")
+    if destination:
+        Path(destination).write_text(text, encoding="utf-8")
+    raise SystemExit(1 if failed else 0)
+
+
 def main():
+    if os.environ.get("ALMATHUS_SELF_TEST"):
+        _self_test()
+        return
     if relaunch_as_app_bundle():  # macOS: let the bundle own the process, not Zed
         return
     # Test-only: the launch smoke test in CI opens the real window and closes it

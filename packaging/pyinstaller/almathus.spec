@@ -22,11 +22,30 @@ with open(os.path.join(ROOT, "version.py"), encoding="utf-8") as fh:
         if line.startswith("__version__"):
             VERSION = line.split("=", 1)[1].strip().strip('"').strip("'")
 
+# vosk opens libvosk.dyld/.so/.dll with dlopen(), so nothing in the import graph
+# points at it and PyInstaller leaves it behind. Without it `import vosk` raises
+# OSError inside the frozen app and the microphone silently stops existing.
+#
+# It takes two collectors: collect_data_files picks up the .dyld (macOS treats it
+# as data), but skips .so/.dll because it recognises them as libraries, so those
+# are declared as binaries and placed back inside the vosk package folder, which
+# is where vosk looks for them at run time.
+import importlib.util as _ilu
+
+from PyInstaller.utils.hooks import collect_data_files
+
+_vosk_dir = os.path.dirname(_ilu.find_spec("vosk").origin)
+_vosk_binaries = [
+    (os.path.join(_vosk_dir, name), "vosk")
+    for name in os.listdir(_vosk_dir)
+    if name.startswith(("libvosk", "libgcc_s", "libstdc++", "libwinpthread"))
+]
+
 a = Analysis(
     [os.path.join(ROOT, "main.py")],
     pathex=[ROOT],
-    binaries=[],
-    datas=[(os.path.join(ROOT, "assets"), "assets")],
+    binaries=_vosk_binaries,
+    datas=[(os.path.join(ROOT, "assets"), "assets")] + collect_data_files("vosk"),
     # Optional stacks imported inside functions, so nothing static finds them.
     hiddenimports=[
         "vosk",

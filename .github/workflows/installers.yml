@@ -74,3 +74,64 @@ jobs:
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
+
+  gpl-source:
+    name: gpl source
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: uv sync --extra sidecar --group build
+
+      # The offer printed inside every bundle points at this file, so it has to
+      # exist for any tag that ships a binary.
+      - name: Build the corresponding source
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ -z "$version" ] || [ "$version" = "$GITHUB_REF_NAME" ]; then
+            version="0.0.0-${GITHUB_SHA::7}"
+          fi
+          ./packaging/gpl-source.sh "$version" dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: almathus-gpl-source
+          path: dist/almathus-voice-*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: publish draft
+    # Nothing reaches users without a person clicking "publish release".
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [freeze, gpl-source]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: arts
+
+      - name: One checksum list
+        run: |
+          find arts -name SHA256SUMS -exec cat {} + | sort -k2 > arts/SHA256SUMS
+          cat arts/SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            arts/**/*.dmg
+            arts/**/*.zip
+            arts/**/*.tar.gz
+            arts/**/*.exe
+            arts/**/*.AppImage
+            arts/SHA256SUMS

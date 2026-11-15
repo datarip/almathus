@@ -1,0 +1,9 @@
+#!/bin/sh
+# AppRun: what a double-click on the AppImage starts.
+#
+# The AppDir layout appimagetool expects puts the payload under usr/ and this
+# script at the root; $APPDIR is set by the runtime, so both a mounted AppImage
+# and an extracted one work the same way.
+set -e
+HERE="${APPDIR:-$(dirname "$0")}"
+exec "$HERE/usr/bin/Almathus/Almathus" "$@"

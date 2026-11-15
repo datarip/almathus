@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Almathus
+Comment=Offline mental-math flashcards, answered by voice
+Exec=Almathus
+Icon=almathus
+Categories=Education;Math;
+Terminal=false

@@ -9,6 +9,7 @@ on:
     tags: ["v*"]
   pull_request:
     paths:
+      - ".github/workflows/installers.yml"
       - "packaging/**"
       - "pyproject.toml"
       - "uv.lock"

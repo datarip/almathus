@@ -13,8 +13,16 @@ Opens a real Tk window (briefly) and drives it with `update()`; it needs a
 display, and it does not touch the microphone — the speech input is stubbed.
 """
 
+import os
 import sys
+import tempfile
 import time
+
+# main reads its preference path at import time. Without this the suite would
+# read and write the real user's prefs.json, which is both a side effect on the
+# machine and a source of flakiness: a saved "numbers: [4]" changes what the
+# deck deals.
+os.environ.setdefault("ALMATHUS_PREFS_DIR", tempfile.mkdtemp(prefix="almathus-prefs-"))
 
 import main as almathus
 

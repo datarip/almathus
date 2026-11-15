@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the history scan walks every commit
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      # The sidecar extra is here for mypy only: sidecar/piper_sidecar.py
+      # imports piper, and faking that import would be weakening the gate.
+      - name: Install
+        run: uv sync --extra voice --extra sidecar --group dev
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Types
+        run: uv run mypy
+
+      - name: Private material stayed private
+        run: uv run python scripts/check_no_pii.py --worktree
+        # --history is the expensive one; it runs on main only, below.
+
+      - name: Build
+        run: uv build
+
+      - name: MIT/GPL boundary
+        run: uv run python scripts/check_dist.py
+
+  history:
+    name: history
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: No personal data in any commit
+        run: uv run python scripts/check_no_pii.py --history
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Audio and display libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2 xvfb
+
+      - name: Install
+        run: uv sync --extra voice --group dev
+
+      - name: Pure tests (Linux, headless)
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a uv run python test_i18n.py
+          xvfb-run -a uv run python test_voice.py
+          xvfb-run -a uv run python test_difficulty.py
+          xvfb-run -a uv run python test_room.py
+
+      - name: Pure tests
+        if: runner.os != 'Linux'
+        run: |
+          uv run python test_i18n.py
+          uv run python test_voice.py
+          uv run python test_difficulty.py
+          uv run python test_room.py
+
+      - name: Tk tests (Linux, headless)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a uv run python test_game_flow.py
+
+      - name: Tk tests
+        if: runner.os != 'Linux'
+        run: uv run python test_game_flow.py
+
+      - name: Launch smoke test
+        env:
+          ALMATHUS_SMOKE_MS: "3000"
+          ALMATHUS_RESULTS_DIR: ${{ runner.temp }}/almathus
+          ALMATHUS_PREFS_DIR: ${{ runner.temp }}/almathus-prefs
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a uv run almathus
+          else
+            uv run almathus
+          fi

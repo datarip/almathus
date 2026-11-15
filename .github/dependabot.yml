@@ -1,0 +1,29 @@
+version: 2
+
+updates:
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      # The voice stack moves together: vosk, numpy, scipy and PortAudio are
+      # installed as one set and a partial bump is the usual way to break the mic.
+      voice:
+        patterns:
+          - "vosk*"
+          - "sounddevice*"
+          - "numpy*"
+          - "scipy*"
+          - "webrtcvad*"
+          - "num2words*"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci

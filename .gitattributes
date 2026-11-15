@@ -1,0 +1,15 @@
+# Everything is text unless it is not. The repository is edited on macOS and
+# built on three operating systems, so line endings have to be decided here
+# rather than by each checkout's core.autocrlf.
+* text=auto eol=lf
+
+# Binary: never diffed, never line-ending-converted.
+*.png binary
+*.icns binary
+*.ico binary
+*.mp3 binary
+*.onnx binary
+
+# uv.lock is generated; a merge conflict in it is unreadable, and the union
+# keeps both sides so a regeneration can settle it.
+uv.lock merge=union

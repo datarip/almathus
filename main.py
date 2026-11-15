@@ -5519,10 +5519,17 @@ def _watch_hangs(app: Almathus, threshold: float = 4.0) -> None:
 def main():
     if relaunch_as_app_bundle():  # macOS: let the bundle own the process, not Zed
         return
-    choose_language_at_startup()  # asks only when no speech model is installed
+    # Test-only: the launch smoke test in CI opens the real window and closes it
+    # itself. It also skips the first-run language dialog, which would otherwise
+    # sit waiting for a click that no runner will ever make. Nothing else reads it.
+    smoke_ms = os.environ.get("ALMATHUS_SMOKE_MS")
+    if not smoke_ms:
+        choose_language_at_startup()  # asks only when no speech model is installed
     resolve_language()  # sets the module's LANG before any widget reads it
     resultslog.migrate_legacy()  # a log left in the checkout follows the user
     app = Almathus()
+    if smoke_ms:
+        app.after(int(smoke_ms), app.destroy)
     _watch_hangs(app)
     try:
         app.mainloop()

@@ -61,5 +61,16 @@ jobs:
       - name: Sizes
         shell: bash
         run: |
-          du -sh dist/* || true
-          find dist -name "Almathus*" -maxdepth 2 -o -name "piper-sidecar*" -maxdepth 2 | head
+          du -sh dist/* 2>/dev/null | sort -h || true
+
+      - name: Keep the artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: almathus-${{ matrix.os }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14

@@ -13,6 +13,7 @@ set -euo pipefail
 VERSION="${1:?usage: gpl-source.sh <version> [outdir]}"
 OUT="${2:-dist}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+mkdir -p "$OUT"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

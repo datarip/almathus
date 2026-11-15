@@ -18,6 +18,8 @@ is what an unvoiced whisper is, and why level alone can never separate the two.
 """
 
 import sys
+import threading
+import time
 
 import numpy as np
 
@@ -64,9 +66,24 @@ def capture(noise_amp, body, calibrated=True):
             room(rng, SR, noise_amp),
         ]
     )
-    for i in range(0, len(seq) - BLK, BLK):
-        s._audio_q.put(seq[i : i + BLK].clip(-32768, 32767).astype(np.int16))
-    return s, s._record(None) is not None
+    blocks = [
+        seq[i : i + BLK].clip(-32768, 32767).astype(np.int16)
+        for i in range(0, len(seq) - BLK, BLK)
+    ]
+
+    def feed() -> None:
+        # _record drains the queue the moment it starts, to throw away audio the
+        # stream gathered while nothing was listening. So the capture has to
+        # arrive *after* it is listening, exactly as a real stream callback would.
+        time.sleep(0.3)
+        for block in blocks:
+            s._audio_q.put(block)
+
+    producer = threading.Thread(target=feed, daemon=True)
+    producer.start()
+    heard = s._record(None) is not None
+    producer.join(timeout=2.0)
+    return s, heard
 
 
 def check(failures, name, cond):

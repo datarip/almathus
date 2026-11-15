@@ -1,0 +1,64 @@
+name: Installers
+
+# Freezes both programs on every desktop and runs the acceptance checks. This is
+# the honest answer to "does it build on Windows?" — and until it passes, the
+# README must not claim cross-platform support.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "pyproject.toml"
+      - "uv.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  freeze:
+    name: freeze (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2 libxkbcommon0
+
+      - name: Install
+        run: uv sync --extra voice --extra sidecar --group build
+
+      # The acceptance test speaks a real phrase, so it needs a real voice. The
+      # smallest one is enough: this checks that espeak-ng can phonemize, not
+      # that the audio is pretty.
+      - name: Small voice for the acceptance test
+        shell: bash
+        run: |
+          uv run python -m piper.download_voices en_US-lessac-low \
+            --download-dir "$RUNNER_TEMP/voices"
+
+      - name: Freeze and accept
+        shell: bash
+        run: |
+          uv run python packaging/build.py \
+            --version "0.0.0-${GITHUB_SHA::7}" \
+            --out dist \
+            --accept-model "$RUNNER_TEMP/voices/en_US-lessac-low.onnx"
+
+      - name: Sizes
+        shell: bash
+        run: |
+          du -sh dist/* || true
+          find dist -name "Almathus*" -maxdepth 2 -o -name "piper-sidecar*" -maxdepth 2 | head

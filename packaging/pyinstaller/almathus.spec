@@ -22,11 +22,16 @@ with open(os.path.join(ROOT, "version.py"), encoding="utf-8") as fh:
         if line.startswith("__version__"):
             VERSION = line.split("=", 1)[1].strip().strip('"').strip("'")
 
+# vosk opens libvosk.dyld/.so/.dll with dlopen(), so nothing in the import graph
+# points at it and PyInstaller leaves it behind. Without it `import vosk` raises
+# OSError inside the frozen app and the microphone silently stops existing.
+from PyInstaller.utils.hooks import collect_data_files
+
 a = Analysis(
     [os.path.join(ROOT, "main.py")],
     pathex=[ROOT],
     binaries=[],
-    datas=[(os.path.join(ROOT, "assets"), "assets")],
+    datas=[(os.path.join(ROOT, "assets"), "assets")] + collect_data_files("vosk"),
     # Optional stacks imported inside functions, so nothing static finds them.
     hiddenimports=[
         "vosk",

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Almathus app icon: the artwork of assets/README.md, trimmed to its own
+<!-- Almathus app icon: the calculator artwork, trimmed to its own
      bounds and centred on a 1024 x 1024 icon master. The pink is part of the
      artwork; it runs to the canvas edge on purpose so macOS masks the icon to
      its own squircle instead of setting the drawing on a system backplate. -->

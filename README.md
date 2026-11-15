@@ -2,7 +2,25 @@
 
 # 🧮 Almathus
 
+[![CI](https://github.com/datarip/almathus/actions/workflows/ci.yml/badge.svg)](https://github.com/datarip/almathus/actions/workflows/ci.yml)
+[![Installers](https://github.com/datarip/almathus/actions/workflows/installers.yml/badge.svg)](https://github.com/datarip/almathus/actions/workflows/installers.yml)
+
 Anki-like flashcard app that teaches basic maths to children 😉.
+
+## Download
+
+No Python, no terminal, no admin password. Grab the file for your system from
+the [latest release](https://github.com/datarip/almathus/releases/latest):
+
+| System | File | First launch |
+|---|---|---|
+| macOS (Apple Silicon) | `Almathus-*-macos-arm64.dmg` | The build is ad-hoc signed, not notarised: **right-click the app → Open** the first time, or macOS calls it damaged |
+| Windows 10/11 | `Almathus-*-windows-AMD64.exe` | It is unsigned, so SmartScreen shows a warning: **More info → Run anyway** |
+| Linux x86_64 | `Almathus-*-linux-x86_64.AppImage` | `chmod +x` and run it; the `.tar.gz` is there if AppImage is not your thing |
+
+Each release also carries `SHA256SUMS`, the GPL source of the voice engine
+(`almathus-voice-<version>.tar.gz`), and inside every bundle a `licenses/`
+folder with the full texts.
 
 The exercises are the same ones speech and language therapists give to help children build
 automatic recall of basic operations.
@@ -387,3 +405,8 @@ Two smaller things worth knowing:
 - **Real-microphone testing** for the 27 languages that are wired but untested,
   starting with Chinese, Hindi, Gujarati, Georgian, Kyrgyz and Uzbek, whose number
   words come from tables in `voice.py` rather than `num2words`.
+- **Signed and notarised builds.** Today macOS is ad-hoc signed and Windows is
+  unsigned, which is why the table above has a *first launch* column at all.
+- **Smaller installers.** The Japanese voice needs a 193 MB dictionary
+  (`sudachidict_core`), more than half of the whole download. It could be fetched
+  on first use, the way the voice models already are.

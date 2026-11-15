@@ -42,8 +42,10 @@ PATTERNS: list[tuple[str, str]] = [
     (r"sk-[A-Za-z0-9]{20,}", "API key"),
 ]
 
-#: The GitHub privacy address is the one email that is meant to be there.
-EMAIL_OK = re.compile(r"\S+@users\.noreply\.github\.com", re.IGNORECASE)
+#: Addresses that are meant to be there. Dependabot's own commit messages carry
+#: support@github.com, and every bot identity ends in the GitHub privacy domain.
+#: A personal address at any other domain still fails.
+EMAIL_OK_DOMAINS = ("@users.noreply.github.com", "@github.com")
 
 #: Paths that must never be tracked. Kept in one list because a stray
 #: `.gitignore` edit is exactly how they would come back.
@@ -82,7 +84,9 @@ def reason_for(text: str) -> str | None:
     """Name of the first pattern that matches `text`, honouring the email exception."""
     for pattern, name in PATTERNS:
         for match in re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE):
-            if name == "email address" and EMAIL_OK.fullmatch(match.group(0)):
+            if name == "email address" and match.group(0).lower().endswith(
+                EMAIL_OK_DOMAINS
+            ):
                 continue
             return name
     return None
@@ -133,7 +137,9 @@ def check_history() -> list[str]:
             path = parts[1]
             if path == SELF:
                 continue
-            if name == "email address" and EMAIL_OK.fullmatch(parts[-1].strip()):
+            if name == "email address" and parts[-1].strip().lower().endswith(
+                EMAIL_OK_DOMAINS
+            ):
                 continue
             problems.append(f"{path}: {name} in a committed blob")
 

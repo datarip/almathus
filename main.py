@@ -3099,7 +3099,10 @@ class Almathus(tk.Tk):
             self.createcommand("tk::mac::Quit", self._on_quit)
         self.bind_all("<Command-q>", lambda e: self._on_quit())
         self.bind_all("<Control-c>", lambda e: self._on_quit())
-        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        for name in ("SIGINT", "SIGTERM", "SIGHUP"):
+            sig = getattr(signal, name, None)  # Windows has no SIGHUP at all
+            if sig is None:
+                continue
             # ValueError off the main thread, OSError where the signal is absent.
             with contextlib.suppress(OSError, ValueError):
                 signal.signal(sig, self._on_signal)  # terminal kill / close

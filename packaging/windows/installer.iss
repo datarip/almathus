@@ -14,6 +14,12 @@
 #ifndef OUTDIR
   #define OUTDIR "dist"
 #endif
+#ifndef SRCDIR
+  #define SRCDIR "dist\Almathus"
+#endif
+#ifndef ICONFILE
+  #define ICONFILE "assets\icon.ico"
+#endif
 
 [Setup]
 AppId={{8E4C1B73-6F2A-4D2E-9E4B-6C1F0A9D3B57}
@@ -28,7 +34,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir={#OUTDIR}
 OutputBaseFilename=Almathus-{#VERSION}-windows-{#ARCH}
-SetupIconFile=assets\icon.ico
+SetupIconFile={#ICONFILE}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -42,7 +48,7 @@ Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "dist\Almathus\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#SRCDIR}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Almathus"; Filename: "{app}\Almathus.exe"

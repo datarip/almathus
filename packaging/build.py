@@ -332,6 +332,10 @@ def package_windows(out: Path, stem: str, version: str, arch: str) -> list[Path]
         f"/DVERSION={version}",
         f"/DARCH={arch}",
         f"/DOUTDIR={out}",
+        # Inno resolves relative paths against the .iss file, not the working
+        # directory, so everything it reads is passed absolutely.
+        f"/DSRCDIR={out / 'Almathus'}",
+        f"/DICONFILE={ROOT / 'assets' / 'icon.ico'}",
         str(ROOT / "packaging" / "windows" / "installer.iss"),
     )
     made += sorted(out.glob(f"{stem}.exe"))

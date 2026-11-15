@@ -43,6 +43,11 @@ sidecar = [
     "piper-tts[ja]",
 ]
 
+[project.urls]
+Homepage = "https://github.com/datarip/almathus"
+Issues = "https://github.com/datarip/almathus/issues"
+Releases = "https://github.com/datarip/almathus/releases"
+
 [project.scripts]
 almathus = "main:main"
 

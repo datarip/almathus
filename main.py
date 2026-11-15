@@ -5589,14 +5589,22 @@ def _self_test() -> None:
     import importlib
 
     failed = 0
+    report = []
     for name in ("vosk", "sounddevice", "webrtcvad", "numpy", "scipy", "num2words"):
         try:
             importlib.import_module(name)
         except Exception as exc:  # noqa: BLE001 - reporting is the whole job here
             failed += 1
-            print(f"{name}: FAILED {type(exc).__name__}: {exc}", flush=True)
+            report.append(f"{name}: FAILED {type(exc).__name__}: {exc}")
         else:
-            print(f"{name}: ok", flush=True)
+            report.append(f"{name}: ok")
+    text = "\n".join(report) + "\n"
+    print(text, end="", flush=True)
+    # A windowed binary has no console on Windows and loses stdout on some
+    # runners, so the report is also written where the build can read it.
+    destination = os.environ.get("ALMATHUS_SELF_TEST_OUT")
+    if destination:
+        Path(destination).write_text(text, encoding="utf-8")
     raise SystemExit(1 if failed else 0)
 
 

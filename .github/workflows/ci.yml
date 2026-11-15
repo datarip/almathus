@@ -94,6 +94,11 @@ jobs:
             # uv's managed Python is built without tkinter on Linux, so the Tk
             # tests need the system interpreter plus python3-tk. The README says
             # as much for a source install; CI just does it for you.
+            #
+            # UV_PYTHON matters as much as --python: without it the later
+            # `uv run` steps re-sync the venv against the managed 3.12 and throw
+            # the system interpreter's packages away.
+            echo "UV_PYTHON=/usr/bin/python3" >> "$GITHUB_ENV"
             uv sync --python /usr/bin/python3 --extra voice --group dev
           else
             uv sync --extra voice --group dev

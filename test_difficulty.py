@@ -18,11 +18,18 @@ adding its second sitting to its first — is pinned in `test_game_flow.py`.
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from datetime import date
 from itertools import pairwise
 from pathlib import Path
+
+# main reads its preference path at import time. Without this the suite would
+# read and write the real user's prefs.json, which is both a side effect on the
+# machine and a source of flakiness: a saved "numbers: [4]" changes what the
+# deck deals.
+os.environ.setdefault("ALMATHUS_PREFS_DIR", tempfile.mkdtemp(prefix="almathus-prefs-"))
 
 import main as almathus
 import results as resultslog

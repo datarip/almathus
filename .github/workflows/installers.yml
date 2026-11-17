@@ -78,7 +78,7 @@ jobs:
           du -sh dist/* 2>/dev/null | sort -h || true
 
       - name: Keep the artefacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: almathus-${{ matrix.os }}
           path: |
@@ -115,7 +115,7 @@ jobs:
           fi
           ./packaging/gpl-source.sh "$version" dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: almathus-gpl-source
           path: dist/almathus-voice-*.tar.gz

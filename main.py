@@ -3321,6 +3321,11 @@ class Almathus(tk.Tk):
         if scale == self._type_scale:
             return
         self._scale_fonts(scale, remeasure=False)
+        # The rebuild below replaces the page's buttons, but the topbar outlives
+        # it. Its pills were measured at the pre-settle type, so they would keep
+        # the old height and sit a couple of pixels lower than every header's
+        # back button. Rebuild the bar at the settled type too.
+        self._populate_topbar()
         self.show_settings()  # nothing else can be on screen this early
 
     def _schedule_settle(self, event=None) -> None:

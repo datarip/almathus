@@ -4491,6 +4491,7 @@ class Almathus(tk.Tk):
         # game has not been dealt or timed yet, so this leaves without asking.
         head = tk.Frame(f, bg=BG)
         head.pack(fill="x", padx=28, pady=(18, 0))
+        self._size_header_bar(head)  # the band every screen's pills centre on
         head.columnconfigure(0, weight=1, uniform="side")
         head.columnconfigure(1, weight=0)
         head.columnconfigure(2, weight=1, uniform="side")
@@ -4650,6 +4651,7 @@ class Almathus(tk.Tk):
         )
         head = tk.Frame(f, bg=BG)
         head.pack(side="top", fill="x", padx=28, pady=(18, 0))
+        self._size_header_bar(head)  # the band every screen's pills centre on
         head.columnconfigure(0, weight=1, uniform="side")
         head.columnconfigure(1, weight=0)
         head.columnconfigure(2, weight=1, uniform="side")

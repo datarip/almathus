@@ -4486,9 +4486,27 @@ class Almathus(tk.Tk):
         self._clear()
         f = self.tip_frame = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
+        # The menu button takes the same corner as on the card that follows, so
+        # a wrong setting caught at the reminder is one tap from the menu. The
+        # game has not been dealt or timed yet, so this leaves without asking.
+        head = tk.Frame(f, bg=BG)
+        head.pack(fill="x", padx=28, pady=(18, 0))
+        head.columnconfigure(0, weight=1, uniform="side")
+        head.columnconfigure(1, weight=0)
+        head.columnconfigure(2, weight=1, uniform="side")
+        Btn(
+            head,
+            T("menu"),
+            command=self.show_settings,
+            font=self.f_small,
+            bg=CARD_BG,
+            fg=TEXT,
+            padx=14,
+            pady=7,
+        ).grid(row=0, column=0, sticky="w")
         tk.Label(
-            f, text=T("articulate_tip_title"), font=self.f_title, fg=ACCENT, bg=BG
-        ).pack(pady=(70, 14))
+            head, text=T("articulate_tip_title"), font=self.f_title, fg=ACCENT, bg=BG
+        ).grid(row=0, column=1)
         # The "wait for GO" line is only true when the card is read aloud; with
         # dictation off there is no per-question cue to wait for.
         tip = T("articulate_tip")
@@ -4502,7 +4520,7 @@ class Almathus(tk.Tk):
             bg=BG,
             wraplength=560,
             justify="center",
-        ).pack(padx=40)
+        ).pack(padx=40, pady=(30, 0))
         Btn(
             f,
             T("go"),

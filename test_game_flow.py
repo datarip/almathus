@@ -43,6 +43,13 @@ def wait_for(app, predicate, timeout=15):
     return predicate()
 
 
+def descendants(widget):
+    """Every child of a widget, at any depth."""
+    for child in widget.winfo_children():
+        yield child
+        yield from descendants(child)
+
+
 class FakeSTT:
     """Stands in for voice.SpeechInput, with no microphone behind it."""
 
@@ -391,11 +398,26 @@ def test_dictation_modes():
 
 
 def test_voiced_intro_tip():
-    """A voiced game opens on the "speak clearly" tip and starts on GO."""
+    """A voiced game opens on the "speak clearly" tip, and GO starts it."""
     app = start(voice=True, dictation=True, tip=True)
     try:
         assert app.current is None, "the tip was skipped and a card was dealt"
         assert app.tip_frame.winfo_exists(), "the tip screen was not shown"
+
+        # Nothing has been dealt or timed yet, so the same menu button that asks
+        # on a card must leave the tip without asking.
+        menu = [
+            w
+            for w in descendants(app.tip_frame)
+            if isinstance(w, almathus.Btn) and w._text == almathus.T("menu")
+        ]
+        assert menu, "the tip screen has no way back to the menu"
+        menu[0]._command()  # what a tap on the button calls
+        assert app.topbar.winfo_manager(), "the menu did not come back from the tip"
+        assert not app.tip_frame.winfo_exists(), "the tip stayed on screen"
+
+        app.start_game("addition")  # the parent fixed the setting and went again
+        assert app.tip_frame.winfo_exists(), "the tip was skipped on the second start"
         app._begin_countdown()  # what the GO button does
         assert wait_for(app, lambda: app.current is not None), (
             "GO did not start the game"

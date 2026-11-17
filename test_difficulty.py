@@ -324,15 +324,26 @@ def test_deck_deals_the_repeats_twice():
 
 
 def test_easy_cards_are_left_out_when_switched_on():
-    """A subtraction inside one ten answers like its units, so the switch can
-    leave it out. It is a subtraction rule: no other operation repeats this way.
+    """Above 10, a subtraction that does not borrow repeats a units fact.
+
+    `19 − 9` is `9 − 9` with a ten left, so the switch leaves it out. The small
+    counterpart stays: `9 − 9` is the core drill. A card that crosses a ten,
+    `16 − 7`, is kept because `6 − 7` has no answer in the units.
     """
     assert almathus.repeats_units("subtraction", 19, 19)
+    assert almathus.repeats_units("subtraction", 19, 9)
+    assert almathus.repeats_units("subtraction", 18, 8)
+    assert almathus.repeats_units("subtraction", 17, 7)
+    assert almathus.repeats_units("subtraction", 15, 13)
+    assert almathus.repeats_units("subtraction", 14, 12)
     assert almathus.repeats_units("subtraction", 15, 10)
-    assert almathus.repeats_units("subtraction", 10, 10)
+    assert almathus.repeats_units("subtraction", 20, 10)
     assert not almathus.repeats_units("subtraction", 16, 7)  # crosses a ten
+    assert not almathus.repeats_units("subtraction", 20, 9)  # crosses a ten
+    assert not almathus.repeats_units("subtraction", 13, 4)  # crosses a ten
     assert not almathus.repeats_units("subtraction", 9, 9)  # the core drill
-    assert not almathus.repeats_units("subtraction", 20, 10)  # answer 10
+    assert not almathus.repeats_units("subtraction", 8, 8)
+    assert not almathus.repeats_units("subtraction", 7, 7)
     assert not almathus.repeats_units("addition", 12, 2)
     assert not almathus.repeats_units("multiplication", 10, 2)
     assert not almathus.repeats_units("division", 20, 2)
@@ -342,13 +353,14 @@ def test_easy_cards_are_left_out_when_switched_on():
     plain = [(c.a, c.b) for c in almathus.make_deck("subtraction", 40, allowed)]
     assert (15, 10) in plain
 
-    # On, none of them come back, but 20 − 10 (answer 10, not a unit) stays.
+    # On, none of them come back, but 20 − 9 crosses a ten and stays.
     easy_free = [
         (c.a, c.b)
         for c in almathus.make_deck("subtraction", 40, allowed, skip_easy=True)
     ]
     assert not any(almathus.repeats_units("subtraction", a, b) for a, b in easy_free)
-    assert (20, 10) in easy_free
+    assert (20, 9) in easy_free
+    assert (20, 10) not in easy_free
     assert all(b in allowed for _, b in easy_free)
 
     # Revision follows the setting too: yesterday's easy card is not forced in.
@@ -356,12 +368,11 @@ def test_easy_cards_are_left_out_when_switched_on():
     assert all((c.a, c.b) != (15, 10) for c in revised)
 
 
-def test_the_filter_stands_down_when_it_would_leave_one_fact():
-    """Switching on only 10 is a request for that number, not for one card.
+def test_the_filter_stands_down_when_it_would_leave_too_few_facts():
+    """Switching on only 10 is a request for that number, not for no cards.
 
-    Every −10 card except 20 − 10 is easy, so filtering them would deal that
-    single fact twenty times. The number selection wins and the deck is not
-    filtered.
+    Every −10 card above 10 repeats its units, so filtering them would leave the
+    pool empty. The number selection wins and the deck is not filtered.
     """
     ops = [
         (c.a, c.b) for c in almathus.make_deck("subtraction", 20, {10}, skip_easy=True)
@@ -393,7 +404,7 @@ def main() -> int:
         test_language_without_translated_names_uses_english,
         test_deck_deals_the_repeats_twice,
         test_easy_cards_are_left_out_when_switched_on,
-        test_the_filter_stands_down_when_it_would_leave_one_fact,
+        test_the_filter_stands_down_when_it_would_leave_too_few_facts,
         test_spread_separates_twins,
     )
     failures = []

@@ -424,6 +424,106 @@ def player_failures() -> list[str]:
     return failures
 
 
+def echo_failures() -> list[str]:
+    """The question played out of the speakers comes back into the microphone.
+
+    A synthetic room: the phrase is delayed and coloured, the mic hears it over
+    room noise, and the child answers on top of it. Three things have to hold —
+    the echo is gone from what the recognizer gets, the answer survives, and the
+    stretch before the delay is known is silent rather than the question, which
+    would trip the onset and stop the reading the instant it started.
+    """
+    try:
+        import numpy as np
+    except Exception:  # noqa: BLE001 - the voice extra is optional
+        print("(numpy absent: skipping the echo guard tests)")
+        return []
+    failures: list[str] = []
+    rate = 16000  # what the mic runs at
+    block = 320  # 20 ms, the blocks the capture loop hands over
+    rng = np.random.default_rng(7)
+
+    def rms(x) -> float:
+        return float(np.sqrt(np.mean(np.asarray(x, dtype=np.float32) ** 2) + 1e-12))
+
+    n = rate * 13 // 10  # a 1.3 s question
+    t = np.arange(n) / rate
+    question = np.zeros(n, np.float32)
+    for at in (0.12, 0.42, 0.75):
+        start = int(at * rate)
+        end = start + int(0.25 * rate)
+        env = np.hanning(end - start).astype(np.float32)
+        voice = np.convolve(rng.normal(0, 1, end - start), [0.4, 0.3, 0.2, 0.1])
+        question[start:end] = (
+            9000
+            * env
+            * voice[: end - start]
+            / float(np.abs(env * voice[: end - start]).max())
+        )
+    delay = 720  # 45 ms of output and input buffers plus the air
+    echo = np.convolve(question, [0.55, 0.28, -0.12, 0.06])[:n] * 0.35
+    room = 150.0
+    heard = np.zeros(n + delay + 2000, np.float32)
+    heard[delay : delay + n] += echo
+    heard += rng.normal(0, room, len(heard)).astype(np.float32)
+    answer_at = int(0.62 * rate)
+    answer_n = int(0.30 * rate)
+    answer = (
+        3000 * np.hanning(answer_n) * np.sin(2 * np.pi * 900 * t[:answer_n])
+    ).astype(np.float32)
+    heard[answer_at : answer_at + answer_n] += answer
+
+    def blocks(audio):
+        return [
+            audio[i : i + block].astype(np.int16)
+            for i in range(0, len(audio) - block, block)
+        ]
+
+    def run(guard, parts):
+        return np.concatenate([guard.clean(p) for p in parts]).astype(np.float32)
+
+    parts = blocks(heard)
+    raw = np.concatenate(parts).astype(np.float32)
+    pcm = question.astype(np.int16)
+    guard = voicemod._EchoGuard(rate)
+    guard.start(pcm, rate)
+    clean = run(guard, parts)
+    quiet, loud = int(0.45 * rate), int(0.58 * rate)  # echo only, no answer
+    if rms(raw[quiet:loud]) < 2 * room:
+        failures.append("  echo: the test signal carries no echo")
+    elif rms(clean[quiet:loud]) > 1.5 * room:
+        failures.append(
+            f"  echo: {rms(clean[quiet:loud]):.0f} left of a {rms(raw[quiet:loud]):.0f} echo"
+        )
+    if rms(clean[answer_at : answer_at + answer_n]) < 0.7 * rms(answer):
+        failures.append("  echo: the cancellation took the answer with it")
+    if not np.all(clean[: int(0.30 * rate)] == 0):
+        failures.append("  echo: the question leaked before the delay was known")
+    if guard.residual <= 0:
+        failures.append("  echo: the fit never held")
+
+    # Nothing to cancel — headphones, or the speakers down low. The guard must
+    # give up rather than silence the card, and the answer must come through.
+    tone = (3000 * np.sin(2 * np.pi * 300 * t)).astype(np.int16)
+    guard = voicemod._EchoGuard(rate)
+    guard.start(tone, rate)
+    clean = run(guard, parts)
+    if guard.residual > 0:
+        failures.append("  echo: cancelled a phrase the mic never heard")
+    if rms(clean[answer_at : answer_at + answer_n]) < 0.7 * rms(answer):
+        failures.append("  echo: the answer was lost with nothing to cancel")
+
+    # A phrase that was cut stops the subtraction where the sound stopped.
+    guard = voicemod._EchoGuard(rate)
+    guard.start(pcm, rate)
+    guard.played(pcm, int(0.5 * rate), rate)
+    cut = run(guard, parts)
+    late = slice(int(0.8 * rate), int(0.9 * rate))
+    if not np.array_equal(cut[late], raw[late]):
+        failures.append("  echo: a cut phrase was subtracted after it stopped")
+    return failures
+
+
 def table_failures() -> list[str]:
     """Every written-out number word is recognized as itself, 0..100.
 
@@ -455,6 +555,7 @@ def main() -> int:
     failures += sidecar_failures()
     failures += resample_failures()
     failures += player_failures()
+    failures += echo_failures()
     failures += table_failures()
     total = (
         len(CASES)
@@ -465,6 +566,8 @@ def main() -> int:
         + 1  # the sidecar round trip
         + 2  # the resampler wrap and the edge fade
         + 3  # the player: full length, a cut, the ramp
+        + 5  # the echo guard: the echo, the answer, the lead, a cut phrase
+        + 2  # ...and its no-echo fallback
         + len(languages.LANGUAGES)  # every language has an espeak mapping
         + len(voices.VOICES)  # every catalog entry is complete
         + len(voicemod._TABLE_NUMBERS)  # every table language has a grammar

@@ -312,6 +312,36 @@ def sidecar_failures() -> list[str]:
     return failures
 
 
+def resample_failures() -> list[str]:
+    """The resampler clips instead of wrapping, and the phrase starts and ends silent.
+
+    Piper normalises every phrase to full scale, so the interpolation filter's
+    overshoot lands just past 32767. A plain cast to int16 wraps there: the
+    loudest sample comes back as the opposite rail, which is one full-scale
+    click in a question and the reason its last word sounds cut off. A flat
+    full-scale step is the smallest input that has no room left above it.
+    """
+    try:
+        import numpy as np
+    except Exception:  # noqa: BLE001 - the voice extra is optional
+        print("(numpy absent: skipping the resampler tests)")
+        return []
+    failures: list[str] = []
+    full = np.full(4000, 32767, dtype=np.int16)
+    out = voicemod._resample_pcm(full, 22050, 48000)
+    low = int(out.min())
+    if low < 0:
+        failures.append(f"  resample: wrapped to {low}, a click at full scale")
+    if int(out.max()) > 32767:
+        failures.append("  resample: value past int16 range")
+    shaped = voicemod._soften_edges(np.full(4000, 1000, dtype=np.int16), 48000)
+    if int(shaped[0]) != 0 or int(shaped[-1]) != 0:
+        failures.append("  fade: the phrase does not start and end at silence")
+    if int(shaped[2000]) != 1000:
+        failures.append("  fade: the middle of the phrase was changed")
+    return failures
+
+
 def table_failures() -> list[str]:
     """Every written-out number word is recognized as itself, 0..100.
 
@@ -341,6 +371,7 @@ def main() -> int:
     failures += voice_failures()
     failures += spoken_failures()
     failures += sidecar_failures()
+    failures += resample_failures()
     failures += table_failures()
     total = (
         len(CASES)
@@ -349,6 +380,7 @@ def main() -> int:
         + len(DIGIT_CASES)
         + 1  # the Piper coverage check
         + 1  # the sidecar round trip
+        + 2  # the resampler wrap and the edge fade
         + len(languages.LANGUAGES)  # every language has an espeak mapping
         + len(voices.VOICES)  # every catalog entry is complete
         + len(voicemod._TABLE_NUMBERS)  # every table language has a grammar

@@ -77,10 +77,10 @@ RANGES = {
 # The second operand is picked from the numbers switched on in the settings
 # screen, so the kid can drill one at a time (only [7] => 3×7, 9×7, 4×7...).
 # 0 is selectable for addition, subtraction and multiplication; division skips
-# it because there is no division by zero. A first run starts with 1..10, so a
-# fresh install keeps the deck it always had and 0 is one tap away.
+# it because there is no division by zero. A first run starts with all of them,
+# 0 to 10, so the full fact set is available without a trip to the settings.
 NUM_MIN, NUM_MAX = 0, 10
-DEFAULT_NUMBERS = frozenset(range(1, NUM_MAX + 1))
+DEFAULT_NUMBERS = frozenset(range(NUM_MIN, NUM_MAX + 1))
 
 # The language the app runs in. Every supported language has screen text (see
 # i18n.py); a missing entry still falls back to English rather than a raw key.
@@ -680,11 +680,11 @@ def write_prefs(**updates) -> None:
 def load_allowed() -> set[int]:
     """Numbers selected last time. A drill often runs for weeks on one number,
     so the choice has to survive a restart. Anything unreadable or nonsensical
-    falls back to the usual 1..10.
+    falls back to the full 0..10.
 
     0 is only useful beside a number above zero: division has no 0 card, and a
-    selection of nothing but 0 could not be dealt. That selection falls back
-    rather than leaving the game with an empty deck.
+    selection of nothing but 0 could not be dealt. That selection falls back to
+    the full row rather than leaving the game with an empty deck.
     """
     try:
         raw = read_prefs()["numbers"]
@@ -4015,8 +4015,8 @@ class Almathus(tk.Tk):
     def _build_number_row(self, parent):
         """Row of [0]..[10] toggles: the numbers every operation is played with.
 
-        0 is off on a first run so the deck starts as it always did. It is a
-        number like the others once switched on, except that division skips it.
+        0 starts switched on with the rest. It is a number like the others,
+        except that division skips it.
         """
         panel = RoundedPanel(parent)
         panel.canvas.pack(fill="x", pady=(0, 22))

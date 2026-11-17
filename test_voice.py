@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import languages
@@ -286,6 +287,15 @@ def sidecar_failures() -> list[str]:
         sounddevice.play = lambda audio, rate: played.append((len(audio), rate))
         sounddevice.wait = lambda: None
         sounddevice.stop = lambda: None
+
+        # The phrase reaches the device through the player's own stream, so
+        # that is where the test counts it: the stub sidecar sends silence, and
+        # opening a real stream for it would only be a wait.
+        def record(player) -> None:
+            played.append((len(player._audio), player._rate))
+
+        saved_play = voicemod._PhrasePlayer.play
+        voicemod._PhrasePlayer.play = record  # type: ignore[assignment]
         tts = None
         try:
             tts = voicemod.TTS("fr")
@@ -303,6 +313,7 @@ def sidecar_failures() -> list[str]:
         finally:
             if tts is not None:
                 tts.close()
+            voicemod._PhrasePlayer.play = saved_play  # type: ignore[method-assign]
             sounddevice.play, sounddevice.wait, sounddevice.stop = saved
             for name, value in old.items():
                 if value is None:
@@ -342,6 +353,77 @@ def resample_failures() -> list[str]:
     return failures
 
 
+def player_failures() -> list[str]:
+    """A phrase plays to its last sample, and a cut one stops on the fade.
+
+    Two things are checked that a question depends on: `play()` does not come
+    back before the audio is over (that was the tail being clipped), and
+    `cut()` really ends the stream (that is the answer-over-the-question path).
+    The signal is silence on purpose — the tests must not make a noise on the
+    machine running them.
+    """
+    try:
+        import numpy as np
+        import sounddevice
+    except Exception:  # noqa: BLE001 - no audio stack on a build box
+        print("(no audio stack on this machine: skipping the player tests)")
+        return []
+    failures: list[str] = []
+    rate = 48000
+    half = voicemod._PhrasePlayer(
+        sounddevice, np.zeros(rate // 2, dtype=np.int16), rate
+    )
+    started = time.perf_counter()
+    half.play()
+    took = time.perf_counter() - started
+    if took < 0.35:
+        failures.append(f"  player: 0.5s of audio returned in {took:.2f}s, tail cut")
+    long = np.zeros(rate * 3, dtype=np.int16)
+    cut = voicemod._PhrasePlayer(sounddevice, long, rate)
+    worker = threading.Thread(target=cut.play, daemon=True)
+    started = time.perf_counter()
+    worker.start()
+    time.sleep(0.1)
+    cut.cut()
+    worker.join(timeout=5)
+    took = time.perf_counter() - started
+    if worker.is_alive():
+        failures.append("  player: a cut phrase never stopped")
+    elif took > 2.0:
+        failures.append(f"  player: a cut phrase took {took:.2f}s to stop")
+    # The fade itself, block by block and without a device: full-scale audio
+    # cut in the middle must come out as a ramp, never as a jump.
+    tone = voicemod._PhrasePlayer(
+        sounddevice, np.full(rate, 32767, dtype=np.int16), rate
+    )
+    block = np.zeros((240, 2), dtype=np.int16)  # 5 ms blocks
+    tone._callback(block, 240, None, None)
+    tone.cut()
+    seen: list[int] = []
+    ended = False
+    for _ in range(4 * rate // 240):  # a cap, so a fade that never ends fails
+        try:
+            tone._callback(block, 240, None, None)
+        except sounddevice.CallbackStop:
+            ended = True  # that block was written before the stream stopped
+        seen.extend(int(v) for v in block[:, 0])
+        if ended:
+            break
+    if not ended:
+        failures.append("  player: a cut phrase kept playing")
+    elif not seen:
+        failures.append("  player: a cut phrase emitted nothing after the cut")
+    else:
+        steps = np.abs(np.diff(np.array([32767, *seen], dtype=np.int32)))
+        if int(steps.max()) > 400:
+            failures.append(f"  player: the cut jumped by {int(steps.max())}, no fade")
+        if seen[-1] > 400:
+            failures.append(f"  player: the cut ended at {seen[-1]}, not silence")
+        if min(seen) < 0:
+            failures.append("  player: the fade went below silence")
+    return failures
+
+
 def table_failures() -> list[str]:
     """Every written-out number word is recognized as itself, 0..100.
 
@@ -372,6 +454,7 @@ def main() -> int:
     failures += spoken_failures()
     failures += sidecar_failures()
     failures += resample_failures()
+    failures += player_failures()
     failures += table_failures()
     total = (
         len(CASES)
@@ -381,6 +464,7 @@ def main() -> int:
         + 1  # the Piper coverage check
         + 1  # the sidecar round trip
         + 2  # the resampler wrap and the edge fade
+        + 3  # the player: full length, a cut, the ramp
         + len(languages.LANGUAGES)  # every language has an espeak mapping
         + len(voices.VOICES)  # every catalog entry is complete
         + len(voicemod._TABLE_NUMBERS)  # every table language has a grammar

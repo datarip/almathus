@@ -429,10 +429,10 @@ def _resample_pcm(audio: Any, sample_rate: int, target: int) -> Any:
 def _soften_edges(audio: Any, sample_rate: int) -> Any:
     """Ramp the first and last few milliseconds of a phrase to silence.
 
-    The stream is opened once per phrase and torn down when it ends or is
-    interrupted, so its first and last buffer can land on a non-zero sample and
-    click. Piper already leaves silence at both ends of most phrases, and this
-    costs nothing where it does.
+    The stream is opened once per phrase and closed when it ends, so its first
+    and last buffer can land on a non-zero sample and click. Piper already
+    leaves silence at both ends of most phrases, and this costs nothing where
+    it does.
     """
     import numpy as np
 
@@ -444,6 +444,102 @@ def _soften_edges(audio: Any, sample_rate: int) -> Any:
     out[:ramp] = (out[:ramp] * curve).astype(np.int16)
     out[-ramp:] = (out[-ramp:] * curve[::-1]).astype(np.int16)
     return out
+
+
+# Seconds of ramp when a phrase is cut short, so an interrupted question fades
+# instead of ending on whatever sample the device had reached.
+_CUT_FADE = 0.015
+
+
+class _PhrasePlayer:
+    """One phrase through an output stream of its own, so it can be faded out.
+
+    sounddevice's `play()`/`stop()` pair cannot ramp: stopping it cuts the
+    waveform wherever the device has got to, which clicks on the syllable being
+    said. The game stops the voice every time a child answers over a question
+    or a screen is left, so that was the common case. Here the callback owns a
+    gain, so a cut ramps to silence over `_CUT_FADE` and the stream stops
+    itself once it is there.
+    """
+
+    def __init__(self, sd: Any, audio: Any, sample_rate: int):
+        import numpy as np
+
+        self._sd = sd
+        self._np = np
+        self._audio = audio
+        self._rate = sample_rate
+        self._pos = 0
+        self._gain = 1.0
+        self._fade = max(1, round(sample_rate * _CUT_FADE))
+        self._cut = False
+        self._lock = threading.Lock()
+        self.done = threading.Event()
+
+    def play(self) -> None:
+        """Play to the end, or until `cut()`; return once the device is silent."""
+        try:
+            stream = self._sd.OutputStream(
+                samplerate=self._rate,
+                channels=self._channels(),
+                dtype="int16",
+                callback=self._callback,
+                finished_callback=self.done.set,
+            )
+        except Exception as e:
+            # No stream: no fade either, but the phrase still has to be heard.
+            _dbg("stream open failed, playing without a fade:", repr(e))
+            self._sd.play(self._audio, self._rate)
+            self._sd.wait()
+            return
+        try:
+            stream.start()
+            if not self.done.wait(timeout=len(self._audio) / self._rate + 2.0):
+                _dbg("phrase: the stream never finished")
+        finally:
+            for close in (stream.stop, stream.close):
+                with contextlib.suppress(Exception):
+                    close()
+
+    def cut(self) -> None:
+        """Fade out from here. Called from the UI thread, and never blocks."""
+        with self._lock:
+            self._cut = True
+
+    def _channels(self) -> int:
+        try:
+            return max(
+                1,
+                min(
+                    2, int(self._sd.query_devices(kind="output")["max_output_channels"])
+                ),
+            )
+        except Exception:
+            return 1
+
+    def _gains(self, frames: int) -> Any:
+        """The gain for each of the next `frames` samples, ramping once cut."""
+        np = self._np
+        with self._lock:
+            step = -1.0 / self._fade if self._cut else 0.0
+        gains = np.clip(
+            self._gain + step * np.arange(frames, dtype=np.float32), 0.0, 1.0
+        )
+        self._gain = min(1.0, max(0.0, float(gains[-1]) + step))
+        return gains
+
+    def _callback(self, outdata: Any, frames: int, _time: Any, _status: Any) -> None:
+        np = self._np
+        n = min(frames, len(self._audio) - self._pos)
+        if n > 0:
+            block = self._audio[self._pos : self._pos + n].astype(np.float32)
+            self._pos += n
+            gains = self._gains(n)[:, None]
+            outdata[:n] = np.rint(block[:, None] * gains).astype(np.int16)
+        if n < frames:
+            outdata[n:] = 0
+        if self._pos >= len(self._audio) or (self._cut and self._gain <= 0.0):
+            raise self._sd.CallbackStop
 
 
 def _resample_to_device(audio: Any, sample_rate: int) -> tuple[Any, int]:
@@ -489,6 +585,8 @@ class TTS:
         self._sidecar_ready = threading.Event()
         self._play_until = 0.0  # performance-clock second the speech ends
         self._gen = 0  # so a superseded utterance cannot touch the current one
+        self._player: _PhrasePlayer | None = None  # the phrase on air, if any
+        self._player_lock = threading.Lock()
         self._pyttsx = False
         self._setup(lang)
 
@@ -768,8 +866,15 @@ class TTS:
             audio, sample_rate = _resample_to_device(audio, sample_rate)
             audio = _soften_edges(audio, sample_rate)
             self._play_until = time.perf_counter() + len(audio) / sample_rate + 0.05
-            sd.play(audio, sample_rate)
-            sd.wait()
+            player = _PhrasePlayer(sd, audio, sample_rate)
+            with self._player_lock:
+                self._player = player
+            try:
+                player.play()
+            finally:
+                with self._player_lock:
+                    if self._player is player:
+                        self._player = None
         except Exception as e:
             _dbg("sidecar playback failed:", repr(e))
             self._fail_sidecar()
@@ -816,11 +921,19 @@ class TTS:
         if proc and proc.poll() is None:
             with contextlib.suppress(Exception):
                 proc.terminate()
+        with self._player_lock:
+            player, self._player = self._player, None
+        if player is not None:
+            # The fade takes a few milliseconds, and the mic must stay off for
+            # it: arming it on the last syllable captures the question as the
+            # answer to itself.
+            player.cut()
+            self._play_until = time.perf_counter() + _CUT_FADE + 0.01
         if self._backend == "piper-sidecar":
             with contextlib.suppress(Exception):
                 import sounddevice as sd
 
-                sd.stop()
+                sd.stop()  # the no-stream fallback, which cannot fade
 
     def close(self) -> None:
         """Stop the sidecar, if one is running. Called when the app is done

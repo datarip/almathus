@@ -3779,7 +3779,7 @@ class Almathus(tk.Tk):
         # in the top bar, where they are reachable from every screen and shown
         # once: a flag for the language, a chart for the stats.
         footer = tk.Frame(col, bg=BG)
-        footer.pack(pady=(12, 2))
+        footer.pack(fill="x", pady=(12, 2))
 
         settle: dict[str, str | None] = {"job": None}  # the follow-up measurement
 
@@ -3843,13 +3843,13 @@ class Almathus(tk.Tk):
             self._bind_wheel_tree(child, scroll)
 
     def _layout_footer(self, footer, on_relayout=None) -> None:
-        """Put the switches on centred rows at their own width.
+        """Put the switches between the page edges at their own width.
 
-        The row used to give every switch the widest label's width and stretch
-        it across the box. That turned four small settings into four huge
-        buttons, and at a desktop width the fourth landed on a row of its own.
-        Now each switch keeps the width of its text, four fit on one line, and
-        the rows only wrap when the window is genuinely too narrow.
+        Each switch keeps the width of its text. On a full row the first button
+        sits at the left edge and the last at the right edge, and the spare
+        width is shared by the gaps, so the row lines up with the panels above
+        instead of floating in the middle. On a genuinely narrow window the row
+        wraps and the rows centre.
 
         `on_relayout` is called after the row count changes: the screen's height
         is measured once when it is built, and a later fold onto more rows makes
@@ -3894,14 +3894,33 @@ class Almathus(tk.Tk):
             for b in buttons:
                 b.pack_forget()
                 b.grid_forget()
-            for c in range(len(buttons)):
+            # A full row holds the page's edges and puts the slack in the gaps,
+            # so the switches line up with the panels above instead of floating
+            # in the middle at their own width.
+            one_row = per_row == len(buttons)
+            footer.pack_configure(fill="x" if one_row else "")
+            for c in range(2 * len(buttons)):
                 footer.grid_columnconfigure(c, weight=0, uniform="")
-            for i, b in enumerate(buttons):
-                row, place = divmod(i, per_row)
-                in_row = min(per_row, len(buttons) - row * per_row)
-                # Centre a short last row instead of leaving it hanging left.
-                offset = (per_row - in_row) // 2
-                b.grid(row=row, column=offset + place, padx=pad, pady=4)
+            if one_row:
+                for c in range(1, 2 * len(buttons) - 1, 2):
+                    footer.grid_columnconfigure(c, weight=1)
+                for i, b in enumerate(buttons):
+                    b.grid(
+                        row=0,
+                        column=2 * i,
+                        padx=(
+                            0 if i == 0 else pad,
+                            0 if i == len(buttons) - 1 else pad,
+                        ),
+                        pady=4,
+                    )
+            else:
+                for i, b in enumerate(buttons):
+                    row, place = divmod(i, per_row)
+                    in_row = min(per_row, len(buttons) - row * per_row)
+                    # Centre a short last row instead of leaving it hanging left.
+                    offset = (per_row - in_row) // 2
+                    b.grid(row=row, column=offset + place, padx=pad, pady=4)
             if on_relayout is not None:
                 # Deferred, not called here: measuring the new rows now would
                 # need a nested `update_idletasks` from inside the Configure

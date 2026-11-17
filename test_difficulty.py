@@ -323,6 +323,53 @@ def test_deck_deals_the_repeats_twice():
     assert len(almathus.make_deck("subtraction", 20, {4})) == 20
 
 
+def test_easy_cards_are_left_out_when_switched_on():
+    """A subtraction inside one ten answers like its units, so the switch can
+    leave it out. It is a subtraction rule: no other operation repeats this way.
+    """
+    assert almathus.repeats_units("subtraction", 19, 19)
+    assert almathus.repeats_units("subtraction", 15, 10)
+    assert almathus.repeats_units("subtraction", 10, 10)
+    assert not almathus.repeats_units("subtraction", 16, 7)  # crosses a ten
+    assert not almathus.repeats_units("subtraction", 9, 9)  # the core drill
+    assert not almathus.repeats_units("subtraction", 20, 10)  # answer 10
+    assert not almathus.repeats_units("addition", 12, 2)
+    assert not almathus.repeats_units("multiplication", 10, 2)
+    assert not almathus.repeats_units("division", 20, 2)
+
+    # Off, the same deck still deals the easy cards.
+    allowed = {9, 10}
+    plain = [(c.a, c.b) for c in almathus.make_deck("subtraction", 40, allowed)]
+    assert (15, 10) in plain
+
+    # On, none of them come back, but 20 − 10 (answer 10, not a unit) stays.
+    easy_free = [
+        (c.a, c.b)
+        for c in almathus.make_deck("subtraction", 40, allowed, skip_easy=True)
+    ]
+    assert not any(almathus.repeats_units("subtraction", a, b) for a, b in easy_free)
+    assert (20, 10) in easy_free
+    assert all(b in allowed for _, b in easy_free)
+
+    # Revision follows the setting too: yesterday's easy card is not forced in.
+    revised = almathus.make_deck("subtraction", 20, allowed, [(15, 10)], skip_easy=True)
+    assert all((c.a, c.b) != (15, 10) for c in revised)
+
+
+def test_the_filter_stands_down_when_it_would_leave_one_fact():
+    """Switching on only 10 is a request for that number, not for one card.
+
+    Every −10 card except 20 − 10 is easy, so filtering them would deal that
+    single fact twenty times. The number selection wins and the deck is not
+    filtered.
+    """
+    ops = [
+        (c.a, c.b) for c in almathus.make_deck("subtraction", 20, {10}, skip_easy=True)
+    ]
+    assert (15, 10) in ops
+    assert len(set(ops)) > 1
+
+
 def test_spread_separates_twins():
     """The shuffle that mixes revision in never leaves a pair side by side."""
     for n in (2, 3, 5, 8):
@@ -345,6 +392,8 @@ def main() -> int:
         test_regional_english_log_uses_english_names,
         test_language_without_translated_names_uses_english,
         test_deck_deals_the_repeats_twice,
+        test_easy_cards_are_left_out_when_switched_on,
+        test_the_filter_stands_down_when_it_would_leave_one_fact,
         test_spread_separates_twins,
     )
     failures = []

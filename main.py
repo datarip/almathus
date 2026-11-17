@@ -634,6 +634,11 @@ GO_FLASH_MS = 500  # how long GO! holds the question pill before the question re
 # would eat the round.
 REPEAT_TIMES = 2
 
+# A deck filtered down to fewer different facts than this is not a drill. With
+# only 10 switched on, dropping the easy subtraction leaves 20 − 10 alone; the
+# number selection wins there and the filter stands down.
+MIN_FILTERED_POOL = 5
+
 
 def read_prefs() -> dict:
     """Everything remembered between runs. Anything unreadable reads as empty."""
@@ -696,6 +701,16 @@ def load_dictation() -> bool:
     child who is still learning to read the signs needs to hear the card, and
     that is the mode the game was built around."""
     return bool(read_prefs().get("dictation", True))
+
+
+def load_skip_easy() -> bool:
+    """Whether the deck leaves out cards that repeat their units digits.
+
+    Off unless it was switched on: 19 − 10 is 9 − 0, and that is exactly the
+    relation between a ten and its units a child may still be learning. A
+    parent who wants the cards spent on the harder facts switches it on.
+    """
+    return bool(read_prefs().get("skip_easy", False))
 
 
 def load_language() -> str | None:
@@ -852,6 +867,24 @@ def every_operation(mode: str, allowed: set[int]) -> list[tuple[int, int]]:
     return pairs
 
 
+def repeats_units(mode: str, a: int, b: int) -> bool:
+    """True when the card asks the same fact as its units digits alone.
+
+    A subtraction inside one ten hides the ten: 19 − 19 is 9 − 9, and 15 − 10
+    is 5 − 0. Those cards drill nothing new for a child who already reads the
+    units, so the easy-card switch leaves them out. A card that crosses a ten,
+    like 16 − 7, is kept: 6 − 7 has no answer in the units.
+
+    Only subtraction can repeat this way. Adding, multiplying or dividing a ten
+    changes the value, so the other modes are never filtered. Both operands
+    under 10 are left alone, because that is the core drill. 20 − 10 is kept
+    too: its answer is a ten, not the units digit.
+    """
+    if mode != "subtraction" or (a < 10 and b < 10):
+        return False
+    return a % 10 - b % 10 == a - b
+
+
 def _deal(pool: list[tuple[int, int]], n: int) -> list[tuple[int, int]]:
     """n operations as a shuffled bag: no operation comes back until every other
     one has been asked. Drawing each card independently meant the same easy sum
@@ -911,6 +944,7 @@ def make_deck(
     allowed: set[int] | None = None,
     repeat: Sequence[tuple[int, int]] = (),
     times: int = REPEAT_TIMES,
+    skip_easy: bool = False,
 ) -> list[Card]:
     """Deal n cards, with `repeat` — last session's difficulties — dealt `times`
     each so a fact that fought back is met again before it is forgotten.
@@ -920,8 +954,18 @@ def make_deck(
     punishment rather than a drill. Operations the current settings cannot ask
     are dropped, so switching from −4 to ×2 quietly leaves the −4 revision behind
     instead of dealing a card that does not belong to the session.
+
+    `skip_easy` drops the cards whose answer is the same as their units-only
+    version (see `repeats_units`), including a revision card. It is ignored when
+    it would leave fewer than MIN_FILTERED_POOL facts: a parent who switched on
+    only 10 is asking for that number, and a deck of 20 − 10 repeated is not a
+    drill.
     """
     pool = every_operation(mode, allowed or set(range(NUM_MIN, NUM_MAX + 1)))
+    if skip_easy:
+        kept = [op for op in pool if not repeats_units(mode, *op)]
+        if len(kept) >= MIN_FILTERED_POOL:
+            pool = kept
     if not pool:
         return []
     askable = set(pool)
@@ -3116,6 +3160,9 @@ class Almathus(tk.Tk):
         # the card is only *shown* — and then nothing stands between showing it
         # and playing it, so the clock and the microphone both start at once.
         self.dictation_enabled = tk.BooleanVar(value=load_dictation())
+        # Leave the subtraction cards that repeat their units digits out of the
+        # deck; off by default, because those cards teach tens and units.
+        self.skip_easy = tk.BooleanVar(value=load_skip_easy())
 
         # thread-safe channel: worker threads (STT/TTS) post callables here and
         # the pump runs them on the Tk main loop — never touch Tk off-thread.
@@ -3753,6 +3800,7 @@ class Almathus(tk.Tk):
             if canvas.winfo_exists():
                 fit_scrolled()
 
+        self._build_skip_easy_toggle(footer)
         self._build_voice_toggle(footer)
         self._build_dictation_toggle(footer)
         self._build_girly_toggle(footer)
@@ -4392,6 +4440,32 @@ class Almathus(tk.Tk):
         if self.voice_enabled.get():
             self.after(700, self._calibrate_mic)
 
+    def _build_skip_easy_toggle(self, parent):
+        """Leave out the subtraction cards that repeat their units digits.
+
+        Off by default: 19 − 10 answers like 9 − 0, which is exactly the
+        tens-to-units relation a child may still be learning. A parent who wants
+        the deck spent on the harder facts switches it on, and the choice is
+        remembered.
+        """
+        btn = Btn(parent, "", font=self.f_body, padx=22, pady=10)
+
+        def refresh():
+            on = self.skip_easy.get()
+            btn.config(text=f"{T('skip_easy_toggle')} : {'ON ✅' if on else 'OFF'}")
+            paint_chip(btn, on)
+
+        def toggle_skip_easy() -> None:
+            self.skip_easy.set(not self.skip_easy.get())
+            # written on every tap: quitting goes through os._exit(), so there is
+            # no exit hook late enough to be trusted with this
+            write_prefs(skip_easy=self.skip_easy.get())
+            refresh()
+
+        btn._command = toggle_skip_easy
+        btn.pack(side="left", padx=8)
+        refresh()
+
     def _build_voice_toggle(self, parent):
         # Only offer the toggle when voice input actually works; otherwise show
         # nothing (a pip/dependency string is not something a kid should see).
@@ -4477,7 +4551,13 @@ class Almathus(tk.Tk):
         self.n_cards = self.count_var.get()
         # Yesterday's hard cards, dealt again before they are forgotten.
         revision = carry_over(resultslog.load_sessions(), mode, self.allowed)
-        self.deck = make_deck(mode, self.n_cards, self.allowed, revision)
+        self.deck = make_deck(
+            mode,
+            self.n_cards,
+            self.allowed,
+            revision,
+            skip_easy=self.skip_easy.get(),
+        )
         self.results = []
         self.retry_queue = []
         self.retry_seen = set()

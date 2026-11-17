@@ -635,8 +635,8 @@ GO_FLASH_MS = 500  # how long GO! holds the question pill before the question re
 REPEAT_TIMES = 2
 
 # A deck filtered down to fewer different facts than this is not a drill. With
-# only 10 switched on, dropping the easy subtraction leaves 20 − 10 alone; the
-# number selection wins there and the filter stands down.
+# only 10 switched on, every subtraction above 10 repeats its units, so the
+# filter would leave nothing; the number selection wins and it stands down.
 MIN_FILTERED_POOL = 5
 
 
@@ -704,11 +704,12 @@ def load_dictation() -> bool:
 
 
 def load_skip_easy() -> bool:
-    """Whether the deck leaves out cards that repeat their units digits.
+    """Whether the deck leaves out subtraction above 10 that needs no borrow.
 
-    Off unless it was switched on: 19 − 10 is 9 − 0, and that is exactly the
-    relation between a ten and its units a child may still be learning. A
-    parent who wants the cards spent on the harder facts switches it on.
+    Off unless it was switched on: 19 − 9 is 9 − 9 with a ten left, and that is
+    exactly the relation between a ten and its units a child may still be
+    learning. A parent who wants the cards spent on facts that cross a ten
+    switches it on.
     """
     return bool(read_prefs().get("skip_easy", False))
 
@@ -868,21 +869,21 @@ def every_operation(mode: str, allowed: set[int]) -> list[tuple[int, int]]:
 
 
 def repeats_units(mode: str, a: int, b: int) -> bool:
-    """True when the card asks the same fact as its units digits alone.
+    """True when a subtraction above 10 repeats a units fact and adds no borrow.
 
-    A subtraction inside one ten hides the ten: 19 − 19 is 9 − 9, and 15 − 10
-    is 5 − 0. Those cards drill nothing new for a child who already reads the
-    units, so the easy-card switch leaves them out. A card that crosses a ten,
-    like 16 − 7, is kept: 6 − 7 has no answer in the units.
+    The units part is the whole question: 19 − 9 repeats 9 − 9 and leaves a ten,
+    and 15 − 13 repeats 5 − 3. The answer is not always the same number, but the
+    fact being drilled is, so the easy-card switch leaves these cards out. What
+    remains above 10 always crosses a ten, like 16 − 7, where 6 − 7 has no
+    answer in the units.
 
-    Only subtraction can repeat this way. Adding, multiplying or dividing a ten
-    changes the value, so the other modes are never filtered. Both operands
-    under 10 are left alone, because that is the core drill. 20 − 10 is kept
-    too: its answer is a ten, not the units digit.
+    Cards below 10 are never filtered, because that is the core drill. Only
+    subtraction can repeat this way: adding, multiplying or dividing a ten
+    changes the value, so the other modes are never filtered either.
     """
-    if mode != "subtraction" or (a < 10 and b < 10):
+    if mode != "subtraction" or a < 10:
         return False
-    return a % 10 - b % 10 == a - b
+    return a % 10 >= b % 10
 
 
 def _deal(pool: list[tuple[int, int]], n: int) -> list[tuple[int, int]]:
@@ -955,11 +956,11 @@ def make_deck(
     are dropped, so switching from −4 to ×2 quietly leaves the −4 revision behind
     instead of dealing a card that does not belong to the session.
 
-    `skip_easy` drops the cards whose answer is the same as their units-only
-    version (see `repeats_units`), including a revision card. It is ignored when
-    it would leave fewer than MIN_FILTERED_POOL facts: a parent who switched on
-    only 10 is asking for that number, and a deck of 20 − 10 repeated is not a
-    drill.
+    `skip_easy` drops the subtraction cards above 10 that repeat a units fact
+    without borrowing (see `repeats_units`), including a revision card. It is
+    ignored when it would leave fewer than MIN_FILTERED_POOL facts: a parent who
+    switched on only 10 is asking for that number, and the filter would leave no
+    subtraction at all to deal.
     """
     pool = every_operation(mode, allowed or set(range(NUM_MIN, NUM_MAX + 1)))
     if skip_easy:
@@ -4441,12 +4442,12 @@ class Almathus(tk.Tk):
             self.after(700, self._calibrate_mic)
 
     def _build_skip_easy_toggle(self, parent):
-        """Leave out the subtraction cards that repeat their units digits.
+        """Leave out subtraction above 10 that does not need a borrow.
 
-        Off by default: 19 − 10 answers like 9 − 0, which is exactly the
-        tens-to-units relation a child may still be learning. A parent who wants
-        the deck spent on the harder facts switches it on, and the choice is
-        remembered.
+        Off by default: 19 − 9 answers like 9 − 9 with a ten left, which is
+        exactly the tens-to-units relation a child may still be learning. A
+        parent who wants the deck spent on facts that cross a ten switches it
+        on, and the choice is remembered.
         """
         btn = Btn(parent, "", font=self.f_body, padx=22, pady=10)
 

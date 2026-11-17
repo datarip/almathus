@@ -4445,7 +4445,7 @@ class Almathus(tk.Tk):
         wants the tens-to-units cards back switches it off, and the choice is
         remembered.
         """
-        btn = Btn(parent, "", font=self.f_small, padx=6, pady=8)
+        btn = Btn(parent, "", font=self.f_body, padx=12, pady=10)
 
         def refresh():
             on = self.skip_easy.get()
@@ -4469,7 +4469,7 @@ class Almathus(tk.Tk):
         if not (self.stt and self.stt.available()):
             return
 
-        btn = Btn(parent, "", font=self.f_small, padx=6, pady=8)
+        btn = Btn(parent, "", font=self.f_body, padx=12, pady=10)
 
         def refresh():
             on = self.voice_enabled.get()
@@ -4493,7 +4493,7 @@ class Almathus(tk.Tk):
         if not (self.tts and self.tts.available()):
             return
 
-        btn = Btn(parent, "", font=self.f_small, padx=6, pady=8)
+        btn = Btn(parent, "", font=self.f_body, padx=12, pady=10)
 
         def refresh():
             on = self.dictation_enabled.get()
@@ -4516,9 +4516,9 @@ class Almathus(tk.Tk):
         btn = Btn(
             parent,
             f"{T('girly_toggle')} : {'ON 👑' if on else 'OFF'}",
-            font=self.f_small,
-            padx=6,
-            pady=8,
+            font=self.f_body,
+            padx=12,
+            pady=10,
         )
         paint_chip(btn, on)
 

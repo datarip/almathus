@@ -288,7 +288,12 @@ def test_the_log_round_trips_into_the_next_deck():
             resultslog.load_sessions(path), "subtraction", {4}
         )
         assert revision == [(17, 4), (13, 4), (9, 4), (6, 4)], revision
-        ops = [(c.a, c.b) for c in almathus.make_deck("subtraction", 20, {4}, revision)]
+        ops = [
+            (c.a, c.b)
+            for c in almathus.make_deck(
+                "subtraction", 20, {4}, revision, skip_easy=False
+            )
+        ]
         for op in revision:
             assert ops.count(op) == almathus.REPEAT_TIMES, (op, ops)
 
@@ -298,7 +303,7 @@ def test_deck_deals_the_repeats_twice():
     over or asking the same fact twice in a row."""
     repeat = [(17, 4), (13, 4), (9, 4)]
     for _ in range(50):  # it is shuffled: run it enough to mean something
-        deck = almathus.make_deck("subtraction", 20, {4}, repeat)
+        deck = almathus.make_deck("subtraction", 20, {4}, repeat, skip_easy=False)
         assert len(deck) == 20
         ops = [(c.a, c.b) for c in deck]
         for op in repeat:
@@ -308,19 +313,25 @@ def test_deck_deals_the_repeats_twice():
     # Revision never eats more than half the round: at 8 cards, only two of the
     # five can be carried over (2 × 2 = 4 of the 8).
     five = [(17, 4), (13, 4), (9, 4), (6, 4), (20, 4)]
-    ops = [(c.a, c.b) for c in almathus.make_deck("subtraction", 8, {4}, five)]
+    ops = [
+        (c.a, c.b)
+        for c in almathus.make_deck("subtraction", 8, {4}, five, skip_easy=False)
+    ]
     assert sum(ops.count(op) == 2 for op in five) == 2, ops
     # ...and a round too short for even one repeat is simply dealt as it always
     # was, rather than dealt short.
-    assert len(almathus.make_deck("subtraction", 3, {4}, five)) == 3
+    assert len(almathus.make_deck("subtraction", 3, {4}, five, skip_easy=False)) == 3
 
     # An operation the current settings cannot ask is dropped, not forced in:
     # yesterday was −4, today is −2.
-    ops = [(c.a, c.b) for c in almathus.make_deck("subtraction", 20, {2}, repeat)]
+    ops = [
+        (c.a, c.b)
+        for c in almathus.make_deck("subtraction", 20, {2}, repeat, skip_easy=False)
+    ]
     assert all(b == 2 for _, b in ops), ops
 
     # No revision at all is the deck the game has always dealt.
-    assert len(almathus.make_deck("subtraction", 20, {4})) == 20
+    assert len(almathus.make_deck("subtraction", 20, {4}, skip_easy=False)) == 20
 
 
 def test_easy_cards_are_left_out_when_switched_on():
@@ -330,6 +341,7 @@ def test_easy_cards_are_left_out_when_switched_on():
     counterpart stays: `9 − 9` is the core drill. A card that crosses a ten,
     `16 − 7`, is kept because `6 − 7` has no answer in the units.
     """
+    assert almathus.load_skip_easy() is True  # on unless switched off
     assert almathus.repeats_units("subtraction", 19, 19)
     assert almathus.repeats_units("subtraction", 19, 9)
     assert almathus.repeats_units("subtraction", 18, 8)
@@ -351,7 +363,10 @@ def test_easy_cards_are_left_out_when_switched_on():
 
     # Off, the same deck still deals the easy cards.
     allowed = {9, 10}
-    plain = [(c.a, c.b) for c in almathus.make_deck("subtraction", 40, allowed)]
+    plain = [
+        (c.a, c.b)
+        for c in almathus.make_deck("subtraction", 40, allowed, skip_easy=False)
+    ]
     assert (15, 10) in plain
 
     # On, none of them come back, but 20 − 9 crosses a ten and stays.

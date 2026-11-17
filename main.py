@@ -716,12 +716,11 @@ def load_dictation() -> bool:
 def load_skip_easy() -> bool:
     """Whether the deck leaves out subtraction above 10 that needs no borrow.
 
-    Off unless it was switched on: 19 − 9 is 9 − 9 with a ten left, and that is
-    exactly the relation between a ten and its units a child may still be
-    learning. A parent who wants the cards spent on facts that cross a ten
-    switches it on.
+    On unless it was switched off: 19 − 9 is 9 − 9 with a ten left, and the
+    deck is more useful spent on facts that cross a ten. A parent who wants the
+    tens-to-units cards back switches it off.
     """
-    return bool(read_prefs().get("skip_easy", False))
+    return bool(read_prefs().get("skip_easy", True))
 
 
 def load_language() -> str | None:
@@ -958,7 +957,7 @@ def make_deck(
     allowed: set[int] | None = None,
     repeat: Sequence[tuple[int, int]] = (),
     times: int = REPEAT_TIMES,
-    skip_easy: bool = False,
+    skip_easy: bool = True,
 ) -> list[Card]:
     """Deal n cards, with `repeat` — last session's difficulties — dealt `times`
     each so a fact that fought back is met again before it is forgotten.
@@ -3175,7 +3174,8 @@ class Almathus(tk.Tk):
         # and playing it, so the clock and the microphone both start at once.
         self.dictation_enabled = tk.BooleanVar(value=load_dictation())
         # Leave the subtraction cards that repeat their units digits out of the
-        # deck; off by default, because those cards teach tens and units.
+        # deck; on by default, because the deck is better spent on facts that
+        # cross a ten.
         self.skip_easy = tk.BooleanVar(value=load_skip_easy())
 
         # thread-safe channel: worker threads (STT/TTS) post callables here and
@@ -3667,7 +3667,7 @@ class Almathus(tk.Tk):
         # -- how many cards (one compact toolbar row) ----------------------- #
         self.count_var = tk.IntVar(value=self.n_cards)
         panel = RoundedPanel(col)
-        panel.canvas.pack(fill="x", pady=(6, 18))
+        panel.canvas.pack(fill="x", pady=(4, 14))
         bar = tk.Frame(panel.inner, bg=SURFACE)
         bar.pack(pady=(4, 2))
         # Two centred rows, always: the stepper on top and the quick picks
@@ -3754,7 +3754,7 @@ class Almathus(tk.Tk):
 
         # -- which operation (step 2, and it starts the game) --------------- #
         tk.Label(col, text=T("choose_mode"), font=self.f_title, fg=TEXT, bg=BG).pack(
-            pady=(4, 14)
+            pady=(2, 10)
         )
 
         grid = tk.Frame(col, bg=BG)
@@ -3772,14 +3772,14 @@ class Almathus(tk.Tk):
                 active_bg=TILE_HOVER_BG,
                 active_fg=TILE_HOVER_FG,
                 padx=20,
-                pady=10,
-            ).grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="nsew")
+                pady=8,
+            ).grid(row=i // 2, column=i % 2, padx=10, pady=8, sticky="nsew")
 
         # The footer holds the in-game switches only. Language and progress live
         # in the top bar, where they are reachable from every screen and shown
         # once: a flag for the language, a chart for the stats.
         footer = tk.Frame(col, bg=BG)
-        footer.pack(fill="x", pady=(18, 2))
+        footer.pack(fill="x", pady=(12, 2))
 
         settle: dict[str, str | None] = {"job": None}  # the follow-up measurement
 
@@ -3848,10 +3848,10 @@ class Almathus(tk.Tk):
         They used to be a packed, content-sized row centred under the panels, so
         they floated in the middle at their own width while everything else met
         the box's edges. Now they divide the box's width in equal columns, and
-        the number of columns is chosen from the widest label: three across on a
-        roomy screen, two when that still fits each label, one when it does not.
-        A fixed two-per-row split clipped the long "Répondre à la voix : ON" and
-        "Mode princesse : ON" on a narrow screen; measuring the labels first
+        the number of columns is chosen from the widest label: four across on a
+        roomy screen, three when that still fits each label, two when it does
+        not. A fixed two-per-row split clipped the long "Répondre à la voix : ON"
+        and "Mode princesse : ON" on a narrow screen; measuring the labels first
         means a button only shares a row when sharing still leaves it room.
 
         When the last row is short — three switches in two columns — its
@@ -3869,7 +3869,7 @@ class Almathus(tk.Tk):
         buttons = footer.winfo_children()
         if not buttons:
             return
-        pad = 10
+        pad = 8
         laid: list[int] = [0]  # the per-row count currently on screen
         last_avail = [-1]
 
@@ -3928,7 +3928,7 @@ class Almathus(tk.Tk):
                     columnspan=span,
                     sticky="ew",
                     padx=pad,
-                    pady=6,
+                    pady=4,
                 )
             if on_relayout is not None:
                 # Deferred, not called here: measuring the new rows now would
@@ -4019,7 +4019,7 @@ class Almathus(tk.Tk):
         except that division skips it.
         """
         panel = RoundedPanel(parent)
-        panel.canvas.pack(fill="x", pady=(0, 22))
+        panel.canvas.pack(fill="x", pady=(0, 16))
         body = panel.inner
         tk.Label(
             body, text=T("choose_numbers"), font=self.f_body, fg=MUTED, bg=SURFACE
@@ -4463,12 +4463,12 @@ class Almathus(tk.Tk):
     def _build_skip_easy_toggle(self, parent):
         """Leave out subtraction above 10 that does not need a borrow.
 
-        Off by default: 19 − 9 answers like 9 − 9 with a ten left, which is
-        exactly the tens-to-units relation a child may still be learning. A
-        parent who wants the deck spent on facts that cross a ten switches it
-        on, and the choice is remembered.
+        On by default: the deck is spent on facts that cross a ten, like 16 − 7,
+        rather than on 19 − 9, which is 9 − 9 with a ten left. A parent who
+        wants the tens-to-units cards back switches it off, and the choice is
+        remembered.
         """
-        btn = Btn(parent, "", font=self.f_body, padx=22, pady=10)
+        btn = Btn(parent, "", font=self.f_small, padx=14, pady=8)
 
         def refresh():
             on = self.skip_easy.get()
@@ -4492,7 +4492,7 @@ class Almathus(tk.Tk):
         if not (self.stt and self.stt.available()):
             return
 
-        btn = Btn(parent, "", font=self.f_body, padx=22, pady=10)
+        btn = Btn(parent, "", font=self.f_small, padx=14, pady=8)
 
         def refresh():
             on = self.voice_enabled.get()
@@ -4516,7 +4516,7 @@ class Almathus(tk.Tk):
         if not (self.tts and self.tts.available()):
             return
 
-        btn = Btn(parent, "", font=self.f_body, padx=22, pady=10)
+        btn = Btn(parent, "", font=self.f_small, padx=14, pady=8)
 
         def refresh():
             on = self.dictation_enabled.get()
@@ -4539,9 +4539,9 @@ class Almathus(tk.Tk):
         btn = Btn(
             parent,
             f"{T('girly_toggle')} : {'ON 👑' if on else 'OFF'}",
-            font=self.f_body,
-            padx=22,
-            pady=10,
+            font=self.f_small,
+            padx=14,
+            pady=8,
         )
         paint_chip(btn, on)
 

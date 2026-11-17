@@ -491,7 +491,6 @@ class _PhrasePlayer:
             _dbg("stream open failed, playing without a fade:", repr(e))
             self._sd.play(self._audio, self._rate)
             self._sd.wait()
-            self._pos = len(self._audio)
             return
         try:
             stream.start()
@@ -506,11 +505,6 @@ class _PhrasePlayer:
         """Fade out from here. Called from the UI thread, and never blocks."""
         with self._lock:
             self._cut = True
-
-    @property
-    def played(self) -> int:
-        """How many frames actually reached the device (a cut phrase stops early)."""
-        return self._pos
 
     def _channels(self) -> int:
         try:
@@ -546,240 +540,6 @@ class _PhrasePlayer:
             outdata[n:] = 0
         if self._pos >= len(self._audio) or (self._cut and self._gain <= 0.0):
             raise self._sd.CallbackStop
-
-
-# --------------------------------------------------------------------------- #
-# The app's own voice, heard by its own microphone
-# --------------------------------------------------------------------------- #
-#
-# Answering over the question is what a quick child does, and the mic used to
-# stay shut until the reading ended so the question could not be captured as its
-# own answer. A question is about 1.3 s, so that silence cost exactly the child
-# who was fastest.
-#
-# The microphone does hear the speakers, but the app knows precisely what it is
-# playing: what leaks back is that same signal, delayed by the output and input
-# buffers and the air, coloured by the speaker and the room, and scaled. So it
-# can be taken back out. `_EchoGuard` finds the delay and a short filter over
-# the first fraction of a second and subtracts the prediction, which leaves the
-# child's voice on its own.
-_ECHO_LEARN = 0.35  # seconds of the question needed before the delay is known
-_ECHO_TAPS = 160  # ~10 ms of speaker, desk and room colour at 16 kHz
-_ECHO_RIDGE = 1e-3  # keeps the fit sane on a phrase with few frequencies in it
-_ECHO_MAX_DELAY = 0.6  # the echo cannot arrive later than this
-_ECHO_MIN_REMOVED = 0.5  # the fit must take half the energy out to be an echo
-
-
-def _at_rate(audio: Any, sample_rate: int, target: int) -> Any:
-    """A float copy of PCM at `target`, for comparing two signals sample by sample."""
-    import numpy as np
-
-    x = np.asarray(audio, dtype=np.float32)
-    if target == sample_rate or x.size == 0:
-        return x
-    try:
-        from scipy.signal import resample_poly
-
-        return resample_poly(x, target, sample_rate).astype(np.float32)
-    except Exception:
-        n = max(1, round(x.size * target / sample_rate))
-        return np.interp(np.linspace(0.0, x.size - 1, n), np.arange(x.size), x).astype(
-            np.float32
-        )
-
-
-class _EchoGuard:
-    """Subtract the question the speakers are playing from the mic capture.
-
-    Three states matter to the caller. *Learning*: the delay is not known yet,
-    so blocks are replaced by silence — letting the question through would trip
-    the onset and stop the reading the instant it began. *Cancelling*: the echo
-    is predicted and removed. *Absent*: the fit found no echo to remove
-    (headphones, or the speakers down low), so blocks pass through untouched and
-    the microphone behaves as it did before there was a guard at all.
-    """
-
-    def __init__(self, rate: int):
-        import numpy as np
-
-        self._np = np
-        self._rate = rate
-        self._learn = max(1, round(rate * _ECHO_LEARN))
-        self._lock = threading.Lock()
-        self._ref: Any = None  # the phrase, at the mic rate
-        self._ref_audio: Any = None  # the object it came from, to spot a stale cut
-        self._heard: list[Any] = []  # blocks since it started, to learn from
-        self._learnt = 0  # how much has been heard while learning, in samples
-        self._taps: Any = None  # the fitted echo path, once it is known
-        self._at = 0  # the reference sample the next block lines up with
-        self._hist: Any = None  # the taps' worth of reference before `_at`
-        self._played = 0  # reference samples that actually reached the device
-        self._residual = 0.0  # what was left of the question after cancelling
-
-    def start(self, audio: Any, rate: int) -> None:
-        """Take the phrase that has just gone to the output device."""
-        with self._lock:
-            self._ref = _at_rate(audio, rate, self._rate)
-            self._ref_audio = audio
-            self._heard = []
-            self._learnt = 0
-            self._taps = None
-            self._at = 0
-            self._hist = None
-            self._played = len(self._ref)
-
-    def played(self, audio: Any, frames: int, rate: int) -> None:
-        """The device got `frames` of that phrase; anything after was cut.
-
-        Predicted echo must stop where the sound stopped, or the guard would
-        subtract a question nobody is hearing from the child's answer.
-        """
-        with self._lock:
-            if self._ref is None or audio is not self._ref_audio or rate <= 0:
-                return  # a later phrase already took over
-            self._played = min(
-                len(self._ref), max(0, round(frames * self._rate / rate))
-            )
-
-    @property
-    def live(self) -> bool:
-        """Is a phrase being accounted for right now?"""
-        return self._ref is not None
-
-    @property
-    def cancelling(self) -> bool:
-        """Did the fit find the echo, and is it being subtracted?"""
-        return self._ref is not None and self._taps is not None
-
-    @property
-    def residual(self) -> float:
-        """What is left of the question, in the same units as the capture.
-
-        A phrasal cancellation is never total — the speaker distorts, the room
-        is not a filter — so this is the level the child has to beat for their
-        voice to stand out from ours.
-        """
-        return self._residual
-
-    def clean(self, block: Any) -> Any:
-        """One mic block, with the question taken out of it."""
-        np = self._np
-        with self._lock:
-            if self._ref is None:
-                return block
-            x = block.astype(np.float32)
-            if self._taps is None:
-                self._heard.append(x)
-                self._learnt += len(x)
-                if self._learnt < self._learn:
-                    return np.zeros_like(block)
-                if self._learnt >= 2 * self._learn:
-                    # Nothing could be learned from it: stop waiting, and let the
-                    # mic hear whatever it can rather than silence the whole card.
-                    _dbg("echo: no coherent copy of the phrase in the capture")
-                    self._ref = None
-                    return block
-                verdict = self._fit()
-                if verdict is None:
-                    return np.zeros_like(block)
-                if verdict is False:
-                    self._ref = None  # nothing came back: no echo to remove
-                    return block
-                return np.zeros_like(block)  # what was learned is still silence
-            if self._at >= self._played:
-                self._ref = None  # the phrase is over; nothing left to remove
-                return block
-            n = len(x)
-            end = min(self._at + n, self._played)
-            chunk = self._ref[self._at : end]
-            if len(chunk) < n:
-                chunk = np.concatenate([chunk, np.zeros(n - len(chunk), np.float32)])
-            stream = (
-                np.concatenate([self._hist, chunk]) if self._hist is not None else chunk
-            )
-            first = len(stream) - n
-            pred = np.convolve(stream, self._taps)[first : first + n]
-            self._hist = (
-                stream[-(len(self._taps) - 1) :] if len(self._taps) > 1 else None
-            )
-            self._at = end
-            return np.clip(x - pred, -32768, 32767).astype(np.int16)
-
-    def _fit(self) -> bool | None:
-        """Find the echo's delay and path in what has been heard so far.
-
-        None means "not yet" (too little, or too quiet, to line anything up),
-        False means "there is no echo here", True means the guard now cancels.
-        The delay is the peak of the cross-correlation: a question is far
-        louder than the room, so the shift that lines the capture up with what
-        was played is unmistakable. The taps are then fitted by least squares
-        over that same stretch of aligned audio.
-        """
-        np = self._np
-        heard = np.concatenate(self._heard)
-        self._heard = []
-        ref = self._ref
-        floor = self._taps_floor()
-        if len(heard) < floor or len(ref) < floor:
-            return None
-        if float(np.sqrt(np.mean(heard * heard))) < 50.0:
-            return None  # too quiet to line up: keep learning
-        size = 1 << (len(heard) + len(ref) - 1).bit_length()
-        corr = np.fft.irfft(
-            np.fft.rfft(heard, size) * np.conj(np.fft.rfft(ref, size)), size
-        )
-        # The echo can sit either side of the reference timeline: the input
-        # stream hands its blocks over later than it captured them, and by how
-        # much differs from one device to another. So the shift is searched in
-        # both directions, from the wrapped half of the correlation.
-        limit = min(int(self._rate * _ECHO_MAX_DELAY), len(heard) - floor)
-        if limit <= 0:
-            return None
-        lags = np.arange(size)
-        lags = np.where(lags > size // 2, lags - size, lags)
-        window = np.abs(lags) <= limit
-        if not bool(window.any()):
-            return None
-        lag = int(lags[window][int(np.argmax(corr[window]))])
-        first = max(0, lag)  # first captured sample that has a reference behind it
-        base = first - lag  # the reference sample it lines up with
-        span = min(len(heard) - first, len(ref) - base)
-        if span < floor:
-            return None  # the shift ate the window: wait for more of the phrase
-        target = heard[first : first + span]
-        aligned = ref[base : base + span]
-        pad = np.concatenate([np.zeros(_ECHO_TAPS - 1, np.float32), aligned])
-        rows = np.lib.stride_tricks.sliding_window_view(pad, _ECHO_TAPS)
-        rows = np.ascontiguousarray(rows[: len(aligned)][:, ::-1])
-        # Ridge rather than a plain solve: a spoken question is mostly a handful
-        # of harmonics, which leaves the Toeplitz matrix close to singular, and
-        # the taps it then reports fit that moment and wreck the rest.
-        gram = rows.T @ rows
-        scale = float(np.trace(gram)) / len(gram)
-        if scale <= 0.0:
-            return None
-        system = gram + scale * _ECHO_RIDGE * np.eye(len(gram))
-        taps = np.linalg.solve(system, rows.T @ target)
-        residual = target - rows @ taps
-        energy = float(np.mean(target * target))
-        removed = energy - float(np.mean(residual * residual))
-        if removed < _ECHO_MIN_REMOVED * energy:
-            return False
-        self._taps = taps
-        self._residual = float(np.sqrt(np.mean(residual * residual)))
-        self._at = base + span  # the next captured sample lines up with this one
-        tail = _ECHO_TAPS - 1
-        before = ref[max(0, self._at - tail) : self._at]
-        self._hist = np.concatenate([np.zeros(tail - len(before), np.float32), before])
-        _dbg(
-            f"echo: cancelling at {lag * 1000 / self._rate:+.0f} ms, "
-            f"removed {removed / energy:.0%} of what was heard"
-        )
-        return True
-
-    def _taps_floor(self) -> int:
-        """The samples a fit needs to mean anything: a few times the filter."""
-        return _ECHO_TAPS * 8
 
 
 def _resample_to_device(audio: Any, sample_rate: int) -> tuple[Any, int]:
@@ -827,11 +587,6 @@ class TTS:
         self._gen = 0  # so a superseded utterance cannot touch the current one
         self._player: _PhrasePlayer | None = None  # the phrase on air, if any
         self._player_lock = threading.Lock()
-        # What the speakers are playing, for the mic to cancel out. main() wires
-        # these to the speech input; a voice with nobody listening leaves them
-        # None and pays nothing.
-        self.on_play: Callable[[Any, int], None] | None = None
-        self.on_played: Callable[[Any, int, int], None] | None = None
         self._pyttsx = False
         self._setup(lang)
 
@@ -1115,19 +870,8 @@ class TTS:
             with self._player_lock:
                 self._player = player
             try:
-                # Announce the phrase before it is audible, so the microphone
-                # can cancel it from the first block it hears.
-                if self.on_play is not None:
-                    with contextlib.suppress(Exception):
-                        self.on_play(audio, sample_rate)
                 player.play()
             finally:
-                # However the phrase ended (played out, cut, failed), say how
-                # much of it the device got: the guard must stop predicting
-                # where the sound stopped.
-                if self.on_played is not None:
-                    with contextlib.suppress(Exception):
-                        self.on_played(audio, player.played, sample_rate)
                 with self._player_lock:
                     if self._player is player:
                         self._player = None
@@ -2183,12 +1927,6 @@ class SpeechInput:
         self._boosted = False  # did we raise the OS mic input gain?
         self._last_raw: Any = None  # last capture, un-band-passed (for Vosk)
         self._last_dirty: Any = None  # ...the same capture, un-denoised
-        # The question the speakers are playing, so its echo can be taken back
-        # out of the capture: a child who answers over the reading is heard.
-        self._echo: _EchoGuard | None = None
-        self._echo_pending: tuple[Any, int] | None = None
-        self._echo_announced = False  # a phrase played during this capture
-        self._echo_ok = False  # ...and the guard took it back out
         # the open mic stream, so we can close it on quit
         self._active_stream: Any = None
         self._stopped = False  # latched on quit: no more captures
@@ -2269,42 +2007,6 @@ class SpeechInput:
         Its watchdog polls this instead of trusting the chain.
         """
         return self._busy and not self._cancel.is_set() and not self._stopped
-
-    def set_echo(self, audio: Any, rate: int) -> None:
-        """The phrase that has just gone to the speakers; cancel it from the capture.
-
-        The capture thread picks it up on its next block and subtracts the
-        prediction, so the mic listens while the question is being read instead
-        of waiting for it to finish. Called from the voice's playback thread, so
-        it only leaves the reference behind.
-        """
-        self._echo_pending = (audio, rate)
-        self._echo_announced = True
-
-    def played(self, audio: Any, frames: int, rate: int) -> None:
-        """How much of that phrase the device actually played (it may be cut)."""
-        guard = self._echo
-        if guard is not None:
-            guard.played(audio, frames, rate)
-
-    def echo_was_cancelled(self) -> bool:
-        """Did the question get cancelled out of the capture that is running?
-
-        False means the guard never found the echo on this device, so the mic is
-        hearing the question itself: the caller should start a fresh capture once
-        the reading is over rather than trust this one.
-        """
-        return self._echo_ok
-
-    def echo_doubtful(self) -> bool:
-        """Did this capture listen to our own voice without cancelling it?
-
-        A reading that was never cancelled out is all over the capture, and it
-        stays there after the reading ends (the utterance closes on the silence
-        that follows it). So nothing this capture produces may answer the card,
-        no matter when the result lands.
-        """
-        return self._echo_announced and not self._echo_ok
 
     def cancel(self):
         """End the current listening session (the card is over).
@@ -2636,11 +2338,6 @@ class SpeechInput:
         except Exception as e:
             _dbg("capture EXCEPTION:", repr(e))
             self._jobs.put((None, None, None, on_result, on_state, pick))
-        finally:
-            # The reference is per capture: a phrase announced for a card that
-            # ended before the mic reached it must not silence the next one.
-            self._echo = None
-            self._echo_pending = None
 
     def _stt_loop(self):
         """The ONE thread that creates and runs the Vosk model, which is not
@@ -2870,8 +2567,6 @@ class SpeechInput:
     def _record(self, on_state):
         if self._stopped:
             return None
-        self._echo_ok = False  # a new capture starts with nothing to show for it
-        self._echo_announced = bool(self._echo is not None and self._echo.live)
         np = self._np
         sr, blk = self._ensure_stream()
         if sr is None:
@@ -2921,7 +2616,6 @@ class SpeechInput:
         # Only silence between answers is the room, so only that is measured.
         peak = 0.0  # loudest block of the utterance so far
         run = 0  # consecutive speech-like blocks, for the onset
-        echo_floor = 0.0  # what the question leaves behind while it is playing
         window = max(8, int(_ROOM_WINDOW / block_secs))
         if self._room_blocks.maxlen != window:
             self._room_blocks = deque(self._room_blocks, maxlen=window)
@@ -2967,12 +2661,8 @@ class SpeechInput:
             # path is the robust backup for when WebRTC misfires (e.g. it did
             # nothing at very high input gain). Deliberately trigger-happy: every
             # onset it invents is judged again, after the fact, by _judge.
-            if r > max(room_now() * _ONSET_OVER_ROOM, _ONSET_FLOOR, echo_floor):
+            if r > max(room_now() * _ONSET_OVER_ROOM, _ONSET_FLOOR):
                 return True
-            if echo_floor and r < echo_floor:
-                # Quieter than what our own voice leaves behind: whatever it is,
-                # it cannot be the child talking over the question.
-                return False
             if wvad is not None and len(block) == blk:
                 try:
                     return bool(wvad.is_speech(block.tobytes(), sr))
@@ -3005,52 +2695,18 @@ class SpeechInput:
                     return None
                 continue
             starved = 0
-            # The question that went to the speakers is being heard by this same
-            # mic. Take it back out before anything looks at the block: the
-            # onset, the gates and the recognizer all then see the child only.
-            guard = self._echo
-            if guard is None:
-                pending = self._echo_pending
-                if pending is not None:
-                    self._echo_pending = None
-                    self._echo_announced = True
-                    guard = self._echo = _EchoGuard(sr)
-                    guard.start(*pending)
-            if guard is not None:
-                block = guard.clean(block)
-                if guard.cancelling:
-                    self._echo_ok = True
-            # The guard gives up on its own (phrase over, or nothing to cancel),
-            # and from then on the mic is a plain mic again.
-            cancelling = guard is not None and guard.cancelling
-            echo_floor = (
-                3.0 * guard.residual if guard is not None and cancelling else 0.0
-            )
             r = band_rms(block)
             peak = max(peak, r)
             quiet = r if quiet == 0.0 else min(quiet, r)
             preroll.append(block)  # always: a false start keeps its lead-in
             if not started:
-                if not cancelling:
-                    # The room is what the room sounds like, not what the speakers
-                    # are saying; measuring it through our own voice would teach
-                    # the gates that a question is the floor.
-                    note_room(block, r)
+                note_room(block, r)
                 if is_speech(block, r):
                     run += 1
-                    # A third block while the speakers are talking: the guard's
-                    # leftover, not the child, is a click's worth of sound.
-                    if run >= (3 if cancelling else 2):
+                    if run >= 2:  # ~40 ms of speech -> go
                         started = True
                         frames = list(preroll)
                         onset = voiced_end = len(frames) - 1
-                        if on_state and cancelling:
-                            # The child is answering over the question: the caller
-                            # stops the reading. Only when the echo was actually
-                            # cancelled — otherwise this is our own voice, and
-                            # stopping the reading for it would be worse than
-                            # letting it finish.
-                            on_state("speech")
                 else:
                     run = 0
                 waited += 1

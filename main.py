@@ -3070,7 +3070,6 @@ class Almathus(tk.Tk):
         self._countdown_base = 0.0  # perf_counter instant the 3-2-1 count starts at
         self._voice_job = None  # the watchdog that keeps this card's mic armed
         self._card_done = False  # answer committed: ignore anything else on this card
-        self._answering = False  # the child has started speaking on this card
         self._fanfare_job = None  # the recap's pending "start the music" timer
         self._pump_job = None  # the worker-thread -> Tk callback pump
         self._stopping = False  # latched on quit: schedule no more timers
@@ -3092,7 +3091,6 @@ class Almathus(tk.Tk):
         # voice engines (both degrade gracefully to no-ops)
         self.tts = voicemod.TTS(LANG) if voicemod else None
         self.stt = voicemod.SpeechInput(LANG) if voicemod else None
-        self._wire_voice()
         stt_ok = bool(self.stt and self.stt.available())
         self.voice_enabled = tk.BooleanVar(value=stt_ok)
         # Dictation: the question read aloud before the child answers it. Off,
@@ -4366,7 +4364,6 @@ class Almathus(tk.Tk):
             self.tts.close()  # the old language's sidecar goes with its voice
         self.tts = voicemod.TTS(LANG) if voicemod else None
         self.stt = voicemod.SpeechInput(LANG) if voicemod else None
-        self._wire_voice()
         self.voice_enabled.set(bool(self.stt and self.stt.available()))
         # The whole bar, not just the language chip: the stats pill outlives
         # every screen and carries its label, which is in the old language until
@@ -4376,19 +4373,6 @@ class Almathus(tk.Tk):
         self.show_settings()
         if self.voice_enabled.get():
             self.after(700, self._calibrate_mic)
-
-    def _wire_voice(self):
-        """Point the voice at the microphone, so the mic can cancel it out.
-
-        The speakers and the mic share a room: what the voice plays comes back
-        into the capture, which is why the mic used to wait for the reading to
-        end. These two hooks hand the exact phrase to the speech input before it
-        is audible and report how much of it was actually played, so the capture
-        can subtract it and hear the child over the question.
-        """
-        if self.tts is not None and self.stt is not None:
-            self.tts.on_play = self.stt.set_echo
-            self.tts.on_played = self.stt.played
 
     def _build_voice_toggle(self, parent):
         # Only offer the toggle when voice input actually works; otherwise show
@@ -4481,7 +4465,6 @@ class Almathus(tk.Tk):
         # not "leaving an unanswered card" — see _advance().
         self.current = None
         self._card_done = False
-        self._answering = False
         self._read_time = 0.0
         self._speech_start = None
         self._speech_id += 1  # nothing said for the last game may report now
@@ -4654,7 +4637,6 @@ class Almathus(tk.Tk):
             return
         self._clear()
         self._card_done = False
-        self._answering = False
         f = self._play_frame = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
@@ -4807,14 +4789,11 @@ class Almathus(tk.Tk):
 
         # Dictation on: read the operation aloud, then listen. Off: the card is
         # only shown, so there is nothing to wait for — arm the mic on the spot.
-        # With dictation on the mic is armed *before* the reading, not after it:
-        # the voice's echo is cancelled out of the capture, so a child who
-        # answers over the question is heard, and the reading stops for them
-        # (see `_voice_status`).
         if voice_on:
-            self._voice_arm(card)
             if dictation_on:
                 self._speak_operation(card, then=lambda: self._after_question(card))
+            else:
+                self._voice_arm(card)
             self._voice_watch(card)
         elif dictation_on:
             self._speak_operation(card)
@@ -5025,19 +5004,10 @@ class Almathus(tk.Tk):
         return self._pill_size
 
     def _after_question(self, card: Card) -> None:
-        """The question has finished being read: cue GO!, and keep listening."""
+        """The question has finished being read: cue GO! and open the mic."""
         if self.current is not card:
             return  # the reading was cut off by the next card; nothing to cue
-        if not self._answering:
-            # A child who started speaking over the question does not need to be
-            # told it is their turn; the flash would land over their answer.
-            self._show_go_hint(card)
-        # With the question cancelled out of the mic, the capture that is running
-        # has been listening to the child the whole time and is kept. Without it
-        # the capture is full of the reading, so it is dropped and a clean one
-        # starts now — exactly the behaviour from before early arming.
-        if self.stt and not self.stt.echo_was_cancelled():
-            self.stt.cancel()
+        self._show_go_hint(card)
         self._voice_arm(card)
 
     def _show_go_hint(self, card: Card) -> None:
@@ -5065,11 +5035,6 @@ class Almathus(tk.Tk):
             return  # the leave question is up; nothing is being answered
         if self.current is not target or self._voice_mic_bad or self._card_done:
             return
-        if self.tts and self.tts.speaking() and not self.stt.echo_was_cancelled():
-            # The reading is playing and its echo is not being taken out, so a
-            # capture now would only hear the question. `_after_question` arms
-            # the mic the moment the reading ends.
-            return
         self.stt.listen(
             on_result=lambda n: self._post(lambda: self._voice_result(n, target)),
             on_state=lambda s: self._post(lambda: self._voice_status(s)),
@@ -5088,10 +5053,10 @@ class Almathus(tk.Tk):
         self._voice_job = None
         if self.current is not target or self._card_done:
             return  # this card is over; stop watching it
-        # The reading no longer holds the mic back: the question is cancelled out
-        # of the capture, so listening runs alongside it.
+        talking = bool(self.tts and self.tts.speaking())
         if (
-            self._menu_dialog is None
+            not talking
+            and self._menu_dialog is None
             and not self._voice_mic_bad
             and self.voice_enabled.get()
             and self.stt
@@ -5105,13 +5070,6 @@ class Almathus(tk.Tk):
         if state == "no_mic":
             self._voice_mic_bad = True  # stop re-arming; capture is silent
             self._show_keypad()  # give the child a way back in
-        elif state == "speech":
-            # The child has started answering, possibly over the reading: stop
-            # talking and get out of their way. The answer itself arrives from
-            # the capture, which is what the echo guard exists for.
-            self._answering = True
-            if self.tts:
-                self.tts.stop()
         lbl = getattr(self, "voice_lbl", None)
         if not (lbl and lbl.winfo_exists()):
             return
@@ -5134,12 +5092,6 @@ class Almathus(tk.Tk):
         if self.current is not target or self._card_done:  # card already over
             return
         if n is not None:
-            if self.stt and self.stt.echo_doubtful():
-                # This capture listened to the question and never cancelled it,
-                # so the number in it may be ours, not the child's. Keep
-                # listening; a clean capture follows the reading.
-                self._voice_arm(target)
-                return
             self._voice_answer(n)
             return
         # nothing recognized this round: keep listening (unless the mic is unusable)

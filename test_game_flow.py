@@ -207,6 +207,56 @@ def test_keypad_flow():
         app.destroy()
 
 
+def test_leaving_the_game_discards_it():
+    """The menu button drops a started game and records nothing.
+
+    A wrong setting is noticed once the first card is up, so leaving has to be
+    possible mid-game. It must ask first, refuse an answer behind the question,
+    stop counting the wait as thinking time, and drop a move to the next card
+    that was already due: that move would paint a question over the menu.
+    """
+    app = start(voice=False)
+    saved = []
+    app._save_session = lambda *_a, **_k: saved.append(_a)
+    card = app.current
+    try:
+        before_total, before_card = app._elapsed(), app._card_elapsed()
+        app._ask_leave_game()
+        assert app._menu_dialog is not None, "the menu button asked nothing"
+        app.answer_var.set(str(card.answer))
+        app.submit()  # what a keypad tap or a voice result would call
+        app.update()
+        assert app.current is card, "an answer landed behind the confirmation"
+        assert app._menu_dialog.winfo_exists(), "the confirmation closed itself"
+
+        pump(app, 0.5)  # a parent reading the question
+        app._close_leave_dialog()
+        assert app._menu_dialog is None, "keeping the game left the question open"
+        assert app.current is card, "keeping the game dropped the card"
+        assert abs(app._elapsed() - before_total) < 0.2, (
+            "the confirmation was counted as thinking time"
+        )
+        assert abs(app._card_elapsed() - before_card) < 0.2, (
+            "the confirmation was charged to the card"
+        )
+
+        # Answer it, then ask again inside the 650 ms before the next card:
+        # that pending move is what used to survive a screen change.
+        app.answer_var.set(str(card.answer))
+        app.submit()
+        app._ask_leave_game()
+        app._leave_game()
+        assert app.current is None, "the abandoned card stayed current"
+        assert saved == [], "the abandoned game was written to the results log"
+        assert app.topbar.winfo_manager(), "the menu did not come back"
+        pump(app, 2.0)
+        assert app.current is None, "a pending advance painted a card over the menu"
+        assert app._menu_dialog is None, "the confirmation was left on screen"
+    finally:
+        app._shutdown()
+        app.destroy()
+
+
 def test_retry_time_adds_up():
     """A card asked again at the end is timed over both goes.
 
@@ -466,6 +516,7 @@ def main() -> int:
     tests = (
         test_spoken_answer,
         test_keypad_flow,
+        test_leaving_the_game_discards_it,
         test_retry_time_adds_up,
         test_voice_flow,
         test_voice_wrong_answer,

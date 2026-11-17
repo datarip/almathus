@@ -3075,6 +3075,13 @@ class Almathus(tk.Tk):
         self._stopping = False  # latched on quit: schedule no more timers
         self._voice_mic_bad = False
         self._pill_size: tuple[int, int] | None = None  # cached question-pill size
+        # The play screen's "back to the menu" question and the clocks it freezes
+        # while it is up. `_play_frame` is the page it covers; `_menu_deferred_advance`
+        # remembers a move to the next card that was due when it opened.
+        self._play_frame: tk.Frame | None = None
+        self._menu_dialog: tk.Frame | None = None
+        self._menu_pause: tuple[float, float | None, bool] | None = None
+        self._menu_deferred_advance = False
         self._lang_job = None  # the language page's pending download-poll timer
         self._lang_polling = False
 
@@ -3395,6 +3402,11 @@ class Almathus(tk.Tk):
             with contextlib.suppress(Exception):
                 self.after_cancel(self._lang_job)
             self._lang_job = None
+        # The play screen's confirmation goes with the page it covers.
+        self._play_frame = None
+        self._menu_dialog = None
+        self._menu_pause = None
+        self._menu_deferred_advance = False
         if self.stt:
             self.stt.cancel()
         if self.tts:
@@ -4601,7 +4613,7 @@ class Almathus(tk.Tk):
             return
         self._clear()
         self._card_done = False
-        f = tk.Frame(self.container, bg=BG)
+        f = self._play_frame = tk.Frame(self.container, bg=BG)
         f.pack(fill="both", expand=True)
 
         voice_on = bool(self.voice_enabled.get() and self.stt and self.stt.available())
@@ -4609,15 +4621,37 @@ class Almathus(tk.Tk):
             self.dictation_enabled.get() and self.tts and self.tts.available()
         )
 
-        # header (pinned top)
+        # header (pinned top). The menu button sits in the same left corner as
+        # the back button on every other screen, so leaving is always in the
+        # place the parent already reaches for. A started game is not saved, so
+        # the button asks before it drops one.
         header = (
             T("retry_round")
             if in_retry
             else T("card_of", n=min(self.idx + 1, self.n_cards), total=self.n_cards)
         )
+        head = tk.Frame(f, bg=BG)
+        head.pack(side="top", fill="x", padx=28, pady=(18, 0))
+        head.columnconfigure(0, weight=1, uniform="side")
+        head.columnconfigure(1, weight=0)
+        head.columnconfigure(2, weight=1, uniform="side")
+        Btn(
+            head,
+            T("menu"),
+            command=self._ask_leave_game,
+            font=self.f_small,
+            bg=CARD_BG,
+            fg=TEXT,
+            padx=14,
+            pady=7,
+        ).grid(row=0, column=0, sticky="w")
         tk.Label(
-            f, text=header, font=self.f_title, fg=ACCENT if in_retry else MUTED, bg=BG
-        ).pack(side="top", pady=(20, 0))
+            head,
+            text=header,
+            font=self.f_title,
+            fg=ACCENT if in_retry else MUTED,
+            bg=BG,
+        ).grid(row=0, column=1)
 
         # The child answers too early, while the question is still being read.
         # This cue sits above the question and says what to do: wait for the end
@@ -4739,6 +4773,128 @@ class Almathus(tk.Tk):
         elif dictation_on:
             self._speak_operation(card)
 
+    def _ask_leave_game(self) -> None:
+        """Ask before dropping the game in progress and going back to the menu.
+
+        The game is only written down at the recap, so a tap here loses it. The
+        button sits on a screen a child taps all the time, which is why it asks.
+        The question is drawn inside the page, never in a Toplevel: a tiling
+        window manager would give that its own frame and take the focus.
+        """
+        if self._menu_dialog is not None:
+            return
+        page = self._play_frame
+        if page is None or not page.winfo_exists():
+            return
+        # The clocks stop while the question is up: the confirmation is not the
+        # child thinking, and a parent may take a while over it. `_menu_pause`
+        # carries what reopening the clocks needs to give the time back.
+        self._menu_pause = (
+            time.perf_counter(),
+            self.card_start,
+            self._speech_start is not None,
+        )
+        if self._tick_job is not None:
+            self.after_cancel(self._tick_job)
+            self._tick_job = None
+        if self._advance_job is not None:
+            # An answer was just committed: the move to the next card must not
+            # fire behind the question, or it paints it over the menu.
+            self.after_cancel(self._advance_job)
+            self._advance_job = None
+            self._menu_deferred_advance = True
+        if self.stt:
+            self.stt.cancel()  # a number heard here is not an answer
+
+        self._menu_dialog = tk.Frame(page, bg=BG)
+        self._menu_dialog.place(relx=0, rely=0, relwidth=1, relheight=1)
+        box = tk.Frame(self._menu_dialog, bg=BG)
+        box.place(relx=0.5, rely=0.45, anchor="center")
+        panel = RoundedPanel(box, pad=24, radius=20)
+        # The panel centres its content but never sets its own width, and a
+        # canvas' default is narrower than this sentence: with no width given,
+        # the label is clipped at both ends instead of read.
+        panel.canvas.configure(width=520)
+        panel.canvas.pack()
+        inner = panel.inner
+        tk.Label(
+            inner, text=T("leave_title"), font=self.f_title, fg=TEXT, bg=SURFACE
+        ).pack(pady=(4, 8))
+        tk.Label(
+            inner,
+            text=T("leave_body"),
+            font=self.f_body,
+            fg=MUTED,
+            bg=SURFACE,
+            wraplength=420,
+            justify="center",
+        ).pack(padx=8, pady=(0, 18))
+        row = tk.Frame(inner, bg=SURFACE)
+        row.pack()
+        Btn(
+            row,
+            T("leave_stay"),
+            command=self._close_leave_dialog,
+            font=self.f_body,
+            bg=GOOD,
+            fg=INK,
+            padx=22,
+            pady=10,
+        ).pack(side="left", padx=8)
+        Btn(
+            row,
+            T("leave_confirm"),
+            command=self._leave_game,
+            font=self.f_body,
+            bg=BG,  # CARD_BG all but vanishes on the panel in the dark theme
+            fg=TEXT,
+            active_bg=BAD,
+            padx=22,
+            pady=10,
+        ).pack(side="left", padx=8)
+
+    def _close_leave_dialog(self) -> None:
+        """Keep playing: drop the question and restart the clocks it stopped."""
+        dialog = self._menu_dialog
+        self._menu_dialog = None
+        if dialog is not None and dialog.winfo_exists():
+            dialog.destroy()
+        pause = self._menu_pause
+        self._menu_pause = None
+        if pause is not None:
+            started, card_start, reading = pause
+            paused = time.perf_counter() - started
+            # A reading still in progress is banked as read time, so its pause
+            # is already out of the total; only a running clock is given back.
+            if not reading:
+                self.game_start += paused
+                if card_start is not None and self.card_start is not None:
+                    self.card_start = card_start + paused
+        if self._menu_deferred_advance:
+            self._menu_deferred_advance = False
+            self._advance_after(650)  # the feedback was on screen before the ask
+            return
+        self._tick()
+        card = self.current
+        if card is not None and not self._card_done:
+            self._voice_arm(card)
+
+    def _leave_game(self) -> None:
+        """Go back to the menu and drop the game, recording nothing."""
+        dialog = self._menu_dialog
+        self._menu_dialog = None
+        if dialog is not None and dialog.winfo_exists():
+            dialog.destroy()
+        if self._advance_job is not None:
+            self.after_cancel(self._advance_job)
+            self._advance_job = None
+        self._menu_pause = None
+        self._menu_deferred_advance = False
+        # Any late voice result or timer now finds no card to work on. The
+        # results log is only written by the recap, which this path never runs.
+        self.current = None
+        self.show_settings()
+
     def _show_keypad(self):
         kp = getattr(self, "keypad_frame", None)
         if kp and kp.winfo_exists() and not kp.winfo_manager():
@@ -4850,6 +5006,8 @@ class Almathus(tk.Tk):
         """Listen for one spoken answer; re-arms itself until the card changes."""
         if not (self.stt and self.stt.available()):
             return
+        if self._menu_dialog is not None:
+            return  # the leave question is up; nothing is being answered
         if self.current is not target or self._voice_mic_bad or self._card_done:
             return
         self.stt.listen(
@@ -4873,6 +5031,7 @@ class Almathus(tk.Tk):
         talking = bool(self.tts and self.tts.speaking())
         if (
             not talking
+            and self._menu_dialog is None
             and not self._voice_mic_bad
             and self.voice_enabled.get()
             and self.stt
@@ -4903,6 +5062,8 @@ class Almathus(tk.Tk):
             lbl.config(text=T("thinking"), fg=MUTED)
 
     def _voice_result(self, n: int | None, target: Card) -> None:
+        if self._menu_dialog is not None:  # the leave question is up
+            return
         if self.current is not target or self._card_done:  # card already over
             return
         if n is not None:
@@ -4975,6 +5136,8 @@ class Almathus(tk.Tk):
         return f"{m:02d}:{s:02d}"
 
     def submit(self) -> None:
+        if self._menu_dialog is not None:
+            return  # the leave question is up; the card is not being answered
         if self._card_done:  # already answered; the card is on its way out
             return
         card = self.current

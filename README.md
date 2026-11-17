@@ -81,6 +81,10 @@ python3.14 main.py
 5. **Read the recap.** Score, total and average time, and the five slowest
    operations, the ones worth practising tomorrow.
 
+To abandon a game, tap **← Menu** at the top left of a card. It asks first, and
+the game is not recorded. That is useful when the wrong operation or deck size
+was picked.
+
 ## Progress Screen
 
 My progress, accessible from the top left of the settings screen or on the recap

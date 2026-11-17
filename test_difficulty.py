@@ -385,11 +385,10 @@ def test_the_filter_stands_down_when_it_would_leave_too_few_facts():
 def test_zero_is_a_number_in_every_mode_but_division():
     """0 is selectable, with a card in three modes and none in division.
 
-    A first run leaves it off, so a fresh install still deals 1..10. Once it is
-    switched on, subtraction can ask 0 − 0, which the easy-card rule keeps: it
-    only looks at cards whose first number is 10 or more.
+    A first run starts with all of them, 0 to 10, and the easy-card rule keeps
+    0 − 0: it only looks at cards whose first number is 10 or more.
     """
-    assert almathus.load_allowed() == set(range(1, 11))  # first-run default
+    assert almathus.load_allowed() == set(range(almathus.NUM_MAX + 1))  # 0..10
     assert (0, 0) in almathus.every_operation("subtraction", {0})
     assert (0, 0) in almathus.every_operation("addition", {0})
     assert (0, 0) in almathus.every_operation("multiplication", {0})

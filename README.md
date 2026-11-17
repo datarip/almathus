@@ -72,11 +72,10 @@ python3.14 main.py
 
 1. **Set up the game.** Choose how many cards to put in the deck (20 by default),
    then pick one operation: addition, subtraction, multiplication or division.
-   The number row runs from 0 to 10. 0 starts off on a first run; switch it on
-   for the zero facts, and division ignores it because there is no division by
-   zero. *Avoid easy subtraction* leaves out subtraction above 10 that needs no
-   borrow: `19 − 9` is `9 − 9` with a ten left. It is off by default and
-   remembered once switched on.
+   The number row runs from 0 to 10 and starts with all of them on. Division
+   ignores 0, because there is no division by zero. *Avoid easy subtraction*
+   leaves out subtraction above 10 that needs no borrow: `19 − 9` is `9 − 9`
+   with a ten left. It is off by default and remembered once switched on.
 2. **Wait for the countdown.** 3, 2, 1, go.
 3. **Answer each card.** The operation is shown in big numbers (`8 − 2`). Tap the
    numbers on the on-screen keypad, type them and press Enter, or just say the
@@ -186,7 +185,7 @@ the header line and no rows.
 
 | What | Where |
 |---|---|
-| Number ranges | `RANGES` in `main.py`: addition and subtraction use operands **0–20** (never negative); multiplication and division use factors **0–10** (division always divides evenly). The number row is **0–10**; 0 is off on a first run, and division skips it |
+| Number ranges | `RANGES` in `main.py`: addition and subtraction use operands **0–20** (never negative); multiplication and division use factors **0–10** (division always divides evenly). The number row is **0–10** and starts fully on; division skips 0 |
 | Easy cards | *Avoid easy subtraction* on the settings screen: leaves out subtraction above 10 that needs no borrow (`19 − 9`, `14 − 4`), so only cards that cross a ten remain. Off by default; ignored when it would leave fewer than five different facts |
 | Number words | generated from `num2words`, except Chinese, Hindi, Gujarati, Georgian, Kyrgyz and Uzbek, written out in `_TABLE_NUMBERS` (`voice.py`) |
 | Language | chosen in the app (*App language* on the settings screen, or the chip in the top-right corner) and remembered in `prefs.json`; `DEFAULT_LANG` in `main.py` only decides what an install starts on |

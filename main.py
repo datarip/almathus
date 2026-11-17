@@ -3773,7 +3773,15 @@ class Almathus(tk.Tk):
                 active_fg=TILE_HOVER_FG,
                 padx=20,
                 pady=8,
-            ).grid(row=i // 2, column=i % 2, padx=10, pady=8, sticky="nsew")
+            ).grid(
+                row=i // 2,
+                column=i % 2,
+                # No outer inset: the tile edges meet the page edges and the
+                # footer below them. Only the middle gap is padded.
+                padx=(0, 10) if i % 2 == 0 else (10, 0),
+                pady=8,
+                sticky="nsew",
+            )
 
         # The footer holds the in-game switches only. Language and progress live
         # in the top bar, where they are reachable from every screen and shown
@@ -3906,7 +3914,11 @@ class Almathus(tk.Tk):
                 )
             for i, b in enumerate(buttons):
                 row, place = divmod(i, per_row)
-                b.grid(row=row, column=place, padx=pad, pady=4, sticky="ew")
+                # The first and last switch meet the page edges. Only the gaps
+                # between the buttons carry the pad.
+                left = 0 if place == 0 else pad
+                right = 0 if place == per_row - 1 else pad
+                b.grid(row=row, column=place, padx=(left, right), pady=4, sticky="ew")
             if on_relayout is not None:
                 # Deferred, not called here: measuring the new rows now would
                 # need a nested `update_idletasks` from inside the Configure
@@ -4445,7 +4457,7 @@ class Almathus(tk.Tk):
         wants the tens-to-units cards back switches it off, and the choice is
         remembered.
         """
-        btn = Btn(parent, "", font=self.f_body, padx=12, pady=10)
+        btn = Btn(parent, "", font=self.f_body, padx=10, pady=10)
 
         def refresh():
             on = self.skip_easy.get()
@@ -4469,7 +4481,7 @@ class Almathus(tk.Tk):
         if not (self.stt and self.stt.available()):
             return
 
-        btn = Btn(parent, "", font=self.f_body, padx=12, pady=10)
+        btn = Btn(parent, "", font=self.f_body, padx=10, pady=10)
 
         def refresh():
             on = self.voice_enabled.get()
@@ -4493,7 +4505,7 @@ class Almathus(tk.Tk):
         if not (self.tts and self.tts.available()):
             return
 
-        btn = Btn(parent, "", font=self.f_body, padx=12, pady=10)
+        btn = Btn(parent, "", font=self.f_body, padx=10, pady=10)
 
         def refresh():
             on = self.dictation_enabled.get()
@@ -4517,7 +4529,7 @@ class Almathus(tk.Tk):
             parent,
             f"{T('girly_toggle')} : {'ON 👑' if on else 'OFF'}",
             font=self.f_body,
-            padx=12,
+            padx=10,
             pady=10,
         )
         paint_chip(btn, on)

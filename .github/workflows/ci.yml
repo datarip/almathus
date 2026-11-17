@@ -26,7 +26,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          python-version: "3.12"
+          python-version: "3.14"
 
       # The sidecar extra is here for mypy only: sidecar/piper_sidecar.py
       # imports piper, and faking that import would be weakening the gate.
@@ -62,7 +62,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: No personal data in any commit
         run: uv run python scripts/check_no_pii.py --history
@@ -81,28 +81,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          python-version: "3.12"
+          python-version: "3.14"
 
-      - name: Audio, display and Tk libraries (Linux)
+      - name: Audio and display libraries (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libportaudio2 xvfb python3-tk
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2 libxkbcommon0 xvfb
 
       - name: Install
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            # uv's managed Python is built without tkinter on Linux, so the Tk
-            # tests need the system interpreter plus python3-tk. The README says
-            # as much for a source install; CI just does it for you.
-            #
-            # UV_PYTHON matters as much as --python: without it the later
-            # `uv run` steps re-sync the venv against the managed 3.12 and throw
-            # the system interpreter's packages away.
-            echo "UV_PYTHON=/usr/bin/python3" >> "$GITHUB_ENV"
-            uv sync --python /usr/bin/python3 --extra voice --group dev
-          else
-            uv sync --extra voice --group dev
-          fi
+        run: uv sync --managed-python --extra voice --group dev
 
       - name: Pure tests (Linux, headless)
         if: runner.os == 'Linux'

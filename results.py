@@ -545,7 +545,7 @@ def load_sessions(path: Path | None = None) -> list[Session]:
     try:
         with path.open(newline="", encoding="utf-8-sig") as fh:
             rows = list(csv.reader(fh))
-    except (OSError, csv.Error):
+    except OSError, csv.Error:
         return []
     if not rows:
         return []
@@ -642,7 +642,7 @@ def _extend_header(path: Path, header: list[str], extra: list[str]) -> list[str]
         # here, not something to translate.
         with path.open(newline="", encoding="utf-8-sig") as fh:
             raw = fh.read()
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return header
     first, sep, rest = raw.partition("\n")
     grown = header + extra

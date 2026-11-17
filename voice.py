@@ -317,7 +317,7 @@ def _spell_numbers(text: str, lang: str) -> str:
     def spell(m: re.Match[str]) -> str:
         try:
             return num2words(int(m.group()), lang=code)
-        except (ValueError, OverflowError):
+        except ValueError, OverflowError:
             return m.group()
 
     return re.sub(r"\b\d+\b", spell, text)
@@ -1514,7 +1514,7 @@ _VOICE_BAND = (300.0, 3400.0)  # Hz — speech band; cuts low rumble & high hiss
 def _envf(name: str, default: float) -> float:
     try:
         return float(os.environ[name])
-    except (KeyError, ValueError):
+    except KeyError, ValueError:
         return default
 
 
@@ -1527,7 +1527,7 @@ def _envf_opt(name: str) -> float | None:
     """
     try:
         return float(os.environ[name])
-    except (KeyError, ValueError):
+    except KeyError, ValueError:
         return None
 
 

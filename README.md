@@ -39,11 +39,12 @@ The interesting part of this MVP is the voice loop: TTS reads the question aloud
 STT takes the answer, and the game validates it. The keyboard and the on-screen
 keypad also work, but the aim was to keep the child's hands off the pad to solely focus on the solving part without distractions.
 
-Built with Python and Tkinter, and no third-party packages: the base game runs on
-the standard library alone. The voice features are optional (`--extra voice`).
-Speech recognition runs on Vosk models, one per language and downloaded on first
-use; speech out runs on Piper, in a separate process. On Linux, a system Python may
-still need `python3-tk` for Tk itself.
+Built with Python 3.14 and Tkinter, and no third-party packages: the base game
+runs on the standard library alone. The voice features are optional
+(`--extra voice`). Speech recognition runs on Vosk models, one per language and
+downloaded on first use; speech out runs on Piper, in a separate process. `uv`
+installs a Python build that bundles Tk 9 on macOS, Windows and Linux. A system
+Python needs its own Tk package.
 
 ## Screenshots
 

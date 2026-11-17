@@ -3,7 +3,9 @@ name = "almathus"
 dynamic = ["version"]
 description = "A kid-friendly mental-math game (Tkinter)"
 readme = "README.md"
-requires-python = ">=3.12"
+# 3.14 is the first Python whose python-build-standalone releases bundle Tk 9
+# on macOS, Windows and Linux, which the SVG title art and flags need.
+requires-python = ">=3.14"
 license = "MIT"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Datarip" }]
@@ -30,7 +32,8 @@ voice = [
     # resolving to it silently drops the primary French recognizer on a Mac.
     "vosk<0.3.45; sys_platform == 'darwin'",
     "vosk; sys_platform != 'darwin'",
-    "webrtcvad-wheels",
+    # 2.0.14 stops at cp313; .post1 is the first release with cp314 wheels.
+    "webrtcvad-wheels>=2.0.14.post1",
 ]
 
 # The Piper sidecar — a separate program, GPL-3.0, run out-of-process. The game
@@ -96,7 +99,7 @@ build = ["pyinstaller"]
 # Linting / formatting
 # --------------------------------------------------------------------------- #
 [tool.ruff]
-target-version = "py312"
+target-version = "py314"
 extend-exclude = ["models", "results", "stats"]
 
 [tool.ruff.lint]
@@ -164,7 +167,7 @@ extend-ignore-names = ["T"]
 # Type checking
 # --------------------------------------------------------------------------- #
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 files = ["."]
 exclude = "^(\\.venv|models|results|stats|assets|build|dist)/"
 check_untyped_defs = true

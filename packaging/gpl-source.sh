@@ -70,7 +70,7 @@ from the same vendored sdist.
 ## Rebuild
 
 \`\`\`sh
-python3.12 -m venv venv && . venv/bin/activate
+python3.14 -m venv venv && . venv/bin/activate
 pip install "piper-tts==${PIPER_VERSION}" pyinstaller
 pyinstaller --noconfirm --clean --onedir --name piper-sidecar \\
     --collect-data piper sidecar/piper_sidecar.py

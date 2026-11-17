@@ -477,11 +477,10 @@ THEMES: dict[str, dict[str, Any]] = {
             "multiplication": "#ff9e7d",
             "division": "#b39ddb",
         },
-        "NUM_ON_BG": "#4fd1a5",
-        "NUM_ON_FG": "#10121f",
-        "NUM_OFF_BG": "#333a63",
-        "NUM_OFF_FG": "#8b93c4",
-        "NUM_HOVER_BG": "#4b5490",
+        # Every toggle chip takes its chosen colours from ACCENT/INK and its
+        # resting ones from CARD_BG/MUTED; this is the one colour of its own, the
+        # step toward chosen that the pointer shows on a resting chip.
+        "CHIP_HOVER_BG": "#4b5490",
         # Hovering an operation tile lifts it away from the page: bright here,
         # deep on the light palette. Either way the label stays legible.
         "TILE_HOVER_BG": "#f5f6ff",
@@ -514,11 +513,9 @@ THEMES: dict[str, dict[str, Any]] = {
             "multiplication": "#ffb08a",
             "division": "#ffe08a",
         },
-        "NUM_ON_BG": "#ff7ab8",
-        "NUM_ON_FG": "#3d0f26",
-        "NUM_OFF_BG": "#ffd9e6",
-        "NUM_OFF_FG": "#b07f96",
-        "NUM_HOVER_BG": "#ffb3d3",
+        # Deeper than CARD_BG, so the pointer is visible on a pale resting chip,
+        # and far enough from ACCENT that a hovered chip is not read as chosen.
+        "CHIP_HOVER_BG": "#ffaed0",
         # A deeper cut of ACCENT, so the tile reads as the same hot pink the rest
         # of this palette uses for "chosen", with white text over it.
         "TILE_HOVER_BG": "#d81b7a",
@@ -549,11 +546,7 @@ BORDER: str = _DEFAULT["BORDER"]
 ROW_ALT: str = _DEFAULT["ROW_ALT"]
 ENTRY_BG: str = _DEFAULT["ENTRY_BG"]
 MODE_COLORS: dict[str, str] = _DEFAULT["MODE_COLORS"]
-NUM_ON_BG: str = _DEFAULT["NUM_ON_BG"]
-NUM_ON_FG: str = _DEFAULT["NUM_ON_FG"]
-NUM_OFF_BG: str = _DEFAULT["NUM_OFF_BG"]
-NUM_OFF_FG: str = _DEFAULT["NUM_OFF_FG"]
-NUM_HOVER_BG: str = _DEFAULT["NUM_HOVER_BG"]
+CHIP_HOVER_BG: str = _DEFAULT["CHIP_HOVER_BG"]
 TILE_HOVER_BG: str = _DEFAULT["TILE_HOVER_BG"]
 TILE_HOVER_FG: str = _DEFAULT["TILE_HOVER_FG"]
 TITLE_SVG: str = _DEFAULT["TITLE_SVG"]
@@ -1552,6 +1545,15 @@ class Btn(tk.Canvas):
         self._fill, self._fg = bg, fg
         self._redraw()
 
+    def set_hover(self, bg, fg):
+        """The fill and ink under the pointer.
+
+        A chip that is already chosen passes its own chosen colours here, so
+        hovering it does not paint over the choice with a hover tint."""
+        self._abg, self._afg = bg, fg
+        if self._hover:
+            self._redraw()
+
     def remeasure(self) -> None:
         """Fit the button to its text again, after a named font changed size.
 
@@ -1687,6 +1689,22 @@ class Btn(tk.Canvas):
         self._redraw()
         if inside and self._command:
             self._command()
+
+
+def paint_chip(btn: Btn, on: bool) -> None:
+    """Paint a toggle chip, on or off.
+
+    One rule for every chip in the app: chosen is ACCENT on INK, resting is
+    CARD_BG on MUTED, and the pointer lifts a resting chip one step toward
+    chosen. The count row, the number row and the footer switches all come
+    through here, so they cannot drift into different pinks.
+    """
+    if on:
+        btn.set_colors(ACCENT, INK)
+        btn.set_hover(ACCENT, INK)
+    else:
+        btn.set_colors(CARD_BG, MUTED)
+        btn.set_hover(CHIP_HOVER_BG, TEXT)
 
 
 class Tooltip:
@@ -3652,15 +3670,13 @@ class Almathus(tk.Tk):
                 width=3,
                 padx=10,
                 pady=6,
-                active_bg=ACCENT,
-                active_fg=INK,
             )
             chips[q].pack(side="left", padx=5)
 
         def lit(*_):
             v = self.count_var.get()
             for q, c in chips.items():
-                c.set_colors(*((ACCENT, INK) if q == v else (CARD_BG, MUTED)))
+                paint_chip(c, q == v)
 
         self.count_var.trace_add("write", lit)
         lit()
@@ -3943,10 +3959,7 @@ class Almathus(tk.Tk):
         boxes: dict[int, Btn] = {}
 
         def paint(n: int):
-            on = n in self.allowed
-            boxes[n].set_colors(
-                NUM_ON_BG if on else NUM_OFF_BG, NUM_ON_FG if on else NUM_OFF_FG
-            )
+            paint_chip(boxes[n], n in self.allowed)
 
         def toggle(n: int):
             if n in self.allowed:
@@ -3975,8 +3988,6 @@ class Almathus(tk.Tk):
                 padx=10,
                 pady=8,
                 radius=8,
-                active_bg=NUM_HOVER_BG,
-                active_fg=TEXT,
             )
             lbl.grid(
                 row=0,
@@ -4385,7 +4396,7 @@ class Almathus(tk.Tk):
         def refresh():
             on = self.voice_enabled.get()
             btn.config(text=f"{T('voice_toggle')} : {'ON ✅' if on else 'OFF'}")
-            btn.set_colors(GOOD if on else CARD_BG, INK if on else MUTED)
+            paint_chip(btn, on)
 
         def toggle_voice() -> None:
             self.voice_enabled.set(not self.voice_enabled.get())
@@ -4409,7 +4420,7 @@ class Almathus(tk.Tk):
         def refresh():
             on = self.dictation_enabled.get()
             btn.config(text=f"{T('dictation_toggle')} : {'ON ✅' if on else 'OFF'}")
-            btn.set_colors(GOOD if on else CARD_BG, INK if on else MUTED)
+            paint_chip(btn, on)
 
         def toggle_dictation() -> None:
             self.dictation_enabled.set(not self.dictation_enabled.get())
@@ -4430,9 +4441,8 @@ class Almathus(tk.Tk):
             font=self.f_body,
             padx=22,
             pady=10,
-            bg=ACCENT if on else CARD_BG,
-            fg=INK if on else MUTED,
         )
+        paint_chip(btn, on)
 
         def flip():
             apply_theme("default" if THEME == "girly" else "girly")

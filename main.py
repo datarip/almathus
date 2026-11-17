@@ -3779,7 +3779,7 @@ class Almathus(tk.Tk):
         # in the top bar, where they are reachable from every screen and shown
         # once: a flag for the language, a chart for the stats.
         footer = tk.Frame(col, bg=BG)
-        footer.pack(fill="x", pady=(12, 2))
+        footer.pack(pady=(12, 2))
 
         settle: dict[str, str | None] = {"job": None}  # the follow-up measurement
 
@@ -3843,27 +3843,17 @@ class Almathus(tk.Tk):
             self._bind_wheel_tree(child, scroll)
 
     def _layout_footer(self, footer, on_relayout=None) -> None:
-        """Lay the switches out in as many columns as their labels fit.
+        """Put the switches on centred rows at their own width.
 
-        They used to be a packed, content-sized row centred under the panels, so
-        they floated in the middle at their own width while everything else met
-        the box's edges. Now they divide the box's width in equal columns, and
-        the number of columns is chosen from the widest label: four across on a
-        roomy screen, three when that still fits each label, two when it does
-        not. A fixed two-per-row split clipped the long "Répondre à la voix : ON"
-        and "Mode princesse : ON" on a narrow screen; measuring the labels first
-        means a button only shares a row when sharing still leaves it room.
+        The row used to give every switch the widest label's width and stretch
+        it across the box. That turned four small settings into four huge
+        buttons, and at a desktop width the fourth landed on a row of its own.
+        Now each switch keeps the width of its text, four fit on one line, and
+        the rows only wrap when the window is genuinely too narrow.
 
-        When the last row is short — three switches in two columns — its
-        buttons divide the whole row between them instead of leaving a hole.
-        Three in two columns gives two half-width switches and one that takes
-        the full width; the box is never part-empty. Every place is two grid
-        columns wide, so a row of one spans all of them and a row of two splits
-        them evenly.
-
-        `on_relayout` is called after the columns change: the screen's height is
-        measured once when it is built, and a later fold onto more rows makes
-        the content taller — without a nudge the scroll region stayed at the old
+        `on_relayout` is called after the row count changes: the screen's height
+        is measured once when it is built, and a later fold onto more rows makes
+        the content taller. Without a nudge the scroll region stayed at the old
         height and the extra rows could not be reached.
         """
         buttons = footer.winfo_children()
@@ -3876,11 +3866,10 @@ class Almathus(tk.Tk):
         def relayout(_event=None) -> None:
             if not footer.winfo_exists():
                 return
-            # The column's width, not the footer's: unpacking the switches to
-            # re-grid them briefly collapses the footer onto its own request,
-            # and reading it back here would decide the layout from a width
-            # that exists only mid-rebuild — which re-entered this function
-            # until the page had been laid out twenty times for one drag step.
+            # The column's width, not the footer's: re-gridding briefly
+            # collapses the footer onto its own request, and reading it back
+            # here would decide the layout from a width that exists only
+            # mid-rebuild.
             parent = footer.master
             avail = parent.winfo_width() if parent is not None else 1
             if avail <= 1:  # not mapped yet; the page box is the best estimate
@@ -3888,16 +3877,15 @@ class Almathus(tk.Tk):
             if avail == last_avail[0]:  # nothing to decide for this width
                 return
             last_avail[0] = avail
-            widest = max(b.winfo_reqwidth() for b in buttons) + 2 * pad
-            # Every switch asks for the same width. The grid stretches them to
-            # its cells anyway, but Tk only levels its uniform columns when
-            # their own content is the same size — with a short switch beside a
-            # long one the columns stayed uneven, and the centred row landed a
-            # few pixels off the middle of the box.
-            for b in buttons:
-                if b.winfo_reqwidth() != widest - 2 * pad:
-                    b.configure(width=widest - 2 * pad)
-            per_row = max(1, min(len(buttons), avail // widest))
+            # The row is as wide as its own labels, not as wide as the widest
+            # one repeated: four short settings must not become four large
+            # buttons just because one label is long.
+            widths = sorted(
+                (b.winfo_reqwidth() + 2 * pad for b in buttons), reverse=True
+            )
+            per_row = len(buttons)
+            while per_row > 1 and sum(widths[:per_row]) > avail:
+                per_row -= 1
             if per_row == laid[0]:
                 return
             laid[0] = per_row
@@ -3906,30 +3894,14 @@ class Almathus(tk.Tk):
             for b in buttons:
                 b.pack_forget()
                 b.grid_forget()
-            # Reset every column, not just the active ones. Lowering the count
-            # used to leave the old columns weighted and `uniform`, so the grid
-            # stayed three columns wide with one button in it — wider than the
-            # footer, which pack then centred and clipped off both edges.
-            for c in range(2 * len(buttons)):
-                footer.grid_columnconfigure(
-                    c,
-                    weight=1 if c < 2 * per_row else 0,
-                    uniform="foot" if c < 2 * per_row else "",
-                )
+            for c in range(len(buttons)):
+                footer.grid_columnconfigure(c, weight=0, uniform="")
             for i, b in enumerate(buttons):
                 row, place = divmod(i, per_row)
                 in_row = min(per_row, len(buttons) - row * per_row)
-                # A short run divides the width it has: two switches across
-                # three places take half the row each, one takes all of it.
-                span = 2 * per_row // in_row
-                b.grid(
-                    row=row,
-                    column=place * span,
-                    columnspan=span,
-                    sticky="ew",
-                    padx=pad,
-                    pady=4,
-                )
+                # Centre a short last row instead of leaving it hanging left.
+                offset = (per_row - in_row) // 2
+                b.grid(row=row, column=offset + place, padx=pad, pady=4)
             if on_relayout is not None:
                 # Deferred, not called here: measuring the new rows now would
                 # need a nested `update_idletasks` from inside the Configure

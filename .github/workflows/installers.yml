@@ -140,7 +140,7 @@ jobs:
           find arts -name SHA256SUMS -exec cat {} + | sort -k2 > arts/SHA256SUMS
           cat arts/SHA256SUMS
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           draft: true
           generate_release_notes: true

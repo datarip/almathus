@@ -344,6 +344,7 @@ def test_easy_cards_are_left_out_when_switched_on():
     assert not almathus.repeats_units("subtraction", 9, 9)  # the core drill
     assert not almathus.repeats_units("subtraction", 8, 8)
     assert not almathus.repeats_units("subtraction", 7, 7)
+    assert not almathus.repeats_units("subtraction", 0, 0)
     assert not almathus.repeats_units("addition", 12, 2)
     assert not almathus.repeats_units("multiplication", 10, 2)
     assert not almathus.repeats_units("division", 20, 2)
@@ -381,6 +382,30 @@ def test_the_filter_stands_down_when_it_would_leave_too_few_facts():
     assert len(set(ops)) > 1
 
 
+def test_zero_is_a_number_in_every_mode_but_division():
+    """0 is selectable, with a card in three modes and none in division.
+
+    A first run leaves it off, so a fresh install still deals 1..10. Once it is
+    switched on, subtraction can ask 0 − 0, which the easy-card rule keeps: it
+    only looks at cards whose first number is 10 or more.
+    """
+    assert almathus.load_allowed() == set(range(1, 11))  # first-run default
+    assert (0, 0) in almathus.every_operation("subtraction", {0})
+    assert (0, 0) in almathus.every_operation("addition", {0})
+    assert (0, 0) in almathus.every_operation("multiplication", {0})
+    assert almathus.every_operation("division", {0}) == []
+    assert all(b != 0 for _, b in almathus.every_operation("division", {0, 4}))
+
+    # A full deck of −0 facts includes 0 − 0, filter on or off.
+    for skip in (False, True):
+        deck = almathus.make_deck("subtraction", 21, {0}, skip_easy=skip)
+        assert (0, 0) in [(c.a, c.b) for c in deck]
+
+    # Division with 0 and 4 selected still has its 4 cards.
+    deck = almathus.make_deck("division", 20, {0, 4})
+    assert deck and all(c.b == 4 for c in deck)
+
+
 def test_spread_separates_twins():
     """The shuffle that mixes revision in never leaves a pair side by side."""
     for n in (2, 3, 5, 8):
@@ -405,6 +430,7 @@ def main() -> int:
         test_deck_deals_the_repeats_twice,
         test_easy_cards_are_left_out_when_switched_on,
         test_the_filter_stands_down_when_it_would_leave_too_few_facts,
+        test_zero_is_a_number_in_every_mode_but_division,
         test_spread_separates_twins,
     )
     failures = []

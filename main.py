@@ -76,8 +76,11 @@ RANGES = {
 
 # The second operand is picked from the numbers switched on in the settings
 # screen, so the kid can drill one at a time (only [7] => 3×7, 9×7, 4×7...).
-# 0 is excluded: it would make division undefined and +0 / ×0 pointless.
-NUM_MIN, NUM_MAX = 1, 10
+# 0 is selectable for addition, subtraction and multiplication; division skips
+# it because there is no division by zero. A first run starts with 1..10, so a
+# fresh install keeps the deck it always had and 0 is one tap away.
+NUM_MIN, NUM_MAX = 0, 10
+DEFAULT_NUMBERS = frozenset(range(1, NUM_MAX + 1))
 
 # The language the app runs in. Every supported language has screen text (see
 # i18n.py); a missing entry still falls back to English rather than a raw key.
@@ -677,13 +680,20 @@ def write_prefs(**updates) -> None:
 def load_allowed() -> set[int]:
     """Numbers selected last time. A drill often runs for weeks on one number,
     so the choice has to survive a restart. Anything unreadable or nonsensical
-    falls back to 'all numbers on'."""
+    falls back to the usual 1..10.
+
+    0 is only useful beside a number above zero: division has no 0 card, and a
+    selection of nothing but 0 could not be dealt. That selection falls back
+    rather than leaving the game with an empty deck.
+    """
     try:
         raw = read_prefs()["numbers"]
         sel = {int(n) for n in raw if NUM_MIN <= int(n) <= NUM_MAX}
     except ValueError, TypeError, KeyError:
         sel = set()
-    return sel or set(range(NUM_MIN, NUM_MAX + 1))
+    if any(n > 0 for n in sel):
+        return sel
+    return set(DEFAULT_NUMBERS)
 
 
 def save_allowed(sel: set[int]) -> None:
@@ -847,10 +857,13 @@ def every_operation(mode: str, allowed: set[int]) -> list[tuple[int, int]]:
     """Every distinct operation this mode can ask with these numbers.
 
     `b` — the number the kid operates *with* — is the one taken from the allowed
-    set, so locking it down to {1} yields x−1, y−1, z−1.
+    set, so locking it down to {1} yields x−1, y−1, z−1. 0 is skipped for
+    division, where it has no card; the other modes do play their 0 facts.
     """
     pairs: list[tuple[int, int]] = []
     for b in sorted(allowed):
+        if b == 0 and mode == "division":
+            continue
         if mode == "addition":
             pairs += [(a, b) for a in range(RANGES["addition"]["max"] + 1)]
         elif mode == "subtraction":
@@ -962,7 +975,7 @@ def make_deck(
     switched on only 10 is asking for that number, and the filter would leave no
     subtraction at all to deal.
     """
-    pool = every_operation(mode, allowed or set(range(NUM_MIN, NUM_MAX + 1)))
+    pool = every_operation(mode, allowed or set(DEFAULT_NUMBERS))
     if skip_easy:
         kept = [op for op in pool if not repeats_units(mode, *op)]
         if len(kept) >= MIN_FILTERED_POOL:
@@ -4000,7 +4013,11 @@ class Almathus(tk.Tk):
         return _svg_image(ASSETS_DIR / TITLE_SVG, height)
 
     def _build_number_row(self, parent):
-        """Row of [1]..[10] toggles: the numbers every operation is played with."""
+        """Row of [0]..[10] toggles: the numbers every operation is played with.
+
+        0 is off on a first run so the deck starts as it always did. It is a
+        number like the others once switched on, except that division skips it.
+        """
         panel = RoundedPanel(parent)
         panel.canvas.pack(fill="x", pady=(0, 22))
         body = panel.inner
@@ -4019,8 +4036,10 @@ class Almathus(tk.Tk):
 
         def toggle(n: int):
             if n in self.allowed:
-                if len(self.allowed) == 1:
-                    return  # always keep at least one number to play with
+                # Division has no 0 card, so a selection of nothing but 0 could
+                # not be dealt. Keep one number above zero switched on.
+                if not any(x > 0 for x in self.allowed if x != n):
+                    return
                 self.allowed.discard(n)
             else:
                 self.allowed.add(n)
@@ -5800,7 +5819,13 @@ class Almathus(tk.Tk):
         # the operator sign plus the numbers that were switched on ("-1 et -2").
         resultslog.append_session(
             day=stamp.date(),
-            famille=resultslog.famille_label(self.mode, self.allowed, LANG),
+            # Division has no 0 card, so a session with 0 switched on must not
+            # claim it drilled ÷0.
+            famille=resultslog.famille_label(
+                self.mode,
+                self.allowed - {0} if self.mode == "division" else self.allowed,
+                LANG,
+            ),
             seconds=total_time,
             cards=len(cards),
             correct=correct,

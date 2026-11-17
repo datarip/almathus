@@ -645,7 +645,7 @@ def read_prefs() -> dict:
     """Everything remembered between runs. Anything unreadable reads as empty."""
     try:
         prefs = json.loads(PREFS_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return {}
     return prefs if isinstance(prefs, dict) else {}
 
@@ -682,7 +682,7 @@ def load_allowed() -> set[int]:
     try:
         raw = read_prefs()["numbers"]
         sel = {int(n) for n in raw if NUM_MIN <= int(n) <= NUM_MAX}
-    except (ValueError, TypeError, KeyError):
+    except ValueError, TypeError, KeyError:
         sel = set()
     return sel or set(range(NUM_MIN, NUM_MAX + 1))
 
@@ -1581,7 +1581,7 @@ class Btn(tk.Canvas):
     def _parent_bg(parent):
         try:
             return parent.cget("bg")
-        except (tk.TclError, AttributeError):
+        except tk.TclError, AttributeError:
             return BG
 
     def _measure(self) -> tuple[int, int]:
@@ -2549,23 +2549,27 @@ def ordered_languages(current: str | None) -> list[languages.Language]:
     )
 
 
-def flag_image(code: str, height: int) -> tk.PhotoImage | None:
-    """A language's flag as a Tk image, or None when the asset is not there.
+def _svg_image(path: Path, height: int) -> tk.PhotoImage | None:
+    """A bundled SVG at ``height`` px, or None when Tk cannot read it.
 
-    Tk 9 rasterizes the bundled SVG itself, exactly as the title art does, so a
-    missing flag file — or Tk 8, which cannot read SVG — degrades to plain text
-    with no error. Assets arrive in a later step; until then every row is text.
+    Tk 9 rasterizes SVG itself. A missing file, or a Tk built without the SVG
+    image format, raises TclError and the caller uses its text fallback.
     """
-    lang = languages.BY_CODE.get(code)
-    if lang is None or not lang.flag:
-        return None
-    path = ASSETS_DIR / "flags" / f"{lang.flag}.svg"
-    if not path.is_file():
-        return None
     try:
         return tk.PhotoImage(file=str(path), format=f"svg -scaletoheight {height}")
     except tk.TclError:
         return None
+
+
+def flag_image(code: str, height: int) -> tk.PhotoImage | None:
+    """A language's flag as a Tk image, or None when the asset is not there.
+
+    Tk 9 reads the SVG; a missing file degrades to plain text with no error.
+    """
+    lang = languages.BY_CODE.get(code)
+    if lang is None or not lang.flag:
+        return None
+    return _svg_image(ASSETS_DIR / "flags" / f"{lang.flag}.svg", height)
 
 
 class LanguagePicker:
@@ -3888,9 +3892,9 @@ class Almathus(tk.Tk):
         """This theme's drawing, rendered to about 1.6 lines of the title font.
 
         Tk 9 rasterizes SVG itself and scales to a target height on the way in,
-        so the drawing follows the window instead of being resampled in Tk —
-        that is the whole reason the assets are SVG and not PNG (Tk's bitmap
-        scaler only does integer steps).
+        so the drawing follows the window instead of being resampled in Tk.
+        That is why the assets are SVG, not PNG: Tk's bitmap scaler only does
+        integer steps.
 
         Rasterizing at the *display* size is the catch: a hairline does not
         survive it. At 6 units of the 512 canvas the badge's outline is 1.03 px
@@ -3900,15 +3904,11 @@ class Almathus(tk.Tk):
         to blend inside a single pixel, so `assets/*.svg` carry a 10-unit ring:
         1.7 px here, the narrowest that leaves no gaps at the design size.
 
-        Returns None if the file is missing or cannot be rendered; the caller
-        falls back to the emoji, so a bad asset never breaks the screen."""
-        try:
-            return tk.PhotoImage(
-                file=str(ASSETS_DIR / TITLE_SVG),
-                format=f"svg -scaletoheight {round(font.metrics('linespace') * 1.6)}",
-            )
-        except tk.TclError:
-            return None
+        A missing file, or a Tk without the SVG image format, returns None and
+        the caller falls back to the emoji, so a bad asset never breaks the
+        screen."""
+        height = round(font.metrics("linespace") * 1.6)
+        return _svg_image(ASSETS_DIR / TITLE_SVG, height)
 
     def _build_number_row(self, parent):
         """Row of [1]..[10] toggles: the numbers every operation is played with."""
@@ -5598,6 +5598,36 @@ def _self_test() -> None:
             report.append(f"{name}: FAILED {type(exc).__name__}: {exc}")
         else:
             report.append(f"{name}: ok")
+
+    # The title art and flags are SVG, which Tk 9 rasterizes. A bundle with an
+    # older Tk would silently show emojis, so that is a failed build, not a note.
+    try:
+        import tkinter
+    except Exception as exc:  # noqa: BLE001 - the report is the whole job here
+        failed += 1
+        report.append(f"tkinter: FAILED {type(exc).__name__}: {exc}")
+    else:
+        if tkinter.TkVersion < 9:
+            failed += 1
+            report.append(f"tkinter: Tk {tkinter.TkVersion} cannot read SVG")
+        else:
+            report.append(f"tkinter: Tk {tkinter.TkVersion}")
+
+    titles = ("boy.svg", "girl.svg")
+    missing_titles = [name for name in titles if not (ASSETS_DIR / name).is_file()]
+    if missing_titles:
+        failed += 1
+        report.append("title art missing: " + ", ".join(missing_titles))
+    else:
+        report.append(f"title art: {len(titles)} SVGs")
+
+    flag_svgs = sorted((ASSETS_DIR / "flags").glob("*.svg"))
+    if flag_svgs:
+        report.append(f"flag art: {len(flag_svgs)} SVGs")
+    else:
+        failed += 1
+        report.append("flag art missing")
+
     text = "\n".join(report) + "\n"
     print(text, end="", flush=True)
     # A windowed binary has no console on Windows and loses stdout on some

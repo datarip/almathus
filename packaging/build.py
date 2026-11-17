@@ -266,7 +266,7 @@ def accept_app(out: Path) -> None:
     print(text.strip())
     if result.returncode != 0:
         raise SystemExit(
-            "a bundled dependency failed to import:\n" + text + result.stderr
+            "a bundled dependency or asset is missing:\n" + text + result.stderr
         )
 
 

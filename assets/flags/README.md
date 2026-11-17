@@ -10,3 +10,6 @@ flags do not (Windows shows the two-letter code instead of a flag).
 Only the flags for the languages in `languages.py` are included. A language
 whose `flag` field is empty (Esperanto) has no country flag; its row and chip
 fall back to text alone.
+
+Tk 9 reads the SVGs directly. A Tk without the SVG image format falls back to
+text alone.

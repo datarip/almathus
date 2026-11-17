@@ -391,6 +391,61 @@ def _no_window() -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
 
+# Seconds of fade at each end of a phrase, so a player that starts or stops its
+# stream mid-waveform cannot click.
+_EDGE_FADE = 0.005
+
+
+def _resample_pcm(audio: Any, sample_rate: int, target: int) -> Any:
+    """Resample int16 PCM to `target` without letting a sample wrap.
+
+    Piper normalises every phrase to full scale, so the interpolation filter's
+    overshoot routinely lands just past 32767. Casting that float straight to
+    int16 does not clip, it *wraps*: the loudest sample of a syllable comes back
+    as the opposite rail, a sign flip across the whole 16-bit range. That flip
+    is an audible click on the word being said. Scale the overshoot back inside
+    the range instead, so nothing clips and nothing wraps.
+    """
+    import numpy as np
+
+    source = np.asarray(audio, dtype=np.float32)
+    if source.size == 0:
+        return source.astype(np.int16)
+    try:
+        from scipy.signal import resample_poly
+
+        out = resample_poly(source, target, sample_rate)
+    except Exception:
+        n = max(1, round(source.size * target / sample_rate))
+        out = np.interp(
+            np.linspace(0.0, source.size - 1, n), np.arange(source.size), source
+        )
+    peak = float(np.abs(out).max())
+    if peak > 32767.0:
+        out = out * (32767.0 / peak)
+    return np.clip(np.rint(out), -32768, 32767).astype(np.int16)
+
+
+def _soften_edges(audio: Any, sample_rate: int) -> Any:
+    """Ramp the first and last few milliseconds of a phrase to silence.
+
+    The stream is opened once per phrase and torn down when it ends or is
+    interrupted, so its first and last buffer can land on a non-zero sample and
+    click. Piper already leaves silence at both ends of most phrases, and this
+    costs nothing where it does.
+    """
+    import numpy as np
+
+    out = np.array(audio, dtype=np.int16, copy=True)
+    ramp = min(int(sample_rate * _EDGE_FADE), out.size // 2)
+    if ramp <= 0:
+        return out
+    curve = np.linspace(0.0, 1.0, ramp, dtype=np.float32)
+    out[:ramp] = (out[:ramp] * curve).astype(np.int16)
+    out[-ramp:] = (out[-ramp:] * curve[::-1]).astype(np.int16)
+    return out
+
+
 def _resample_to_device(audio: Any, sample_rate: int) -> tuple[Any, int]:
     """Piper speaks at 22 kHz; many Windows and Linux devices only open at 48.
 
@@ -410,10 +465,7 @@ def _resample_to_device(audio: Any, sample_rate: int) -> tuple[Any, int]:
     if target <= 0 or target == sample_rate:
         return audio, sample_rate
     try:
-        import numpy as np
-        from scipy.signal import resample_poly
-
-        return resample_poly(audio, target, sample_rate).astype(np.int16), target
+        return _resample_pcm(audio, sample_rate, target), target
     except Exception as e:
         _dbg("resample failed, playing at the source rate:", repr(e))
         return audio, sample_rate
@@ -714,6 +766,7 @@ class TTS:
 
             audio = np.frombuffer(pcm, dtype=np.int16)
             audio, sample_rate = _resample_to_device(audio, sample_rate)
+            audio = _soften_edges(audio, sample_rate)
             self._play_until = time.perf_counter() + len(audio) / sample_rate + 0.05
             sd.play(audio, sample_rate)
             sd.wait()

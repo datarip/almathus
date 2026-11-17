@@ -82,6 +82,7 @@ include = [
     "voices.py",
     "results.py",
     "pdfreport.py",
+    "power.py",
     "sfx.py",
     "assets",
 ]

@@ -46,6 +46,7 @@ from typing import Any, ClassVar, Literal
 import i18n
 import languages
 import pdfreport
+import power
 import results as resultslog
 import sfx
 import voices
@@ -3196,6 +3197,9 @@ class Almathus(tk.Tk):
                 signal.signal(sig, self._on_signal)  # terminal kill / close
 
     def _shutdown(self):
+        # Quitting mid-game must not leave the machine held awake: the macOS
+        # helper would follow this process down, the Linux one would not.
+        power.release()
         # Timers first: a pending callback that runs after the window is gone
         # raises out of Tcl ("invalid command name ..._pump") with nowhere to
         # report it.
@@ -3444,6 +3448,9 @@ class Almathus(tk.Tk):
     # ------------------------------------------------------------------ #
     def show_settings(self):
         self._clear()
+        # The menu is reachable mid-game: leaving the table ends the session,
+        # so sleep is allowed again here rather than only at the recap.
+        power.release()
         self._hush()  # leaving the recap: the fanfare goes with it
         if self.stt:
             self.stt.release()  # off the game: let the mic go (on a worker)
@@ -4462,6 +4469,10 @@ class Almathus(tk.Tk):
     # Screen 2: countdown
     # ------------------------------------------------------------------ #
     def start_game(self, mode: str):
+        # Battery-optimised power settings dim the display between cards and
+        # then suspend the machine, which ends the game under the child. Hold
+        # both off until the recap; see power.py.
+        power.hold()
         self.mode = mode
         self.n_cards = self.count_var.get()
         # Yesterday's hard cards, dealt again before they are forgotten.
@@ -5234,6 +5245,7 @@ class Almathus(tk.Tk):
     # ------------------------------------------------------------------ #
     def show_recap(self):
         self._clear()
+        power.release()  # the game is over: the machine may sleep again
         if self.stt:
             self.stt.release()
         total_time = self._elapsed()

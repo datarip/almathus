@@ -64,8 +64,8 @@ Two theme skins: light and dark modes.
 uv run almathus
 # or
 uv run python main.py
-# or, without uv:
-python3 main.py
+# or, without uv (needs Python 3.14 and its Tk):
+python3.14 main.py
 ```
 
 ## How It Plays

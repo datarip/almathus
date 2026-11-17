@@ -3843,13 +3843,14 @@ class Almathus(tk.Tk):
             self._bind_wheel_tree(child, scroll)
 
     def _layout_footer(self, footer, on_relayout=None) -> None:
-        """Put the switches between the page edges at their own width.
+        """Put the switches in equal columns across the page.
 
-        Each switch keeps the width of its text. On a full row the first button
-        sits at the left edge and the last at the right edge, and the spare
-        width is shared by the gaps, so the row lines up with the panels above
-        instead of floating in the middle. On a genuinely narrow window the row
-        wraps and the rows centre.
+        Every column takes a share of the page width, so the first switch meets
+        the left edge and the last meets the right edge, with small even gaps.
+        The number of columns is chosen from the labels' actual widths: four fit
+        on a desktop, fewer only when the window is genuinely too narrow. A
+        wrapped last row keeps the same column width, so one switch is never
+        stretched across the whole box.
 
         `on_relayout` is called after the row count changes: the screen's height
         is measured once when it is built, and a later fold onto more rows makes
@@ -3859,7 +3860,7 @@ class Almathus(tk.Tk):
         buttons = footer.winfo_children()
         if not buttons:
             return
-        pad = 8
+        pad = 3
         laid: list[int] = [0]  # the per-row count currently on screen
         last_avail = [-1]
 
@@ -3877,9 +3878,8 @@ class Almathus(tk.Tk):
             if avail == last_avail[0]:  # nothing to decide for this width
                 return
             last_avail[0] = avail
-            # The row is as wide as its own labels, not as wide as the widest
-            # one repeated: four short settings must not become four large
-            # buttons just because one label is long.
+            # Four short settings must fit without being stretched to the
+            # widest label's size. The sum is what four columns really need.
             widths = sorted(
                 (b.winfo_reqwidth() + 2 * pad for b in buttons), reverse=True
             )
@@ -3894,33 +3894,19 @@ class Almathus(tk.Tk):
             for b in buttons:
                 b.pack_forget()
                 b.grid_forget()
-            # A full row holds the page's edges and puts the slack in the gaps,
-            # so the switches line up with the panels above instead of floating
-            # in the middle at their own width.
-            one_row = per_row == len(buttons)
-            footer.pack_configure(fill="x" if one_row else "")
-            for c in range(2 * len(buttons)):
-                footer.grid_columnconfigure(c, weight=0, uniform="")
-            if one_row:
-                for c in range(1, 2 * len(buttons) - 1, 2):
-                    footer.grid_columnconfigure(c, weight=1)
-                for i, b in enumerate(buttons):
-                    b.grid(
-                        row=0,
-                        column=2 * i,
-                        padx=(
-                            0 if i == 0 else pad,
-                            0 if i == len(buttons) - 1 else pad,
-                        ),
-                        pady=4,
-                    )
-            else:
-                for i, b in enumerate(buttons):
-                    row, place = divmod(i, per_row)
-                    in_row = min(per_row, len(buttons) - row * per_row)
-                    # Centre a short last row instead of leaving it hanging left.
-                    offset = (per_row - in_row) // 2
-                    b.grid(row=row, column=offset + place, padx=pad, pady=4)
+            footer.pack_configure(fill="x")
+            # Equal, weighted columns fill the box. Every switch gets the same
+            # width and the gaps stay small; only the number of columns changes
+            # when the window is too narrow.
+            for c in range(len(buttons)):
+                footer.grid_columnconfigure(
+                    c,
+                    weight=1 if c < per_row else 0,
+                    uniform="foot" if c < per_row else "",
+                )
+            for i, b in enumerate(buttons):
+                row, place = divmod(i, per_row)
+                b.grid(row=row, column=place, padx=pad, pady=4, sticky="ew")
             if on_relayout is not None:
                 # Deferred, not called here: measuring the new rows now would
                 # need a nested `update_idletasks` from inside the Configure
@@ -4459,7 +4445,7 @@ class Almathus(tk.Tk):
         wants the tens-to-units cards back switches it off, and the choice is
         remembered.
         """
-        btn = Btn(parent, "", font=self.f_small, padx=14, pady=8)
+        btn = Btn(parent, "", font=self.f_small, padx=6, pady=8)
 
         def refresh():
             on = self.skip_easy.get()
@@ -4483,7 +4469,7 @@ class Almathus(tk.Tk):
         if not (self.stt and self.stt.available()):
             return
 
-        btn = Btn(parent, "", font=self.f_small, padx=14, pady=8)
+        btn = Btn(parent, "", font=self.f_small, padx=6, pady=8)
 
         def refresh():
             on = self.voice_enabled.get()
@@ -4507,7 +4493,7 @@ class Almathus(tk.Tk):
         if not (self.tts and self.tts.available()):
             return
 
-        btn = Btn(parent, "", font=self.f_small, padx=14, pady=8)
+        btn = Btn(parent, "", font=self.f_small, padx=6, pady=8)
 
         def refresh():
             on = self.dictation_enabled.get()
@@ -4531,7 +4517,7 @@ class Almathus(tk.Tk):
             parent,
             f"{T('girly_toggle')} : {'ON 👑' if on else 'OFF'}",
             font=self.f_small,
-            padx=14,
+            padx=6,
             pady=8,
         )
         paint_chip(btn, on)
